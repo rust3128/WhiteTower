@@ -1,0 +1,161 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"childIndexes" : 
+					[
+						1,
+						2
+					],
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-.-Debug-d0094a50bb2071803777.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.20"
+					},
+					"projectIndex" : 0,
+					"source" : "."
+				},
+				{
+					"build" : "Oracle",
+					"jsonFile" : "directory-Oracle-Debug-78a47d9d0099894a0a58.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.16"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 1,
+					"source" : "Oracle",
+					"targetIndexes" : 
+					[
+						3,
+						4,
+						5
+					]
+				},
+				{
+					"build" : "Conduit",
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-Conduit-Debug-51185109e3f332a571ed.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.16"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 2,
+					"source" : "Conduit",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2
+					]
+				}
+			],
+			"name" : "Debug",
+			"projects" : 
+			[
+				{
+					"childIndexes" : 
+					[
+						1,
+						2
+					],
+					"directoryIndexes" : 
+					[
+						0
+					],
+					"name" : "WhiteTower"
+				},
+				{
+					"directoryIndexes" : 
+					[
+						1
+					],
+					"name" : "Oracle",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						3,
+						4,
+						5
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						2
+					],
+					"name" : "Conduit",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 2,
+					"id" : "Conduit::@ba391e93d730ce762b0f",
+					"jsonFile" : "target-Conduit-Debug-fa0a68ed5de092d198b0.json",
+					"name" : "Conduit",
+					"projectIndex" : 2
+				},
+				{
+					"directoryIndex" : 2,
+					"id" : "Conduit_autogen::@ba391e93d730ce762b0f",
+					"jsonFile" : "target-Conduit_autogen-Debug-1de24fb51f7a54a4ecec.json",
+					"name" : "Conduit_autogen",
+					"projectIndex" : 2
+				},
+				{
+					"directoryIndex" : 2,
+					"id" : "Conduit_autogen_timestamp_deps::@ba391e93d730ce762b0f",
+					"jsonFile" : "target-Conduit_autogen_timestamp_deps-Debug-e8c802694305bc1f897d.json",
+					"name" : "Conduit_autogen_timestamp_deps",
+					"projectIndex" : 2
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "Oracle::@1d047157dbc66d5fff50",
+					"jsonFile" : "target-Oracle-Debug-d7523dabee050d7fd36d.json",
+					"name" : "Oracle",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "Oracle_autogen::@1d047157dbc66d5fff50",
+					"jsonFile" : "target-Oracle_autogen-Debug-d9bdbbdd86cd2dd1708d.json",
+					"name" : "Oracle_autogen",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "Oracle_autogen_timestamp_deps::@1d047157dbc66d5fff50",
+					"jsonFile" : "target-Oracle_autogen_timestamp_deps-Debug-7e7e136506b62b2aea2f.json",
+					"name" : "Oracle_autogen_timestamp_deps",
+					"projectIndex" : 1
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "D:/Develop/WhiteTower/build/Desktop_Qt_6_7_3_MinGW_64_bit-Debug",
+		"source" : "D:/Develop/WhiteTower"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 7
+	}
+}

@@ -1,0 +1,27 @@
+{
+	"backtrace" : 0,
+	"backtraceGraph" : 
+	{
+		"commands" : [],
+		"files" : 
+		[
+			"Oracle/CMakeLists.txt"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 0
+			}
+		]
+	},
+	"id" : "Oracle_autogen_timestamp_deps::@1d047157dbc66d5fff50",
+	"isGeneratorProvided" : true,
+	"name" : "Oracle_autogen_timestamp_deps",
+	"paths" : 
+	{
+		"build" : "Oracle",
+		"source" : "Oracle"
+	},
+	"sources" : [],
+	"type" : "UTILITY"
+}
