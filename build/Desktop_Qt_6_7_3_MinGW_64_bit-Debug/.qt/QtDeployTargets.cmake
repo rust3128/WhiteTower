@@ -1,5 +1,0 @@
-set(__QT_DEPLOY_TARGET_Oracle_FILE D:/Develop/WhiteTower/build/Desktop_Qt_6_7_3_MinGW_64_bit-Debug/Oracle/libOracle.a)
-set(__QT_DEPLOY_TARGET_Oracle_TYPE STATIC_LIBRARY)
-set(__QT_DEPLOY_TARGET_Conduit_FILE D:/Develop/WhiteTower/build/Desktop_Qt_6_7_3_MinGW_64_bit-Debug/Conduit/Conduit.exe)
-set(__QT_DEPLOY_TARGET_Conduit_TYPE EXECUTABLE)
-set(__QT_DEPLOY_TARGET_Conduit_RUNTIME_DLLS D:/Qt/6.7.3/mingw_64/bin/Qt6Core.dll;D:/Qt/6.7.3/mingw_64/bin/Qt6Core.dll)
