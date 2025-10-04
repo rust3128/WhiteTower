@@ -8,16 +8,25 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core Sql)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Sql)
 
 add_library(Oracle STATIC
 
 
   AppParams.h
   AppParams.cpp
+  Logger.h
+  Logger.cpp
+  ConfigManager.h
+  ConfigManager.cpp
+  criptpass.cpp criptpass.h qaesencryption.cpp qaesencryption.h
+  DbManager.h
+  DbManager.cpp
 )
 
-target_link_libraries(Oracle PRIVATE Qt${QT_VERSION_MAJOR}::Core)
+target_link_libraries(Oracle PRIVATE Qt${QT_VERSION_MAJOR}::Core
+  Qt6::Sql
+)
 
 target_compile_definitions(Oracle PRIVATE ORACLE_LIBRARY)
