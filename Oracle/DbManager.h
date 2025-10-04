@@ -20,6 +20,9 @@ public:
 
     // Метод для отримання останньої помилки
     QString lastError() const;
+    // Завантажує налаштування для вказаного додатку та глобальні
+    QVariantMap loadSettings(const QString& appName);
+
 
 private:
     QSqlDatabase m_db;

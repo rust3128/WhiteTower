@@ -3,6 +3,8 @@
 
 #include <QObject>
 #include <QString>
+#include <QVariantMap>
+#include <QMap>
 
 class AppParams : public QObject
 {
@@ -17,6 +19,12 @@ public:
         const QString IV;
     };
 
+    // Метод для збереження динамічного параметра
+    void setParam(const QString& appName, const QString& key, const QVariant& value);
+    // Метод для отримання динамічного параметра
+    QVariant getParam(const QString& appName, const QString& key, const QVariant& defaultValue = QVariant()) const;
+
+
     // 2. Тепер у нас є лише один член класу для всіх крипто-ключів
     const CryptoConfig crypto;
 
@@ -29,6 +37,10 @@ private:
 
     AppParams(const AppParams&) = delete;
     AppParams& operator=(const AppParams&) = delete;
+
+private:
+    // Контейнер для зберігання параметрів, завантажених з БД
+    QMap<QString, QVariantMap> m_scopedParams;
 };
 
 #endif // APPPARAMS_H

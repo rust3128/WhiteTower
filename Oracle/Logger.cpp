@@ -1,4 +1,5 @@
 #include "Logger.h"
+#include "AppParams.h"
 #include <QCoreApplication> // Потрібен для шляху до додатку
 #include <QDateTime>
 #include <QDir>
@@ -45,8 +46,7 @@ static void cleanupOldLogs(int daysToKeep)
 
 static void customLogMessageHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg)
 {
-    Q_UNUSED(context);
-
+    // 1. --- Логіка щоденної ротації файлів ---
     static QFile logFile;
     static QDate logDate;
 
@@ -57,10 +57,8 @@ static void customLogMessageHandler(QtMsgType type, const QMessageLogContext &co
         }
 
         logDate = currentDate;
-        // Ім'я файлу тепер динамічне
         const QString fileName = QString("%1_%2.log").arg(g_logFilePrefix, currentDate.toString("yyyyMMdd"));
 
-        // Використовуємо глобальний шлях
         QDir logDir(g_logDirectoryPath);
         if (!logDir.exists()) {
             QDir().mkpath(g_logDirectoryPath);
@@ -80,6 +78,7 @@ static void customLogMessageHandler(QtMsgType type, const QMessageLogContext &co
         }
     }
 
+    // 2. --- Форматування повідомлення ---
     const QString time = QDateTime::currentDateTime().toString("hh:mm:ss.zzz");
     QString level;
     switch (type) {
@@ -90,12 +89,32 @@ static void customLogMessageHandler(QtMsgType type, const QMessageLogContext &co
     case QtFatalMsg:    level = "FATL"; break;
     }
 
-    const QString formattedMessage = QString("%1 | %2 | %3\n").arg(time, level, msg);
+    QString formattedMessage;
 
+#ifndef QT_NO_DEBUG
+    {
+        // === ВИПРАВЛЕНО ТУТ ===
+        // Зберігаємо ім'я файлу в змінну типу QString, а не const char*
+        QString file = QFileInfo(context.file).fileName();
+
+        QString logContext = QString("[%1@%2:%3]")
+                                 .arg(context.function)
+                                 .arg(file)
+                                 .arg(context.line);
+        formattedMessage = QString("%1 | %2 | %3 %4\n").arg(time, level, msg, logContext);
+    }
+#else
+    {
+        formattedMessage = QString("%1 | %2 | %3\n").arg(time, level, msg);
+    }
+#endif
+
+    // 3. --- Запис у файл (завжди) ---
     QTextStream out(&logFile);
     out << formattedMessage;
     out.flush();
 
+    // 4. --- Дублювання в консоль (тільки для Debug) ---
 #ifndef QT_NO_DEBUG
     if (type == QtWarningMsg || type == QtCriticalMsg || type == QtFatalMsg) {
         std::cerr << qPrintable(formattedMessage);
@@ -107,14 +126,26 @@ static void customLogMessageHandler(QtMsgType type, const QMessageLogContext &co
 
 void initLogger(const QString& appName)
 {
-    // 1. Визначаємо і зберігаємо глобальні змінні
-    g_logFilePrefix = appName;
-    // Надійно отримуємо шлях до теки з .exe і додаємо /Logs
-    g_logDirectoryPath = QCoreApplication::applicationDirPath() + "/Logs";
-
     qInstallMessageHandler(customLogMessageHandler);
-    QLoggingCategory::setFilterRules(QStringLiteral("logApp.debug=true"));
-    const int logRetentionDays = 7;
+
+    // --- ВИКОРИСТОВУЄМО ПАРАМЕТРИ З БД ---
+    AppParams& params = AppParams::instance();
+
+    // Отримуємо LogLevel. Якщо в БД його немає, за замовчуванням буде "INFO"
+    QString logLevel = params.getParam(appName, "LogLevel", "INFO").toString().toUpper();
+
+    // Отримуємо LogRetentionDays. Якщо немає, за замовчуванням буде 7
+    int logRetentionDays = params.getParam(appName, "LogRetentionDays", 7).toInt();
+    // ------------------------------------
+
+    // Встановлюємо правило фільтрації на основі значення з БД
+    // Наприклад, "logApp.DEBUG=true" або "logApp.INFO=true"
+    QString filterRule = QString("logApp.%1=true").arg(logLevel);
+    QLoggingCategory::setFilterRules(filterRule);
+
     cleanupOldLogs(logRetentionDays);
-    logInfo() << "Logger initialized for" << appName << ". Log retention period:" << logRetentionDays << "days.";
+
+    logInfo() << "Logger initialized for" << appName
+              << ". Log Level:" << logLevel
+              << ". Log retention:" << logRetentionDays << "days.";
 }

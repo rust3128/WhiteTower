@@ -22,7 +22,7 @@ int main(int argc, char *argv[])
 
     // Отримуємо ім'я виконуваного файлу для ініціалізації логера
     const QString appName = QFileInfo(QCoreApplication::applicationFilePath()).baseName();
-    initLogger(appName);
+//    initLogger(appName);
 
 
     // --- ОБРОБКА АРГУМЕНТІВ КОМАНДНОГО РЯДКА ---
@@ -87,8 +87,28 @@ int main(int argc, char *argv[])
     }
     // ------------------------------------
 
+    // --- ЗАВАНТАЖЕННЯ НАЛАШТУВАНЬ З БД ---
     AppParams& params = AppParams::instance();
-    // Тут у майбутньому ми будемо передавати завантажені параметри в AppParams
+
+    // 1. Завантажуємо глобальні налаштування
+    QVariantMap globalSettings = dbManager.loadSettings("Global");
+    for (auto it = globalSettings.constBegin(); it != globalSettings.constEnd(); ++it) {
+        params.setParam("Global", it.key(), it.value());
+    }
+
+    // 2. Завантажуємо налаштування конкретного додатку
+    QVariantMap appSettings = dbManager.loadSettings(appName);
+    for (auto it = appSettings.constBegin(); it != appSettings.constEnd(); ++it) {
+        params.setParam(appName, it.key(), it.value());
+    }
+
+    if (globalSettings.isEmpty() && appSettings.isEmpty()) {
+        logWarning() << "No settings found in the database for this application.";
+    } else {
+        logInfo() << "Successfully loaded" << (globalSettings.count() + appSettings.count()) << "settings from the database.";
+    }
+
+    initLogger(appName);
 
     logInfo() << "Server is running... (simulation)";
 
