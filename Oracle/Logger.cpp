@@ -149,3 +149,4 @@ void initLogger(const QString& appName)
               << ". Log Level:" << logLevel
               << ". Log retention:" << logRetentionDays << "days.";
 }
+// pvayd dkdfksf
