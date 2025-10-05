@@ -4,28 +4,27 @@
 #include <QSqlDatabase>
 #include <QString>
 
-class ConfigManager; // Попереднє оголошення, щоб уникнути циклічної залежності
+class ConfigManager;
 
 class DbManager
 {
 public:
-    DbManager();
-    ~DbManager();
+    // Статичний метод для доступу до єдиного екземпляра
+    static DbManager& instance();
 
-    // Метод для підключення до БД з використанням параметрів з ConfigManager
     bool connect(const ConfigManager& config);
-
-    // Перевірка статусу підключення
     bool isConnected() const;
-
-    // Метод для отримання останньої помилки
     QString lastError() const;
-    // Завантажує налаштування для вказаного додатку та глобальні
     QVariantMap loadSettings(const QString& appName);
 
+private:
+    DbManager(); // Конструктор тепер приватний
+    ~DbManager();
 
+    // Забороняємо копіювання
+    DbManager(const DbManager&) = delete;
+    DbManager& operator=(const DbManager&) = delete;
 private:
     QSqlDatabase m_db;
 };
-
 #endif // DBMANAGER_H

@@ -5,6 +5,12 @@
 #include <QSqlQuery>
 #include <QVariantMap>
 
+DbManager& DbManager::instance()
+{
+    static DbManager self;
+    return self;
+}
+
 DbManager::DbManager()
 {
     // QSqlDatabase::addDatabase() створює з'єднання з унікальним іменем

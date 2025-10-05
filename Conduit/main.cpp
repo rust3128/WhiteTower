@@ -80,25 +80,22 @@ int main(int argc, char *argv[])
     logInfo() << "Configuration loaded successfully.";
     configManager.printToConsole(); // Виведемо параметри в лог для перевірки
 
-    // --- ПІДКЛЮЧЕННЯ ДО БАЗИ ДАНИХ ---
-    DbManager dbManager;
-    if (!dbManager.connect(configManager)) {
+    if (!DbManager::instance().connect(configManager)) {
         logCritical() << "Application will be terminated due to database connection failure.";
-        return 1; // Завершуємо роботу з помилкою
+        return 1;
     }
-    // ------------------------------------
 
     // --- ЗАВАНТАЖЕННЯ НАЛАШТУВАНЬ З БД ---
     AppParams& params = AppParams::instance();
 
     // 1. Завантажуємо глобальні налаштування
-    QVariantMap globalSettings = dbManager.loadSettings("Global");
+    QVariantMap globalSettings = DbManager::instance().loadSettings("Global");
     for (auto it = globalSettings.constBegin(); it != globalSettings.constEnd(); ++it) {
         params.setParam("Global", it.key(), it.value());
     }
 
     // 2. Завантажуємо налаштування конкретного додатку
-    QVariantMap appSettings = dbManager.loadSettings(appName);
+    QVariantMap appSettings = DbManager::instance().loadSettings(appName);
     for (auto it = appSettings.constBegin(); it != appSettings.constEnd(); ++it) {
         params.setParam(appName, it.key(), it.value());
     }
