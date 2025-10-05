@@ -11,6 +11,7 @@
 #include "Oracle/AppParams.h"
 #include "Oracle/ConfigManager.h"
 #include "Oracle/DbManager.h"
+#include "WebServer.h"
 
 int main(int argc, char *argv[])
 {
@@ -22,7 +23,7 @@ int main(int argc, char *argv[])
 
     // Отримуємо ім'я виконуваного файлу для ініціалізації логера
     const QString appName = QFileInfo(QCoreApplication::applicationFilePath()).baseName();
-//    initLogger(appName);
+    preInitLogger(appName);
 
 
     // --- ОБРОБКА АРГУМЕНТІВ КОМАНДНОГО РЯДКА ---
@@ -108,11 +109,20 @@ int main(int argc, char *argv[])
         logInfo() << "Successfully loaded" << (globalSettings.count() + appSettings.count()) << "settings from the database.";
     }
 
-    initLogger(appName);
+    reconfigureLoggerFilters();
 
-    logInfo() << "Server is running... (simulation)";
+    // Отримуємо порт з налаштувань бази даних, з резервним значенням 8080
+    quint16 port = params.getParam(appName, "ServerPort", 8080).toUInt();
 
-    // Поки що сервер не запускаємо, просто виходимо через 3 секунди
-    QTimer::singleShot(3000, &a, &QCoreApplication::quit);
+    WebServer webServer(port);
+    if (!webServer.start()) {
+        logCritical() << "Не вдалося ініціалізувати та запустити веб-сервер. Завершення роботи.";
+        return 1; // Вийти з помилкою
+    }
+
+    logInfo() << "Додаток запущено. Натисніть Ctrl+C для виходу.";
+
+    // a.exec() запускає цикл подій Qt, що необхідно для того, щоб сервер
+    // обробляв вхідні запити. Додаток буде працювати, поки ви його не закриєте.
     return a.exec();
 }

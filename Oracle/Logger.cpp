@@ -93,10 +93,7 @@ static void customLogMessageHandler(QtMsgType type, const QMessageLogContext &co
 
 #ifndef QT_NO_DEBUG
     {
-        // === ВИПРАВЛЕНО ТУТ ===
-        // Зберігаємо ім'я файлу в змінну типу QString, а не const char*
         QString file = QFileInfo(context.file).fileName();
-
         QString logContext = QString("[%1@%2:%3]")
                                  .arg(context.function)
                                  .arg(file)
@@ -116,37 +113,45 @@ static void customLogMessageHandler(QtMsgType type, const QMessageLogContext &co
 
     // 4. --- Дублювання в консоль (тільки для Debug) ---
 #ifndef QT_NO_DEBUG
+    // === ЗМІНЕНО ТУТ: Використовуємо QTextStream замість std::cout/cerr ===
     if (type == QtWarningMsg || type == QtCriticalMsg || type == QtFatalMsg) {
-        std::cerr << qPrintable(formattedMessage);
+        QTextStream(stderr) << formattedMessage;
     } else {
-        std::cout << qPrintable(formattedMessage);
+        QTextStream(stdout) << formattedMessage;
     }
 #endif
 }
 
-void initLogger(const QString& appName)
+// Ця функція викликається на самому старті програми
+void preInitLogger(const QString& appName)
 {
+    // 1. Ініціалізуємо глобальні змінні для шляху та імені
+    g_logFilePrefix = appName;
+    g_logDirectoryPath = QCoreApplication::applicationDirPath() + "/Logs";
+
+    // 2. Встановлюємо наш обробник
     qInstallMessageHandler(customLogMessageHandler);
 
-    // --- ВИКОРИСТОВУЄМО ПАРАМЕТРИ З БД ---
+    // 3. Встановлюємо максимально дозвільний фільтр за замовчуванням
+    QLoggingCategory::setFilterRules(QStringLiteral("logApp.debug=true"));
+}
+
+// Ця функція викликається після завантаження налаштувань з БД
+void reconfigureLoggerFilters()
+{
     AppParams& params = AppParams::instance();
 
-    // Отримуємо LogLevel. Якщо в БД його немає, за замовчуванням буде "INFO"
+    QString appName = g_logFilePrefix; // Ми вже зберегли ім'я
     QString logLevel = params.getParam(appName, "LogLevel", "INFO").toString().toUpper();
-
-    // Отримуємо LogRetentionDays. Якщо немає, за замовчуванням буде 7
     int logRetentionDays = params.getParam(appName, "LogRetentionDays", 7).toInt();
-    // ------------------------------------
 
-    // Встановлюємо правило фільтрації на основі значення з БД
-    // Наприклад, "logApp.DEBUG=true" або "logApp.INFO=true"
     QString filterRule = QString("logApp.%1=true").arg(logLevel);
     QLoggingCategory::setFilterRules(filterRule);
 
+    // Очищення логів запускаємо вже тут, коли маємо актуальний retention-період
     cleanupOldLogs(logRetentionDays);
 
-    logInfo() << "Logger initialized for" << appName
-              << ". Log Level:" << logLevel
+    logInfo() << "Logger filters reconfigured. Log Level:" << logLevel
               << ". Log retention:" << logRetentionDays << "days.";
 }
-// pvayd dkdfksf
+

@@ -15,4 +15,8 @@ Q_DECLARE_LOGGING_CATEGORY(logApp)
 // Тепер функція приймає ім'я додатку
 void initLogger(const QString& appName);
 
+// Нові функції
+void preInitLogger(const QString& appName); // Для початкового налаштування
+void reconfigureLoggerFilters();          // Для оновлення фільтрів
+
 #endif // LOGGER_H

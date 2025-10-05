@@ -9,11 +9,13 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core Sql)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Sql)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core Sql Network HttpServer)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Sql Network HttpServer)
 
 add_executable(Conduit
   main.cpp
+  WebServer.h
+  WebServer.cpp
 )
 
 target_include_directories(Conduit PRIVATE
@@ -26,6 +28,8 @@ target_include_directories(Conduit PRIVATE
 target_link_libraries(Conduit PRIVATE
     Qt6::Core
     Qt6::Sql
+    Qt6::Network
+    Qt6::HttpServer
     Oracle)
 
 include(GNUInstallDirs)
