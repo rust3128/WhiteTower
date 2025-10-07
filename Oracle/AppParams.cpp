@@ -14,6 +14,11 @@ QString init_test_constant()
 {
     return "Hello from Oracle library!";
 }
+
+QString init_api_base_url() {
+    return "http://localhost:8080";
+}
+
 }
 
 AppParams::AppParams(QObject *parent)
@@ -21,6 +26,7 @@ AppParams::AppParams(QObject *parent)
     // Конструктор тепер ініціалізує цілу групу параметрів одним рядком!
     , crypto(init_crypto_config())
     , TEST_CONSTANT(init_test_constant())
+    , API_BASE_URL(init_api_base_url())
 {
 }
 

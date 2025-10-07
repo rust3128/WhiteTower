@@ -1,0 +1,32 @@
+﻿# Цей файл генерується CMake і виконується після кожної збірки.
+set(BUILD_NUMBER_FILE "@BUILD_NUMBER_FILE@")
+set(VERSION_H_IN_PATH "@VERSION_H_IN_PATH@")
+set(GENERATED_VERSION_H_PATH "@GENERATED_VERSION_H_PATH@")
+
+file(READ "${BUILD_NUMBER_FILE}" _current_build_number)
+string(STRIP "${_current_build_number}" _current_build_number)
+
+if(NOT "${_current_build_number}" MATCHES "^[0-9]+$")
+    set(_current_build_number 0)
+endif()
+
+math(EXPR _new_build_number "${_current_build_number} + 1")
+file(WRITE "${BUILD_NUMBER_FILE}" "${_new_build_number}")
+message(STATUS "POST-BUILD SCRIPT: Оновлено build_number.txt до: ${_new_build_number}")
+
+# === ВИПРАВЛЕНО ТУТ: Використовуємо універсальні змінні ===
+set(VERSION_MAJOR "@PROJECT_VERSION_MAJOR@")
+set(VERSION_MINOR "@PROJECT_VERSION_MINOR@")
+set(VERSION_BUILD "${_new_build_number}")
+
+string(TIMESTAMP BUILD_DATE "%d.%m.%Y")
+string(TIMESTAMP BUILD_TIME "%H:%M:%S")
+string(TIMESTAMP BUILD_DATETIME "%d.%m.%Y %H:%M:%S")
+
+# Генеруємо version.h
+configure_file(
+    "${VERSION_H_IN_PATH}"
+    "${GENERATED_VERSION_H_PATH}"
+    @ONLY
+)
+message(STATUS "POST-BUILD SCRIPT: Оновлено ${GENERATED_VERSION_H_PATH} після інкременту.")

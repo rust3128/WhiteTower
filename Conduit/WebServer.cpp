@@ -1,6 +1,10 @@
 #include "WebServer.h"
 #include "Oracle/Logger.h"
 #include "Oracle/DbManager.h" // Підключаємо для перевірки статусу БД
+#include "version.h"
+#include "Oracle/SessionManager.h"
+#include "Oracle/User.h"
+
 #include <QHttpServer>
 #include <QHttpServerRequest>
 #include <QJsonObject>        // Для створення JSON-відповіді
@@ -24,6 +28,10 @@ void WebServer::setupRoutes()
     // Додаємо новий маршрут /status
     m_httpServer->route("/status", [this](const QHttpServerRequest &request) {
         return handleStatusRequest(request);
+    });
+
+    m_httpServer->route("/api/login", QHttpServerRequest::Method::Post, [this](const QHttpServerRequest &request) {
+        return handleLoginRequest(request);
     });
 }
 
@@ -80,13 +88,37 @@ QHttpServerResponse WebServer::handleRootRequest(const QHttpServerRequest &reque
     return createTextResponse("Hello from Conduit Server!", QHttpServerResponse::StatusCode::Ok);
 }
 
+/**
+ * @api {get} /status Отримати статус сервера
+ * @apiName GetStatus
+ * @apiGroup Server
+ * @apiVersion 1.0.0
+ *
+ * @apiDescription Цей маршрут надає базову інформацію про стан сервера,
+ * версію додатку та статус підключення до бази даних.
+ *
+ * @apiSuccess {String} application_version Повна версія додатку (напр., "1.0.12").
+ * @apiSuccess {String} build_date Дата та час збірки цього екземпляра сервера.
+ * @apiSuccess {String} database_status Статус підключення до бази даних ("connected" або "disconnected").
+ * @apiSuccess {String} server_time Поточний час сервера в форматі ISO 8601.
+ *
+ * @apiSuccessExample {json} Приклад успішної відповіді:
+ * HTTP/1.1 200 OK
+ * {
+ * "application_version": "1.0.12",
+ * "build_date": "06.10.2025 10:38:00",
+ * "database_status": "connected",
+ * "server_time": "2025-10-06T10:38:15"
+ * }
+ */
+
 QHttpServerResponse WebServer::handleStatusRequest(const QHttpServerRequest &request)
 {
     logRequest(request);
 
     QJsonObject json;
-    json["application_version"] = QCoreApplication::applicationVersion();
-    json["server_time"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+    json["application_version"] = PROJECT_VERSION_STR; // Використовуємо універсальний макрос
+    json["build_date"] = PROJECT_BUILD_DATETIME;
 
     bool isDbConnected = DbManager::instance().isConnected();
     json["database_status"] = isDbConnected ? "connected" : "disconnected";
@@ -105,4 +137,33 @@ bool WebServer::start()
     }
     logInfo() << QString("Сервер слухає на http://localhost:%1").arg(port);
     return true;
+}
+
+
+QHttpServerResponse WebServer::handleLoginRequest(const QHttpServerRequest &request)
+{
+    logRequest(request);
+
+    // 1. Читаємо тіло запиту і парсимо JSON
+    const QByteArray body = request.body();
+    QJsonDocument doc = QJsonDocument::fromJson(body);
+
+    if (doc.isNull() || !doc.isObject() || !doc.object().contains("login")) {
+        QJsonObject error{{"error", "Invalid JSON or missing 'login' field"}};
+        return createJsonResponse(error, QHttpServerResponse::StatusCode::BadRequest); // 400 Bad Request
+    }
+
+    // 2. Викликаємо SessionManager з логіном від клієнта
+    QString login = doc.object().value("login").toString();
+    const User* user = SessionManager::instance().login(login);
+
+    // 3. Обробляємо результат
+    if (user) {
+        // Успіх: повертаємо повний профіль користувача
+        return createJsonResponse(user->toJson(), QHttpServerResponse::StatusCode::Ok); // 200 OK
+    } else {
+        // Помилка: користувач заблокований або інша проблема
+        QJsonObject error{{"error", "User identification failed or user is inactive"}};
+        return createJsonResponse(error, QHttpServerResponse::StatusCode::Forbidden); // 403 Forbidden
+    }
 }

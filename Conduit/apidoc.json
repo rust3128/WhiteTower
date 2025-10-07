@@ -1,0 +1,7 @@
+{
+  "name": "Conduit API",
+  "version": "1.0.0",
+  "description": "Документація API для веб-сервера Conduit",
+  "title": "Conduit API Docs",
+  "url" : "http://localhost:8080"
+}

@@ -5,6 +5,7 @@
 #include <QString>
 
 class ConfigManager;
+class User;
 
 class DbManager
 {
@@ -16,6 +17,9 @@ public:
     bool isConnected() const;
     QString lastError() const;
     QVariantMap loadSettings(const QString& appName);
+
+    int getOrCreateUser(const QString& login, bool& ok);
+    User* loadUser(int userId);
 
 private:
     DbManager(); // Конструктор тепер приватний

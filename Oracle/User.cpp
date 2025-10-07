@@ -1,0 +1,49 @@
+#include "User.h"
+
+#include <QJsonArray>
+
+User::User(int id, QString login, QString fio, bool isActive, QStringList roles)
+    : m_id(id), m_login(login), m_fio(fio), m_isActive(isActive), m_roles(roles)
+{
+}
+
+int User::id() const { return m_id; }
+const QString& User::login() const { return m_login; }
+const QString& User::fio() const { return m_fio; }
+bool User::isActive() const { return m_isActive; }
+const QStringList& User::roles() const { return m_roles; }
+
+bool User::hasRole(const QString& roleName) const
+{
+    return m_roles.contains(roleName, Qt::CaseInsensitive);
+}
+
+QJsonObject User::toJson() const
+{
+    QJsonObject json;
+    json["user_id"] = m_id;
+    json["login"] = m_login;
+    json["fio"] = m_fio;
+    json["is_active"] = m_isActive;
+    json["roles"] = QJsonArray::fromStringList(m_roles);
+    return json;
+}
+
+User* User::fromJson(const QJsonObject& json)
+{
+    if (!json.contains("user_id") || !json.contains("login"))
+        return nullptr;
+
+    int id = json["user_id"].toInt();
+    QString login = json["login"].toString();
+    QString fio = json["fio"].toString();
+    bool isActive = json["is_active"].toBool();
+
+    QStringList roles;
+    if (json.contains("roles") && json["roles"].isArray()) {
+        for (const auto& val : json["roles"].toArray()) {
+            roles.append(val.toString());
+        }
+    }
+    return new User(id, login, fio, isActive, roles);
+}

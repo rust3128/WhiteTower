@@ -27,6 +27,8 @@ private:
     QHttpServerResponse handleRootRequest(const QHttpServerRequest &request);
     // маршрут /status
     QHttpServerResponse handleStatusRequest(const QHttpServerRequest &request);
+    // маршрут /api/login
+    QHttpServerResponse handleLoginRequest(const QHttpServerRequest &request);
 private:
     QHttpServer* m_httpServer;
     quint16 m_port;
