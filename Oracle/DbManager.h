@@ -20,6 +20,8 @@ public:
 
     int getOrCreateUser(const QString& login, bool& ok);
     User* loadUser(int userId);
+    QList<User*> loadAllUsers();
+    QList<QVariantMap> loadAllRoles();
 
 private:
     DbManager(); // Конструктор тепер приватний

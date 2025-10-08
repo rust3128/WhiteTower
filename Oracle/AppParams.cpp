@@ -26,7 +26,6 @@ AppParams::AppParams(QObject *parent)
     // Конструктор тепер ініціалізує цілу групу параметрів одним рядком!
     , crypto(init_crypto_config())
     , TEST_CONSTANT(init_test_constant())
-    , API_BASE_URL(init_api_base_url())
 {
 }
 

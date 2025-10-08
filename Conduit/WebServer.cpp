@@ -11,6 +11,7 @@
 #include <QJsonDocument>
 #include <QCoreApplication>   // Для отримання версії
 #include <QMetaEnum>
+#include <QJsonArray>
 
 WebServer::WebServer(quint16 port, QObject *parent)
     : QObject{parent}, m_port(port)
@@ -32,6 +33,20 @@ void WebServer::setupRoutes()
 
     m_httpServer->route("/api/login", QHttpServerRequest::Method::Post, [this](const QHttpServerRequest &request) {
         return handleLoginRequest(request);
+    });
+
+    m_httpServer->route("/api/users", QHttpServerRequest::Method::Get, [this](const QHttpServerRequest &request) {
+        return handleGetUsersRequest(request);
+    });
+
+    // <arg> - це плейсхолдер для ID користувача
+    m_httpServer->route("/api/users/<arg>", QHttpServerRequest::Method::Get,
+                        [this](const QString &userId, const QHttpServerRequest &request) {
+                            return handleGetUserByIdRequest(userId, request);
+                        });
+
+    m_httpServer->route("/api/roles", QHttpServerRequest::Method::Get, [this](const QHttpServerRequest &request) {
+        return handleGetRolesRequest(request);
     });
 }
 
@@ -139,7 +154,54 @@ bool WebServer::start()
     return true;
 }
 
-
+/**
+ * @api {post} /api/login Авторизація користувача
+ * @apiName LoginUser
+ * @apiGroup User
+ * @apiVersion 1.0.0
+ *
+ * @apiDescription Цей маршрут дозволяє користувачу увійти в систему, використовуючи свій логін.
+ * Успішна авторизація повертає повний профіль користувача, інакше - помилку.
+ *
+ * @apiBody {String} login Унікальний логін користувача. Передається в тілі запиту у форматі JSON.
+ *
+ * @apiParamExample {json} Приклад запиту:
+ * HTTP/1.1 200 OK
+ * {
+ * "login": "john_doe"
+ * }
+ * * @apiSuccess {Object} user Об'єкт, що містить повну інформацію про користувача.
+ * @apiSuccess {String} user.id Унікальний ідентифікатор користувача.
+ * @apiSuccess {String} user.login Логін користувача.
+ * @apiSuccess {String} user.name Повне ім'я користувача.
+ * @apiSuccess {String} user.role Роль користувача (напр., "admin", "user").
+ * @apiSuccess {Boolean} user.isActive Статус активності користувача.
+ *
+ * @apiSuccessExample {json} Приклад успішної відповіді:
+ * HTTP/1.1 200 OK
+ * {
+ * "id": "abc-123",
+ * "login": "john_doe",
+ * "name": "John Doe",
+ * "role": "user",
+ * "isActive": true
+ * }
+ *
+ * @apiError (400 Bad Request) InvalidInput Некоректний JSON або відсутнє поле 'login'.
+ * @apiError (403 Forbidden) UserInactive Ідентифікація користувача не вдалася, або користувач заблокований.
+ *
+ * @apiErrorExample {json} Приклад помилки 400 Bad Request:
+ * HTTP/1.1 400 Bad Request
+ * {
+ * "error": "Invalid JSON or missing 'login' field"
+ * }
+ *
+ * @apiErrorExample {json} Приклад помилки 403 Forbidden:
+ * HTTP/1.1 403 Forbidden
+ * {
+ * "error": "User identification failed or user is inactive"
+ * }
+ */
 QHttpServerResponse WebServer::handleLoginRequest(const QHttpServerRequest &request)
 {
     logRequest(request);
@@ -166,4 +228,188 @@ QHttpServerResponse WebServer::handleLoginRequest(const QHttpServerRequest &requ
         QJsonObject error{{"error", "User identification failed or user is inactive"}};
         return createJsonResponse(error, QHttpServerResponse::StatusCode::Forbidden); // 403 Forbidden
     }
+}
+
+/**
+ * @api {get} /api/users Отримати список користувачів
+ * @apiName GetUsers
+ * @apiGroup User
+ * @apiVersion 1.0.0
+ *
+ * @apiDescription Цей маршрут повертає список усіх зареєстрованих користувачів.
+ * Відповідь містить масив об'єктів, кожен з яких представляє повний профіль користувача.
+ *
+ * @apiSuccess {Object[]} users Масив об'єктів, що містять інформацію про користувачів.
+ * @apiSuccess {String} users.id Унікальний ідентифікатор користувача.
+ * @apiSuccess {String} users.login Логін користувача.
+ * @apiSuccess {String} users.name Повне ім'я користувача.
+ * @apiSuccess {String} users.role Роль користувача (напр., "admin", "user").
+ * @apiSuccess {Boolean} users.isActive Статус активності користувача.
+ *
+ * @apiSuccessExample {json} Приклад успішної відповіді:
+ * HTTP/1.1 200 OK
+ * [
+ * {
+ * "id": "abc-123",
+ * "login": "john_doe",
+ * "name": "John Doe",
+ * "role": "user",
+ * "isActive": true
+ * },
+ * {
+ * "id": "xyz-456",
+ * "login": "jane_doe",
+ * "name": "Jane Doe",
+ * "role": "admin",
+ * "isActive": true
+ * }
+ * ]
+ *
+ * @apiError (500 Internal Server Error) ServerError Внутрішня помилка сервера. Може виникнути, якщо не вдалося підключитися до бази даних або виникла інша непередбачувана помилка.
+ *
+ * @apiErrorExample {json} Приклад помилки:
+ * HTTP/1.1 500 Internal Server Error
+ * {
+ * "error": "Internal Server Error"
+ * }
+ */
+QHttpServerResponse WebServer::handleGetUsersRequest(const QHttpServerRequest &request)
+{
+    logRequest(request);
+
+    QList<User*> users = DbManager::instance().loadAllUsers();
+    QJsonArray jsonArray;
+    for (User* user : users) {
+        jsonArray.append(user->toJson());
+    }
+
+    // Важливо: не забудьте очистити пам'ять після того, як скопіювали дані
+    qDeleteAll(users);
+
+    return QHttpServerResponse(jsonArray); // QHttpServer сам зробить правильну JSON-відповідь
+}
+
+/**
+ * @api {get} /api/users/:userId Отримати інформацію про користувача за ID
+ * @apiName GetUserById
+ * @apiGroup User
+ * @apiVersion 1.0.0
+ *
+ * @apiDescription Цей маршрут дозволяє отримати повний профіль користувача, використовуючи його унікальний ідентифікатор.
+ *
+ * @apiParam {Number} userId Унікальний ідентифікатор користувача. Це число, що передається в URL.
+ *
+ * @apiSuccess {Object} user Об'єкт, що містить повну інформацію про користувача.
+ * @apiSuccess {String} user.id Унікальний ідентифікатор користувача.
+ * @apiSuccess {String} user.login Логін користувача.
+ * @apiSuccess {String} user.name Повне ім'я користувача.
+ * @apiSuccess {String} user.role Роль користувача (напр., "admin", "user").
+ * @apiSuccess {Boolean} user.isActive Статус активності користувача.
+ *
+ * @apiSuccessExample {json} Приклад успішної відповіді:
+ * HTTP/1.1 200 OK
+ * {
+ * "id": "123",
+ * "login": "john_doe",
+ * "name": "John Doe",
+ * "role": "user",
+ * "isActive": true
+ * }
+ *
+ * @apiError (400 Bad Request) InvalidInput ID користувача має некоректний формат.
+ * @apiError (404 Not Found) UserNotFound Користувача з вказаним ID не знайдено.
+ *
+ * @apiErrorExample {json} Приклад помилки 400 Bad Request:
+ * HTTP/1.1 400 Bad Request
+ * {
+ * "error": "Invalid user ID format"
+ * }
+ *
+ * @apiErrorExample {json} Приклад помилки 404 Not Found:
+ * HTTP/1.1 404 Not Found
+ * {
+ * "error": "User not found"
+ * }
+ */
+QHttpServerResponse WebServer::handleGetUserByIdRequest(const QString &userId, const QHttpServerRequest &request)
+{
+    logRequest(request);
+
+    bool ok;
+    int id = userId.toInt(&ok); // Конвертуємо отриманий рядок в число
+
+    if (!ok) {
+        QJsonObject error{{"error", "Invalid user ID format"}};
+        return createJsonResponse(error, QHttpServerResponse::StatusCode::BadRequest); // 400 Bad Request
+    }
+
+    User* user = DbManager::instance().loadUser(id);
+
+    if (user) {
+        QJsonObject json = user->toJson();
+        delete user;
+        return createJsonResponse(json, QHttpServerResponse::StatusCode::Ok);
+    } else {
+        QJsonObject error{{"error", "User not found"}};
+        return createJsonResponse(error, QHttpServerResponse::StatusCode::NotFound); // 404 Not Found
+    }
+}
+
+/**
+ * @api {get} /api/roles Отримати список ролей
+ * @apiName GetRoles
+ * @apiGroup User
+ * @apiVersion 1.0.0
+ *
+ * @apiDescription Цей маршрут повертає список усіх доступних ролей користувачів.
+ * Відповідь містить масив об'єктів, кожен з яких представляє одну роль.
+ *
+ * @apiSuccess {Object[]} roles Масив об'єктів, що містять інформацію про ролі.
+ * @apiSuccess {Number} roles.id Унікальний ідентифікатор ролі.
+ * @apiSuccess {String} roles.name Назва ролі (напр., "admin", "user", "guest").
+ *
+ * @apiSuccessExample {json} Приклад успішної відповіді:
+ * HTTP/1.1 200 OK
+ * [
+ * {
+ * "id": 1,
+ * "name": "admin"
+ * },
+ * {
+ * "id": 2,
+ * "name": "user"
+ * },
+ * {
+ * "id": 3,
+ * "name": "guest"
+ * }
+ * ]
+ *
+ * @apiError (500 Internal Server Error) ServerError Внутрішня помилка сервера. Може виникнути, якщо не вдалося підключитися до бази даних.
+ *
+ * @apiErrorExample {json} Приклад помилки:
+ * HTTP/1.1 500 Internal Server Error
+ * {
+ * "error": "Internal Server Error"
+ * }
+ */
+QHttpServerResponse WebServer::handleGetRolesRequest(const QHttpServerRequest &request)
+{
+    logRequest(request);
+
+    // 1. Отримуємо дані з БД
+    QList<QVariantMap> rolesData = DbManager::instance().loadAllRoles();
+
+    // 2. Конвертуємо дані в JSON-масив
+    QJsonArray jsonArray;
+    for (const QVariantMap &roleMap : rolesData) {
+        jsonArray.append(QJsonObject::fromVariantMap(roleMap));
+    }
+
+    // 3. Створюємо та логуємо відповідь
+    QByteArray bodyJson = QJsonDocument(jsonArray).toJson(QJsonDocument::Compact);
+    logInfo().noquote() << QString("Response: status 200, type: application/json, body: %1")
+                               .arg(QString::fromUtf8(bodyJson));
+
+    return QHttpServerResponse(jsonArray);
 }

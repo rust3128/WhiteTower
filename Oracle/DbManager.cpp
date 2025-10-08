@@ -145,3 +145,54 @@ User* DbManager::loadUser(int userId)
 
     return new User(userId, login, fio, isActive, roles);
 }
+
+
+QList<User*> DbManager::loadAllUsers()
+{
+    QList<User*> userList;
+    if (!isConnected()) return userList;
+
+    // Просто вибираємо ID всіх активних користувачів
+    QSqlQuery query(m_db);
+    query.prepare("SELECT user_id FROM USERS WHERE is_active = 1 ORDER BY user_fio");
+    if (!query.exec()) {
+        logCritical() << "Failed to load all users:" << query.lastError().text();
+        return userList;
+    }
+
+    while (query.next()) {
+        int userId = query.value(0).toInt();
+        // Використовуємо вже існуючий метод для завантаження повного профілю
+        User* user = loadUser(userId);
+        if (user) {
+            userList.append(user);
+        }
+    }
+    return userList;
+}
+
+QList<QVariantMap> DbManager::loadAllRoles()
+{
+    QList<QVariantMap> roles;
+    if (!isConnected()) {
+        logCritical() << "Cannot load roles: no database connection.";
+        return roles;
+    }
+
+    QSqlQuery query(m_db);
+    query.prepare("SELECT ROLE_ID, ROLE_NAME, DESCRIPTION FROM ROLES ORDER BY ROLE_ID");
+
+    if (!query.exec()) {
+        logCritical() << "Failed to execute load all roles query:" << query.lastError().text();
+        return roles;
+    }
+
+    while (query.next()) {
+        QVariantMap role;
+        role["role_id"] = query.value("ROLE_ID");
+        role["role_name"] = query.value("ROLE_NAME");
+        role["description"] = query.value("DESCRIPTION");
+        roles.append(role);
+    }
+    return roles;
+}

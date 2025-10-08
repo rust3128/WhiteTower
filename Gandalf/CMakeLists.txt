@@ -17,6 +17,10 @@ add_executable(Gandalf
     main.cpp
     MainWindow.h
     MainWindow.cpp
+    mainwindow.ui
+    resource.qrc
+    Users/userlistdialog.h Users/userlistdialog.cpp Users/userlistdialog.ui
+    Users/usereditdialog.h Users/usereditdialog.cpp Users/usereditdialog.ui
 )
 
 # Вказуємо, де шукати заголовні файли (зокрема, з нашої бібліотеки Oracle)

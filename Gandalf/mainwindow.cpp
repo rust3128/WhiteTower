@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "version.h"
 #include "./ui_mainwindow.h"
+#include "Users/userlistdialog.h"
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -16,3 +17,10 @@ MainWindow::~MainWindow()
 {
     delete ui;
 }
+
+void MainWindow::on_actionUsers_triggered()
+{
+    UserListDialog *userList = new UserListDialog();
+    userList->exec();
+}
+

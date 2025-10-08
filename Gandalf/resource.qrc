@@ -1,0 +1,7 @@
+<RCC>
+    <qresource prefix="/">
+        <file>res/Translations/qtbase_uk.qm</file>
+        <file>res/Images/user_list.png</file>
+        <file>res/Images/user_edit.png</file>
+    </qresource>
+</RCC>

@@ -31,7 +31,7 @@ public:
     // Інші константи залишаються як є (поки що)
     const QString TEST_CONSTANT;
 
-    const QString API_BASE_URL;
+
 
 private:
     explicit AppParams(QObject *parent = nullptr);
