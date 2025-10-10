@@ -4,6 +4,8 @@
 #include "Logger.h"
 #include <QCoreApplication>
 #include <QProcessEnvironment>
+#include <QCryptographicHash>
+#include <QDateTime>
 
 SessionManager& SessionManager::instance()
 {
@@ -17,7 +19,40 @@ SessionManager::~SessionManager()
     delete m_currentUser;
 }
 
-const User* SessionManager::login(const QString& username)
+QPair<const User*, QString> SessionManager::login(const QString& username)
+{
+    // ... (попередня логіка ідентифікації користувача до отримання об'єкта 'user')
+    // Замість 'const User* user = ...' робимо:
+    const User* user = identifyAndLoadUser(username); // Уявна функція, що містить стару логіку
+
+    if (!user) {
+        return {nullptr, QString()}; // Повертаємо порожню пару при помилці
+    }
+
+    // --- ЛОГІКА СТВОРЕННЯ ТОКЕНА ---
+    // 1. Генеруємо унікальний токен
+    QString token = QUuid::createUuid().toString(QUuid::WithoutBraces);
+
+    // 2. Створюємо його хеш
+    QByteArray tokenHash = QCryptographicHash::hash(token.toUtf8(), QCryptographicHash::Sha256).toHex();
+
+    // 3. Встановлюємо час життя (напр., 7 днів)
+    QDateTime expiresAt = QDateTime::currentDateTime().addDays(7);
+
+    // 4. Зберігаємо хеш в базу даних
+    if (!DbManager::instance().saveSession(user->id(), tokenHash, expiresAt)) {
+        // Якщо не вдалося зберегти сесію - логін неуспішний
+        logCritical() << "Could not save session to the database for user" << user->login();
+        return {nullptr, QString()};
+    }
+
+    logInfo() << "Session created for user" << user->login();
+
+    // Повертаємо пару з об'єктом User та ОРИГІНАЛЬНИМ токеном
+    return {user, token};
+}
+
+const User* SessionManager::identifyAndLoadUser(const QString& username)
 {
     // Прибираємо перевірку isLoggedIn() і отримання логіну з оточення
     if (username.isEmpty()) {

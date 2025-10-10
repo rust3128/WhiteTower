@@ -15,6 +15,7 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Sql)
 # Список файлів з вихідним кодом для нашого додатку
 add_executable(Gandalf
     main.cpp
+    res/resources.rc
     MainWindow.h
     MainWindow.cpp
     mainwindow.ui

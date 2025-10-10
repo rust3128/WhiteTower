@@ -20,6 +20,10 @@ private slots:
     // Слот для прийому даних з сервера
     void onUserDataReceived(const QJsonObject& user);
     void onAllRolesReceived(const QJsonArray& roles);
+    void on_buttonBox_rejected();
+
+    void on_buttonBox_accepted();
+
 private:
     void populateForm();
 private:

@@ -28,6 +28,15 @@ ApiClient::ApiClient(QObject* parent) : QObject(parent)
     }
 }
 
+QNetworkRequest ApiClient::createAuthenticatedRequest(const QUrl &url)
+{
+    QNetworkRequest request(url);
+    if (!m_authToken.isEmpty()) {
+        request.setRawHeader("Authorization", ("Bearer " + m_authToken).toUtf8());
+    }
+    return request;
+}
+
 void ApiClient::login(const QString& username)
 {
     QJsonObject json;
@@ -55,8 +64,15 @@ void ApiClient::onLoginReplyFinished()
     QJsonDocument doc = QJsonDocument::fromJson(responseData);
     int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
-    if (statusCode == 200) { // OK
-        User* user = User::fromJson(doc.object());
+    if (statusCode == 200 && doc.isObject()) {
+        QJsonObject responseObj = doc.object();
+
+        // === ЗМІНЕНО ТУТ: Зберігаємо токен ===
+        if (responseObj.contains("token")) {
+            m_authToken = responseObj["token"].toString();
+        }
+
+        User* user = User::fromJson(responseObj["user"].toObject());
         if (user) {
             emit loginSuccess(user);
         } else {
@@ -76,10 +92,7 @@ void ApiClient::onLoginReplyFinished()
 
 void ApiClient::fetchAllUsers()
 {
-    QNetworkRequest request(QUrl(m_serverUrl + "/api/users"));
-    // Тут можна додати токен авторизації в майбутньому
-    // request.setRawHeader("Authorization", "Bearer ...");
-
+    QNetworkRequest request = createAuthenticatedRequest(QUrl(m_serverUrl + "/api/users"));
     QNetworkReply* reply = m_networkManager->get(request);
     connect(reply, &QNetworkReply::finished, this, &ApiClient::onUsersReplyFinished);
 }
@@ -109,8 +122,8 @@ void ApiClient::onUsersReplyFinished()
 void ApiClient::fetchUserById(int userId)
 {
     QString url = m_serverUrl + QString("/api/users/%1").arg(userId);
-    QNetworkRequest request((QUrl(url)));
-
+    // Створюємо запит з аутентифікацією
+    QNetworkRequest request = createAuthenticatedRequest(QUrl(url));
     QNetworkReply* reply = m_networkManager->get(request);
     connect(reply, &QNetworkReply::finished, this, &ApiClient::onUserDetailsReplyFinished);
 }
@@ -154,6 +167,32 @@ void ApiClient::onRolesReplyFinished()
         } else {
             emit rolesFetchFailed("Invalid response from server: expected a JSON array of roles.");
         }
+    }
+    reply->deleteLater();
+}
+
+
+void ApiClient::updateUser(int userId, const QJsonObject& userData)
+{
+    QString url = m_serverUrl + QString("/api/users/%1").arg(userId);
+    // Створюємо запит з аутентифікацією
+    QNetworkRequest request = createAuthenticatedRequest(QUrl(url));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    QNetworkReply* reply = m_networkManager->put(request, QJsonDocument(userData).toJson());
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onUserUpdateReplyFinished);
+}
+
+void ApiClient::onUserUpdateReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    if (reply->error() == QNetworkReply::NoError && (statusCode == 200 || statusCode == 204)) { // 204 No Content теж є успіхом
+        emit userUpdateSuccess();
+    } else {
+        emit userUpdateFailed(QString("HTTP %1: ").arg(statusCode) + reply->readAll());
     }
     reply->deleteLater();
 }

@@ -3,6 +3,8 @@
 
 #include <QSqlDatabase>
 #include <QString>
+#include <QJsonObject>
+#include <QDateTime>
 
 class ConfigManager;
 class User;
@@ -22,6 +24,9 @@ public:
     User* loadUser(int userId);
     QList<User*> loadAllUsers();
     QList<QVariantMap> loadAllRoles();
+    bool updateUser(int userId, const QJsonObject& userData);
+    bool saveSession(int userId, const QByteArray& tokenHash, const QDateTime& expiresAt);
+    int findUserIdByToken(const QByteArray& tokenHash);
 
 private:
     DbManager(); // Конструктор тепер приватний

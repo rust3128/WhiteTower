@@ -1,6 +1,6 @@
 #ifndef WEBSERVER_H
 #define WEBSERVER_H
-
+#include "Oracle/User.h"
 #include <QObject>
 #include <QHttpServerResponse> // Додаємо, оскільки метод повертає цей тип
 
@@ -18,6 +18,7 @@ private:
     // Метод для налаштування всіх маршрутів
     void setupRoutes();
     void logRequest(const QHttpServerRequest &request); // Допоміжний метод для логування
+    User* authenticateRequest(const QHttpServerRequest &request); // Перевіряє токен із запиту і повертає об'єкт User, якщо токен валідний
     // Замінюємо старий logResponse на нові методи-помічники
     QHttpServerResponse createTextResponse(const QByteArray &body,
                                            QHttpServerResponse::StatusCode statusCode);
@@ -35,6 +36,8 @@ private:
     QHttpServerResponse handleGetUserByIdRequest(const QString &userId, const QHttpServerRequest &request);
     // Маршрут /api/roles
     QHttpServerResponse handleGetRolesRequest(const QHttpServerRequest &request);
+    // Маршрут /api/users/<arg>
+    QHttpServerResponse handleUpdateUserRequest(const QString &userId, const QHttpServerRequest &request);
 private:
     QHttpServer* m_httpServer;
     quint16 m_port;

@@ -5,6 +5,8 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QVariantMap>
+#include <QJsonArray>
+#include <QCryptographicHash>
 
 DbManager& DbManager::instance()
 {
@@ -120,15 +122,17 @@ User* DbManager::loadUser(int userId)
 
     // Запит для отримання основних даних
     QSqlQuery userQuery(m_db);
-    userQuery.prepare("SELECT user_login, user_fio, is_active FROM USERS WHERE user_id = :id");
+    userQuery.prepare("SELECT user_login, user_fio, is_active, telegram_id, jira_token "
+                      "FROM USERS WHERE user_id = :id");
     userQuery.bindValue(":id", userId);
-    if (!userQuery.exec() || !userQuery.next()) {
-        logCritical() << "Failed to load user profile for ID" << userId << ":" << userQuery.lastError().text();
-        return nullptr;
-    }
+
+    if (!userQuery.exec() || !userQuery.next()) { /* ... */ }
+
     QString login = userQuery.value(0).toString();
     QString fio = userQuery.value(1).toString();
     bool isActive = userQuery.value(2).toBool();
+    qint64 telegramId = userQuery.value(3).toLongLong(); // Читаємо нові поля
+    QString jiraToken = userQuery.value(4).toString();  // Читаємо нові поля
 
     // Запит для отримання ролей
     QStringList roles;
@@ -143,7 +147,7 @@ User* DbManager::loadUser(int userId)
         }
     }
 
-    return new User(userId, login, fio, isActive, roles);
+     return new User(userId, login, fio, isActive, roles, telegramId, jiraToken);
 }
 
 
@@ -195,4 +199,116 @@ QList<QVariantMap> DbManager::loadAllRoles()
         roles.append(role);
     }
     return roles;
+}
+
+bool DbManager::updateUser(int userId, const QJsonObject& userData)
+{
+    if (!isConnected()) {
+        logCritical() << "Cannot update user: no DB connection";
+        return false;
+    }
+
+    // Відкриваємо транзакцію. Всі запити до commit() або rollback() будуть єдиним цілим.
+    if (!m_db.transaction()) {
+        logCritical() << "Failed to start transaction:" << m_db.lastError().text();
+        return false;
+    }
+
+    // 1. Оновлюємо основні дані в таблиці USERS
+    QSqlQuery updateQuery(m_db);
+    updateQuery.prepare("UPDATE USERS SET "
+                        "USER_FIO = :fio, "
+                        "IS_ACTIVE = :isActive, "
+                        "TELEGRAM_ID = :telegramId, "
+                        "JIRA_TOKEN = :jiraToken "
+                        "WHERE USER_ID = :id");
+    updateQuery.bindValue(":fio", userData["fio"].toString());
+    updateQuery.bindValue(":isActive", userData["is_active"].toBool());
+    updateQuery.bindValue(":telegramId", userData["telegram_id"].toVariant().toLongLong());
+    updateQuery.bindValue(":jiraToken", userData["jira_token"].toString());
+    updateQuery.bindValue(":id", userId);
+
+    if (!updateQuery.exec()) {
+        logCritical() << "Failed to update USERS table:" << updateQuery.lastError().text();
+        m_db.rollback(); // Відкочуємо транзакцію при помилці
+        return false;
+    }
+
+    // 2. Повністю видаляємо старі ролі користувача
+    QSqlQuery deleteRolesQuery(m_db);
+    deleteRolesQuery.prepare("DELETE FROM USER_ROLES WHERE USER_ID = :id");
+    deleteRolesQuery.bindValue(":id", userId);
+    if (!deleteRolesQuery.exec()) {
+        logCritical() << "Failed to delete old roles:" << deleteRolesQuery.lastError().text();
+        m_db.rollback();
+        return false;
+    }
+
+    // 3. Додаємо нові ролі
+    QJsonArray roles = userData["roles"].toArray();
+    for (const QJsonValue &roleValue : roles) {
+        QString roleName = roleValue.toString();
+
+        QSqlQuery insertRoleQuery(m_db);
+        // Вставляємо зв'язку, отримуючи ROLE_ID за його назвою
+        insertRoleQuery.prepare("INSERT INTO USER_ROLES (USER_ID, ROLE_ID) "
+                                "VALUES (:userId, (SELECT ROLE_ID FROM ROLES WHERE ROLE_NAME = :roleName))");
+        insertRoleQuery.bindValue(":userId", userId);
+        insertRoleQuery.bindValue(":roleName", roleName);
+        if (!insertRoleQuery.exec()) {
+            logCritical() << "Failed to insert new role" << roleName << ":" << insertRoleQuery.lastError().text();
+            m_db.rollback();
+            return false;
+        }
+    }
+
+    // Якщо всі кроки пройшли успішно, підтверджуємо транзакцію
+    if (!m_db.commit()) {
+        logCritical() << "Failed to commit transaction:" << m_db.lastError().text();
+        // Firebird може автоматично відкотити транзакцію при невдалому коміті, але для надійності можна викликати rollback()
+        m_db.rollback();
+        return false;
+    }
+
+    return true;
+}
+
+
+bool DbManager::saveSession(int userId, const QByteArray& tokenHash, const QDateTime& expiresAt)
+{
+    if (!isConnected()) return false;
+
+    QSqlQuery query(m_db);
+    query.prepare("INSERT INTO SESSIONS (USER_ID, TOKEN_HASH, EXPIRES_AT) VALUES (:userId, :tokenHash, :expiresAt)");
+    query.bindValue(":userId", userId);
+    query.bindValue(":tokenHash", QString(tokenHash));
+    query.bindValue(":expiresAt", expiresAt);
+
+    if (!query.exec()) {
+        logCritical() << "Failed to save session:" << query.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+
+int DbManager::findUserIdByToken(const QByteArray& tokenHash)
+{
+    if (!isConnected()) return -1;
+
+    QSqlQuery query(m_db);
+    // Шукаємо сесію за хешем, перевіряючи, що вона ще не прострочена
+    query.prepare("SELECT USER_ID FROM SESSIONS "
+                  "WHERE TOKEN_HASH = :tokenHash AND EXPIRES_AT > CURRENT_TIMESTAMP");
+    query.bindValue(":tokenHash", QString(tokenHash));
+
+    if (query.exec() && query.next()) {
+        return query.value(0).toInt(); // Повертаємо ID користувача, якщо сесія знайдена
+    }
+
+    if (query.lastError().isValid()) {
+        logCritical() << "Token validation query failed:" << query.lastError().text();
+    }
+
+    return -1; // Повертаємо -1, якщо сесія не знайдена або сталася помилка
 }

@@ -2,8 +2,10 @@
 
 #include <QJsonArray>
 
-User::User(int id, QString login, QString fio, bool isActive, QStringList roles)
-    : m_id(id), m_login(login), m_fio(fio), m_isActive(isActive), m_roles(roles)
+User::User(int id, QString login, QString fio, bool isActive, QStringList roles,
+           qint64 telegramId, const QString& jiraToken)
+    : m_id(id), m_login(login), m_fio(fio), m_isActive(isActive), m_roles(roles),
+    m_telegramId(telegramId), m_jiraToken(jiraToken)
 {
 }
 
@@ -12,6 +14,8 @@ const QString& User::login() const { return m_login; }
 const QString& User::fio() const { return m_fio; }
 bool User::isActive() const { return m_isActive; }
 const QStringList& User::roles() const { return m_roles; }
+qint64 User::telegramId() const { return m_telegramId; }
+const QString& User::jiraToken() const { return m_jiraToken; }
 
 bool User::hasRole(const QString& roleName) const
 {
@@ -26,6 +30,8 @@ QJsonObject User::toJson() const
     json["fio"] = m_fio;
     json["is_active"] = m_isActive;
     json["roles"] = QJsonArray::fromStringList(m_roles);
+    json["telegram_id"] = m_telegramId; // Додано
+    json["jira_token"] = m_jiraToken;   // Додано
     return json;
 }
 
@@ -38,6 +44,8 @@ User* User::fromJson(const QJsonObject& json)
     QString login = json["login"].toString();
     QString fio = json["fio"].toString();
     bool isActive = json["is_active"].toBool();
+    qint64 telegranId = json["telegram_id"].toInt();
+    QString jiraToken = json["jira_token"].toString();
 
     QStringList roles;
     if (json.contains("roles") && json["roles"].isArray()) {
@@ -45,5 +53,5 @@ User* User::fromJson(const QJsonObject& json)
             roles.append(val.toString());
         }
     }
-    return new User(id, login, fio, isActive, roles);
+    return new User(id, login, fio, isActive, roles, telegranId, jiraToken);
 }

@@ -2,6 +2,8 @@
 #define SESSIONMANAGER_H
 
 #include <QString>
+#include <QPair>
+
 class User; // Випереджувальне оголошення
 
 class SessionManager
@@ -9,9 +11,11 @@ class SessionManager
 public:
     static SessionManager& instance();
 
-    const User* login(const QString& username);
+    const User* identifyAndLoadUser(const QString& username);
+    QPair<const User*, QString> login(const QString& username);
     const User* currentUser() const;
     bool isLoggedIn() const;
+
 
 private:
     SessionManager();

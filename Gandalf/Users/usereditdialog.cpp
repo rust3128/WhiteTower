@@ -60,6 +60,9 @@ void UserEditDialog::populateForm()
     ui->checkBoxIsActive->setChecked(m_currentUserData["is_active"].toBool());
     ui->lineEditLogin->setReadOnly(true);
 
+    ui->lineEditTelegramId->setText(QString::number(m_currentUserData["telegram_id"].toInteger()));
+    ui->lineEditJiraToken->setText(m_currentUserData["jira_token"].toString());
+
     // 2. Динамічно створюємо прапорці для ролей
 
     // Очищуємо layout від старих віджетів, якщо вони є
@@ -92,4 +95,40 @@ void UserEditDialog::populateForm()
 }
 
 
+
+
+void UserEditDialog::on_buttonBox_rejected()
+{
+    this->reject();
+}
+
+
+void UserEditDialog::on_buttonBox_accepted()
+{
+    // 1. Збираємо дані з форми
+    QJsonObject userData;
+    userData["fio"] = ui->lineEditPIB->text();
+    userData["is_active"] = ui->checkBoxIsActive->isChecked();
+    userData["telegram_id"] = ui->lineEditTelegramId->text().toLongLong(); // Конвертуємо в число
+    userData["jira_token"] = ui->lineEditJiraToken->text();
+
+    QJsonArray rolesArray;
+    // Проходимо по всіх віджетах в нашому layout для ролей
+    for (int i = 0; i < ui->rolesLayout->count(); ++i) {
+        QCheckBox* checkBox = qobject_cast<QCheckBox*>(ui->rolesLayout->itemAt(i)->widget());
+        if (checkBox && checkBox->isChecked()) {
+            rolesArray.append(checkBox->text());
+        }
+    }
+    userData["roles"] = rolesArray;
+
+    // 2. Відправляємо дані на сервер
+    // З'єднуємо сигнал успіху з закриттям вікна
+    connect(&ApiClient::instance(), &ApiClient::userUpdateSuccess, this, &UserEditDialog::QDialog::accept);
+    // З'єднуємо сигнал помилки з показом повідомлення
+    connect(&ApiClient::instance(), &ApiClient::userUpdateFailed, this, [&](const QString& error){
+        QMessageBox::critical(this, "Помилка збереження", "Не вдалося зберегти зміни:\n" + error);
+    });
+    ApiClient::instance().updateUser(m_userId, userData);
+}
 

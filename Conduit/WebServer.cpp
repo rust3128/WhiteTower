@@ -3,7 +3,7 @@
 #include "Oracle/DbManager.h" // Підключаємо для перевірки статусу БД
 #include "version.h"
 #include "Oracle/SessionManager.h"
-#include "Oracle/User.h"
+
 
 #include <QHttpServer>
 #include <QHttpServerRequest>
@@ -12,6 +12,9 @@
 #include <QCoreApplication>   // Для отримання версії
 #include <QMetaEnum>
 #include <QJsonArray>
+#include <QCryptographicHash>
+#include <QHttpServerResponse>
+
 
 WebServer::WebServer(quint16 port, QObject *parent)
     : QObject{parent}, m_port(port)
@@ -48,6 +51,11 @@ void WebServer::setupRoutes()
     m_httpServer->route("/api/roles", QHttpServerRequest::Method::Get, [this](const QHttpServerRequest &request) {
         return handleGetRolesRequest(request);
     });
+
+    m_httpServer->route("/api/users/<arg>", QHttpServerRequest::Method::Put,
+                        [this](const QString &userId, const QHttpServerRequest &request) {
+                            return handleUpdateUserRequest(userId, request);
+                        });
 }
 
 // Допоміжний метод для логування запиту
@@ -217,12 +225,18 @@ QHttpServerResponse WebServer::handleLoginRequest(const QHttpServerRequest &requ
 
     // 2. Викликаємо SessionManager з логіном від клієнта
     QString login = doc.object().value("login").toString();
-    const User* user = SessionManager::instance().login(login);
 
-    // 3. Обробляємо результат
-    if (user) {
-        // Успіх: повертаємо повний профіль користувача
-        return createJsonResponse(user->toJson(), QHttpServerResponse::StatusCode::Ok); // 200 OK
+    // Отримуємо пару <User*, QString>
+    auto loginResult = SessionManager::instance().login(login);
+    const User* user = loginResult.first;
+    const QString token = loginResult.second;
+
+    if (user && !token.isEmpty()) {
+        // Успіх: створюємо складний JSON
+        QJsonObject responseJson;
+        responseJson["user"] = user->toJson(); // Вкладаємо об'єкт юзера
+        responseJson["token"] = token;         // Додаємо токен
+        return createJsonResponse(responseJson, QHttpServerResponse::StatusCode::Ok);
     } else {
         // Помилка: користувач заблокований або інша проблема
         QJsonObject error{{"error", "User identification failed or user is inactive"}};
@@ -277,6 +291,19 @@ QHttpServerResponse WebServer::handleGetUsersRequest(const QHttpServerRequest &r
 {
     logRequest(request);
 
+    // === БЛОК АВТЕНТИФІКАЦІЇ ===
+    User* user = authenticateRequest(request);
+    if (!user) {
+        // Якщо автентифікація не пройдена, повертаємо помилку 401 Unauthorized
+        return createJsonResponse({{"error", "Unauthorized"}}, QHttpServerResponse::StatusCode::Unauthorized);
+    }
+    // Тепер ми знаємо, хто робить запит, і можемо перевіряти його ролі
+    logDebug() << "Request authenticated for user:" << user->login();
+    // === КІНЕЦЬ БЛОКУ ===
+
+    // Якщо ми тут, значить, токен валідний. Далі можна додати перевірку ролей.
+    // if (!user->isAdmin()) { return QHttpServerResponse(QHttpServerResponse::StatusCode::Forbidden); }
+
     QList<User*> users = DbManager::instance().loadAllUsers();
     QJsonArray jsonArray;
     for (User* user : users) {
@@ -285,6 +312,7 @@ QHttpServerResponse WebServer::handleGetUsersRequest(const QHttpServerRequest &r
 
     // Важливо: не забудьте очистити пам'ять після того, як скопіювали дані
     qDeleteAll(users);
+    delete user;
 
     return QHttpServerResponse(jsonArray); // QHttpServer сам зробить правильну JSON-відповідь
 }
@@ -335,23 +363,52 @@ QHttpServerResponse WebServer::handleGetUserByIdRequest(const QString &userId, c
 {
     logRequest(request);
 
-    bool ok;
-    int id = userId.toInt(&ok); // Конвертуємо отриманий рядок в число
+    // --- 1. БЛОК АВТЕНТИФІКАЦІЇ ---
+    User* requestingUser = authenticateRequest(request);
+    if (!requestingUser) {
+        return createJsonResponse({{"error", "Unauthorized"}}, QHttpServerResponse::StatusCode::Unauthorized);
+    }
+    logDebug() << "Request authenticated for user:" << requestingUser->login();
 
+
+    // --- 2. ПЕРЕВІРКА ВХІДНИХ ДАНИХ ---
+    bool ok;
+    int targetUserId = userId.toInt(&ok);
     if (!ok) {
-        QJsonObject error{{"error", "Invalid user ID format"}};
-        return createJsonResponse(error, QHttpServerResponse::StatusCode::BadRequest); // 400 Bad Request
+        delete requestingUser; // Не забуваємо звільнити пам'ять
+        return createJsonResponse({{"error", "Invalid user ID format"}}, QHttpServerResponse::StatusCode::BadRequest);
     }
 
-    User* user = DbManager::instance().loadUser(id);
 
-    if (user) {
-        QJsonObject json = user->toJson();
-        delete user;
+    // --- 3. БЛОК АВТОРИЗАЦІЇ ---
+    if (!requestingUser->hasRole("Адміністратор") &&
+        !requestingUser->hasRole("Менеджер") &&
+        requestingUser->id() != targetUserId)
+    {
+        logWarning() << "ACCESS DENIED: User" << requestingUser->login()
+        << "tried to access profile of user ID" << targetUserId;
+        delete requestingUser; // Звільняємо пам'ять
+        return createJsonResponse({{"error", "Forbidden"}}, QHttpServerResponse::StatusCode::Forbidden);
+    }
+
+
+    // --- 4. ОСНОВНА ЛОГІКА ---
+    User* targetUser = DbManager::instance().loadUser(targetUserId);
+
+    // === ВИПРАВЛЕНО ТУТ: Створюємо і повертаємо відповідь в одному місці ===
+    if (targetUser) {
+        QJsonObject json = targetUser->toJson();
+
+        // Очищуємо пам'ять перед виходом
+        delete requestingUser;
+        delete targetUser;
+
         return createJsonResponse(json, QHttpServerResponse::StatusCode::Ok);
     } else {
-        QJsonObject error{{"error", "User not found"}};
-        return createJsonResponse(error, QHttpServerResponse::StatusCode::NotFound); // 404 Not Found
+        // Очищуємо пам'ять перед виходом
+        delete requestingUser;
+
+        return createJsonResponse({{"error", "User not found"}}, QHttpServerResponse::StatusCode::NotFound);
     }
 }
 
@@ -412,4 +469,142 @@ QHttpServerResponse WebServer::handleGetRolesRequest(const QHttpServerRequest &r
                                .arg(QString::fromUtf8(bodyJson));
 
     return QHttpServerResponse(jsonArray);
+}
+
+/**
+ * @api {put} /api/users/:userId Оновити інформацію про користувача
+ * @apiName UpdateUser
+ * @apiGroup User
+ * @apiVersion 1.0.0
+ *
+ * @apiDescription Цей маршрут оновлює дані існуючого користувача за його унікальним ідентифікатором.
+ * Передаються лише ті поля, які потрібно змінити.
+ *
+ * @apiParam {Number} userId Унікальний ідентифікатор користувача. Передається в URL.
+ *
+ * @apiBody {String} [login] Новий логін користувача (необов'язково).
+ * @apiBody {String} [name] Нове повне ім'я користувача (необов'язково).
+ * @apiBody {String} [role] Нова роль користувача (напр., "admin", "user") (необов'язково).
+ * @apiBody {Boolean} [isActive] Новий статус активності користувача (необов'язково).
+ *
+ * @apiParamExample {json} Приклад тіла запиту (зміна тільки імені):
+ * HTTP/1.1 200 OK
+ * {
+ * "name": "John D. Smith"
+ * }
+ *
+ * @apiSuccess (200 OK) Success Оновлення пройшло успішно. Успішна відповідь не містить тіла.
+ *
+ * @apiSuccessExample {json} Приклад успішної відповіді:
+ * HTTP/1.1 200 OK
+ * // Порожнє тіло
+ *
+ * @apiError (400 Bad Request) InvalidIDFormat ID користувача має некоректний формат.
+ * @apiError (400 Bad Request) InvalidJSON Некоректний формат JSON у тілі запиту.
+ * @apiError (500 Internal Server Error) DatabaseError Помилка оновлення даних у базі даних.
+ *
+ * @apiErrorExample {json} Приклад помилки 400 Bad Request (Invalid ID):
+ * HTTP/1.1 400 Bad Request
+ * {
+ * "error": "Invalid user ID format"
+ * }
+ *
+ * @apiErrorExample {json} Приклад помилки 500 Internal Server Error:
+ * HTTP/1.1 500 Internal Server Error
+ * {
+ * "error": "Failed to update user in database"
+ * }
+ */
+QHttpServerResponse WebServer::handleUpdateUserRequest(const QString &userId, const QHttpServerRequest &request)
+{
+    logRequest(request);
+
+    // --- 1. АВТЕНТИФІКАЦІЯ ---
+    // Перевіряємо токен і дізнаємось, ХТО робить запит.
+    User* requestingUser = authenticateRequest(request);
+    if (!requestingUser) {
+        return createJsonResponse({{"error", "Unauthorized"}}, QHttpServerResponse::StatusCode::Unauthorized);
+    }
+    logDebug() << "Request authenticated for user:" << requestingUser->login();
+
+
+    // --- 2. ПЕРЕВІРКА ВХІДНИХ ДАНИХ ---
+    bool ok;
+    int targetUserId = userId.toInt(&ok);
+    if (!ok) {
+        delete requestingUser;
+        return createJsonResponse({{"error", "Invalid user ID format"}}, QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    QJsonDocument doc = QJsonDocument::fromJson(request.body());
+    QJsonObject userData = doc.object();
+    if (!doc.isObject()) {
+        delete requestingUser;
+        return createJsonResponse({{"error", "Invalid JSON body"}}, QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+
+    // --- 3. АВТОРИЗАЦІЯ (ПЕРЕВІРКА ПРАВ) ---
+    // 3.1. Перевірка права на редагування цього профілю
+    if (!requestingUser->hasRole("Адміністратор") &&
+        !requestingUser->hasRole("Менеджер") &&
+        requestingUser->id() != targetUserId)
+    {
+        logWarning() << "ACCESS DENIED: User" << requestingUser->login()
+        << "tried to UPDATE profile of user ID" << targetUserId;
+        delete requestingUser;
+        return createJsonResponse({{"error", "Forbidden: You cannot edit this user"}},
+                                  QHttpServerResponse::StatusCode::Forbidden);
+    }
+
+    // 3.2. Перевірка права на зміну ролей (тільки для адміна)
+    if (userData.contains("roles") && !requestingUser->hasRole("Адміністратор")) {
+        logWarning() << "ACCESS DENIED: Non-admin user" << requestingUser->login() << "tried to change roles.";
+        delete requestingUser;
+        return createJsonResponse({{"error", "Forbidden: Only administrators can change roles"}},
+                                  QHttpServerResponse::StatusCode::Forbidden);
+    }
+
+
+    // --- 4. ОСНОВНА ЛОГІКА ---
+    // Якщо всі перевірки пройдено, оновлюємо дані в БД
+    if (DbManager::instance().updateUser(targetUserId, userData)) {
+        delete requestingUser;
+        return QHttpServerResponse(QHttpServerResponse::StatusCode::Ok); // Успіх
+    } else {
+        delete requestingUser;
+        return createJsonResponse({{"error", "Failed to update user in database"}},
+                                  QHttpServerResponse::StatusCode::InternalServerError);
+    }
+}
+
+User* WebServer::authenticateRequest(const QHttpServerRequest &request)
+{
+    // 1. Отримуємо список всіх заголовків
+    const auto &headers = request.headers();
+    QByteArray authHeader;
+
+    // 2. Проходимо по списку, щоб знайти заголовок "Authorization"
+    // Пошук нечутливий до регістру, як вимагає стандарт HTTP.
+    for (const auto &headerPair : headers) {
+        if (headerPair.first.compare("Authorization", Qt::CaseInsensitive) == 0) {
+            authHeader = headerPair.second;
+            break; // Знайшли, виходимо з циклу
+        }
+    }
+
+    // 3. Решта логіки залишається без змін
+    if (!authHeader.startsWith("Bearer ")) {
+        return nullptr;
+    }
+
+    QByteArray token = authHeader.mid(7);
+    QByteArray tokenHash = QCryptographicHash::hash(token, QCryptographicHash::Sha256).toHex();
+
+    int userId = DbManager::instance().findUserIdByToken(tokenHash);
+    if (userId > 0) {
+        return DbManager::instance().loadUser(userId);
+    }
+
+    return nullptr;
 }
