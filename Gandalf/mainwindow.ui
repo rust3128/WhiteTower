@@ -25,9 +25,10 @@
    </property>
    <widget class="QMenu" name="menu">
     <property name="title">
-     <string>Налаштування</string>
+     <string>Довідники</string>
     </property>
     <addaction name="actionUsers"/>
+    <addaction name="actionClients"/>
    </widget>
    <addaction name="menu"/>
   </widget>
@@ -39,6 +40,15 @@
    </property>
    <property name="text">
     <string>Користувачі</string>
+   </property>
+  </action>
+  <action name="actionClients">
+   <property name="icon">
+    <iconset resource="resource.qrc">
+     <normaloff>:/res/Images/cletnts_list.png</normaloff>:/res/Images/cletnts_list.png</iconset>
+   </property>
+   <property name="text">
+    <string>Клієнти</string>
    </property>
   </action>
  </widget>

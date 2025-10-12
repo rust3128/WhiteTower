@@ -101,3 +101,12 @@ bool SessionManager::isLoggedIn() const
 {
     return m_currentUser != nullptr;
 }
+
+void SessionManager::setCurrentUser(User* user)
+{
+    // Якщо вже був старий користувач, видаляємо його, щоб уникнути витоку пам'яті
+    if (m_currentUser) {
+        delete m_currentUser;
+    }
+    m_currentUser = user;
+}

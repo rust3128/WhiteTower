@@ -13,6 +13,7 @@ public:
 
     const User* identifyAndLoadUser(const QString& username);
     QPair<const User*, QString> login(const QString& username);
+    void setCurrentUser(User* user);
     const User* currentUser() const;
     bool isLoggedIn() const;
 

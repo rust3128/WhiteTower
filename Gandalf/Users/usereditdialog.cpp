@@ -1,6 +1,8 @@
 #include "usereditdialog.h"
 #include "ui_usereditdialog.h"
 #include "Oracle/ApiClient.h"
+#include "Oracle/SessionManager.h"
+#include "Oracle/User.h"
 #include <QMessageBox>
 
 UserEditDialog::UserEditDialog(int userId, QWidget *parent) :
@@ -91,6 +93,14 @@ void UserEditDialog::populateForm()
         }
 
         ui->rolesLayout->addWidget(checkBox);
+    }
+
+    // === ДОДАНО БЛОК ПЕРЕВІРКИ ПРАВ АДМІНІСТРАТОРА ===
+    const User* currentUser = SessionManager::instance().currentUser();
+    if (currentUser) {
+        // Вмикаємо або вимикаємо всю групу з ролями в залежності від того,
+        // чи є поточний користувач адміністратором.
+        ui->groupBoxRoles->setEnabled(currentUser->isAdmin());
     }
 }
 

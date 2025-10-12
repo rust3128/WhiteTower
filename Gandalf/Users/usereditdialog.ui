@@ -44,7 +44,7 @@
     </widget>
    </item>
    <item row="8" column="0" colspan="3">
-    <widget class="QGroupBox" name="groupBox">
+    <widget class="QGroupBox" name="groupBoxRoles">
      <property name="title">
       <string>Ролі</string>
      </property>

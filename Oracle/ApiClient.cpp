@@ -196,3 +196,75 @@ void ApiClient::onUserUpdateReplyFinished()
     }
     reply->deleteLater();
 }
+
+void ApiClient::fetchAllClients()
+{
+    QNetworkRequest request = createAuthenticatedRequest(QUrl(m_serverUrl + "/api/clients"));
+    QNetworkReply* reply = m_networkManager->get(request);
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onClientsReplyFinished);
+}
+
+void ApiClient::onClientsReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    if (reply->error() != QNetworkReply::NoError) {
+        emit clientsFetchFailed(reply->errorString());
+    } else {
+        QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+        if (doc.isArray()) {
+            emit clientsFetched(doc.array());
+        } else {
+            emit clientsFetchFailed("Invalid response from server: expected a JSON array of clients.");
+        }
+    }
+    reply->deleteLater();
+}
+
+void ApiClient::createClient(const QString& clientName)
+{
+    QNetworkRequest request = createAuthenticatedRequest(QUrl(m_serverUrl + "/api/clients"));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    QJsonObject json{{"client_name", clientName}};
+
+    QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(json).toJson());
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onCreateClientReplyFinished);
+}
+
+void ApiClient::onCreateClientReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) {
+        return;
+    }
+
+    // 1. Спочатку перевіряємо наявність мережевих помилок
+    if (reply->error() != QNetworkReply::NoError) {
+        emit clientCreateFailed("Network error: " + reply->errorString());
+        reply->deleteLater();
+        return;
+    }
+
+    // 2. Отримуємо статус-код відповіді
+    int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
+    // 3. Перевіряємо, чи є статус-код успішним (201 Created)
+    if (statusCode == 201) {
+        QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+        if (doc.isObject()) {
+            // Якщо все добре, відправляємо сигнал про успіх з даними нового клієнта
+            emit clientCreateSuccess(doc.object());
+        } else {
+            emit clientCreateFailed("Invalid success response from server: expected a JSON object.");
+        }
+    } else {
+        // Якщо статус-код інший, це помилка
+        QString errorBody = reply->readAll();
+        emit clientCreateFailed(QString("Failed to create client (HTTP %1): %2").arg(statusCode).arg(errorBody));
+    }
+
+    // 4. Очищуємо пам'ять
+    reply->deleteLater();
+}

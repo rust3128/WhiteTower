@@ -2,6 +2,8 @@
 #include "ui_userlistdialog.h"
 #include "Oracle/ApiClient.h"
 #include "Oracle/Logger.h"
+#include "Oracle/SessionManager.h"
+#include "Oracle/User.h"
 #include "usereditdialog.h"
 
 #include <QStandardItemModel>
@@ -74,15 +76,34 @@ void UserListDialog::on_tableView_doubleClicked(const QModelIndex &index)
 {
     if (!index.isValid()) return;
 
-    // Отримуємо ID користувача з першої колонки (яка у нас прихована)
-    int userId = m_model->item(index.row(), 0)->text().toInt();
-    logDebug() << "Opening edit dialog for user ID:" << userId;
+    // --- ПЕРЕВІРКА ПРАВ ДОСТУПУ (ВАША ІДЕЯ) ---
 
-    // Створюємо та відкриваємо діалог редагування
-    UserEditDialog dlg(userId, this); // Передаємо ID в конструктор
-    dlg.exec(); // exec() відкриває вікно модально
+    // 1. Отримуємо поточного користувача
+    const User* currentUser = SessionManager::instance().currentUser();
+    if (!currentUser) return; // Про всяк випадок
 
-    // Після того, як вікно закриється, оновлюємо список
-    ApiClient::instance().fetchAllUsers();
+    // 2. Отримуємо ID користувача, по якому клікнули
+    int targetUserId = m_model->item(index.row(), 0)->text().toInt();
+
+    // 3. Застосовуємо логіку прав
+    bool canOpenEditor = currentUser->isAdmin() ||
+                         currentUser->hasRole("Менеджер") ||
+                         (currentUser->id() == targetUserId);
+
+    if (canOpenEditor) {
+        // Якщо права є, відкриваємо вікно
+        logDebug() << "Opening edit dialog for user ID:" << targetUserId;
+        UserEditDialog dlg(targetUserId, this);
+
+        // Відкриваємо вікно і, якщо користувач зберіг зміни (натиснув ОК), оновлюємо список
+        if (dlg.exec() == QDialog::Accepted) {
+            ApiClient::instance().fetchAllUsers();
+        }
+    } else {
+        // Якщо прав немає, виводимо сповіщення
+        logWarning() << "ACCESS DENIED: User" << currentUser->login()
+                     << "tried to open editor for user ID" << targetUserId;
+        QMessageBox::warning(this, "Доступ заборонено", "У вас недостатньо прав для редагування цього користувача.");
+    }
 }
 

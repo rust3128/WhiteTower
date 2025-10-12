@@ -56,6 +56,14 @@ void WebServer::setupRoutes()
                         [this](const QString &userId, const QHttpServerRequest &request) {
                             return handleUpdateUserRequest(userId, request);
                         });
+
+    m_httpServer->route("/api/clients", QHttpServerRequest::Method::Get, [this](const QHttpServerRequest &request) {
+        return handleGetClientsRequest(request);
+    });
+
+    m_httpServer->route("/api/clients", QHttpServerRequest::Method::Post, [this](const QHttpServerRequest &request) {
+        return handleCreateClientRequest(request);
+    });
 }
 
 // Допоміжний метод для логування запиту
@@ -607,4 +615,47 @@ User* WebServer::authenticateRequest(const QHttpServerRequest &request)
     }
 
     return nullptr;
+}
+
+
+QHttpServerResponse WebServer::handleGetClientsRequest(const QHttpServerRequest &request)
+{
+    // Поки що робимо цей маршрут публічним, потім додамо автентифікацію
+    logRequest(request);
+
+    QList<QVariantMap> clientsData = DbManager::instance().loadAllClients();
+    QJsonArray jsonArray;
+    for (const QVariantMap &clientMap : clientsData) {
+        jsonArray.append(QJsonObject::fromVariantMap(clientMap));
+    }
+
+    return QHttpServerResponse(jsonArray);
+}
+
+QHttpServerResponse WebServer::handleCreateClientRequest(const QHttpServerRequest &request)
+{
+    // Автентифікуємо запит
+    User* user = authenticateRequest(request);
+    if (!user) {
+        return createJsonResponse({{"error", "Unauthorized"}}, QHttpServerResponse::StatusCode::Unauthorized);
+    }
+    // Тут можна додати перевірку, чи має користувач право створювати клієнтів, напр. if (!user->isAdmin()) ...
+    delete user; // Користувач автентифікований, для простої перевірки цього достатньо
+
+    logRequest(request);
+
+    QJsonDocument doc = QJsonDocument::fromJson(request.body());
+    if (!doc.isObject() || !doc.object().contains("client_name")) {
+        return createJsonResponse({{"error", "Invalid JSON or missing 'client_name' field"}}, QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    QString clientName = doc.object()["client_name"].toString();
+    int newClientId = DbManager::instance().createClient(clientName);
+
+    if (newClientId > 0) {
+        return createJsonResponse({{"client_id", newClientId}, {"client_name", clientName}},
+                                  QHttpServerResponse::StatusCode::Created);
+    } else {
+        return createJsonResponse({{"error", "Failed to create client in database"}}, QHttpServerResponse::StatusCode::InternalServerError);
+    }
 }

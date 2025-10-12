@@ -53,7 +53,20 @@
     </widget>
    </item>
    <item row="1" column="0" colspan="3">
-    <widget class="QTableView" name="tableView"/>
+    <widget class="QTableView" name="tableView">
+     <property name="editTriggers">
+      <set>QAbstractItemView::EditTrigger::NoEditTriggers</set>
+     </property>
+     <property name="alternatingRowColors">
+      <bool>true</bool>
+     </property>
+     <property name="selectionMode">
+      <enum>QAbstractItemView::SelectionMode::SingleSelection</enum>
+     </property>
+     <property name="selectionBehavior">
+      <enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
+     </property>
+    </widget>
    </item>
    <item row="2" column="0" colspan="3">
     <widget class="QDialogButtonBox" name="buttonBox">

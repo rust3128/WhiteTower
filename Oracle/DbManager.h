@@ -27,6 +27,8 @@ public:
     bool updateUser(int userId, const QJsonObject& userData);
     bool saveSession(int userId, const QByteArray& tokenHash, const QDateTime& expiresAt);
     int findUserIdByToken(const QByteArray& tokenHash);
+    QList<QVariantMap> loadAllClients();
+    int createClient(const QString& clientName);
 
 private:
     DbManager(); // Конструктор тепер приватний

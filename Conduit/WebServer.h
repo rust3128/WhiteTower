@@ -38,6 +38,10 @@ private:
     QHttpServerResponse handleGetRolesRequest(const QHttpServerRequest &request);
     // Маршрут /api/users/<arg>
     QHttpServerResponse handleUpdateUserRequest(const QString &userId, const QHttpServerRequest &request);
+    // Маршрут /api/clients
+    QHttpServerResponse handleGetClientsRequest(const QHttpServerRequest &request);
+    // Маршрут /api/clients", QHttpServerRequest::Method::Post,
+    QHttpServerResponse handleCreateClientRequest(const QHttpServerRequest &request);
 private:
     QHttpServer* m_httpServer;
     quint16 m_port;

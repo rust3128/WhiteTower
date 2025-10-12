@@ -21,6 +21,7 @@ public:
     static User* fromJson(const QJsonObject& json);
     qint64 telegramId() const;
     const QString& jiraToken() const;
+    bool isAdmin() const;
 private:
     int m_id;
     QString m_login;

@@ -17,6 +17,11 @@ const QStringList& User::roles() const { return m_roles; }
 qint64 User::telegramId() const { return m_telegramId; }
 const QString& User::jiraToken() const { return m_jiraToken; }
 
+bool User::isAdmin() const
+{
+    return hasRole("Адміністратор");
+}
+
 bool User::hasRole(const QString& roleName) const
 {
     return m_roles.contains(roleName, Qt::CaseInsensitive);

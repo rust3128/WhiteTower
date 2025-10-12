@@ -312,3 +312,52 @@ int DbManager::findUserIdByToken(const QByteArray& tokenHash)
 
     return -1; // Повертаємо -1, якщо сесія не знайдена або сталася помилка
 }
+
+QList<QVariantMap> DbManager::loadAllClients()
+{
+    QList<QVariantMap> clients;
+    if (!isConnected()) return clients;
+
+    QSqlQuery query(m_db);
+    // Вибираємо тільки ID та ім'я для списку
+    query.prepare("SELECT CLIENT_ID, CLIENT_NAME FROM CLIENTS WHERE IS_ACTIVE = 1 ORDER BY CLIENT_NAME");
+
+    if (!query.exec()) {
+        logCritical() << "Failed to load clients list:" << query.lastError().text();
+        return clients;
+    }
+
+    while (query.next()) {
+        QVariantMap client;
+        client["client_id"] = query.value("CLIENT_ID");
+        client["client_name"] = query.value("CLIENT_NAME");
+        clients.append(client);
+    }
+    return clients;
+}
+
+// Повертає ID нового клієнта або -1 в разі помилки
+int DbManager::createClient(const QString& clientName)
+{
+    if (!isConnected()) return -1;
+
+    // Ми не будемо використовувати транзакцію тут, оскільки це один простий запит.
+    // Транзакції потрібні для кількох пов'язаних запитів.
+
+    QSqlQuery query(m_db);
+    // === ЗМІНЕНО ТУТ: Додаємо SYNC_METHOD в запит ===
+    query.prepare("INSERT INTO CLIENTS (CLIENT_NAME, SYNC_METHOD) "
+                  "VALUES (:name, :syncMethod) RETURNING CLIENT_ID");
+    query.bindValue(":name", clientName);
+    query.bindValue(":syncMethod", "DIRECT"); // Встановлюємо 'DIRECT' як метод за замовчуванням
+
+    if (!query.exec() || !query.next()) {
+        logCritical() << "Failed to insert into CLIENTS table:" << query.lastError().text();
+        // Якщо запит не вдався, база даних автоматично відкотить зміни
+        return -1;
+    }
+
+    int newClientId = query.value(0).toInt();
+    logInfo() << "Created new client '" << clientName << "' with ID:" << newClientId;
+    return newClientId;
+}

@@ -3,6 +3,7 @@
 #include "Oracle/ApiClient.h"
 #include "Oracle/User.h"
 #include "Oracle/AppParams.h"
+#include "Oracle/SessionManager.h"
 
 #include <QApplication>
 #include <QFileInfo>
@@ -88,6 +89,7 @@ int main(int argc, char *argv[])
     MainWindow w;
     QObject::connect(&ApiClient::instance(), &ApiClient::loginSuccess, [&](User* user) {
         logInfo() << "Login successful for user:" << user->fio();
+        SessionManager::instance().setCurrentUser(user);
         w.show();
     });
 
