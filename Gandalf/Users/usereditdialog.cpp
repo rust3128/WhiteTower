@@ -13,16 +13,26 @@ UserEditDialog::UserEditDialog(int userId, QWidget *parent) :
     ui->setupUi(this);
     setWindowTitle(QString("Редагування користувача (ID: %1)").arg(m_userId));
 
-    // З'єднуємо сигнали для обох запитів
+    // === АДАПТОВАНО ТУТ ===
     connect(&ApiClient::instance(), &ApiClient::userDetailsFetched, this, &UserEditDialog::onUserDataReceived);
-    connect(&ApiClient::instance(), &ApiClient::userDetailsFetchFailed, this, [&](const QString& error) {
-        QMessageBox::critical(this, "Помилка", "Не вдалося завантажити дані користувача:\n" + error);
-        reject();
+    connect(&ApiClient::instance(), &ApiClient::userDetailsFetchFailed, this, [&](const ApiError& error) {
+        QMessageBox msgBox;
+        msgBox.setIcon(QMessageBox::Critical);
+        msgBox.setText("Не вдалося завантажити дані користувача.");
+        msgBox.setInformativeText(error.errorString);
+        msgBox.setDetailedText(QString("URL: %1\nHTTP Status: %2").arg(error.requestUrl).arg(error.httpStatusCode));
+        msgBox.exec();
+        reject(); // Закриваємо вікно з помилкою
     });
 
     connect(&ApiClient::instance(), &ApiClient::rolesFetched, this, &UserEditDialog::onAllRolesReceived);
-    connect(&ApiClient::instance(), &ApiClient::rolesFetchFailed, this, [&](const QString& error) {
-        QMessageBox::critical(this, "Помилка", "Не вдалося завантажити список ролей:\n" + error);
+    connect(&ApiClient::instance(), &ApiClient::rolesFetchFailed, this, [&](const ApiError& error) {
+        QMessageBox msgBox;
+        msgBox.setIcon(QMessageBox::Critical);
+        msgBox.setText("Не вдалося завантажити список ролей.");
+        msgBox.setInformativeText(error.errorString);
+        msgBox.setDetailedText(QString("URL: %1\nHTTP Status: %2").arg(error.requestUrl).arg(error.httpStatusCode));
+        msgBox.exec();
         reject();
     });
 
@@ -115,15 +125,13 @@ void UserEditDialog::on_buttonBox_rejected()
 
 void UserEditDialog::on_buttonBox_accepted()
 {
-    // 1. Збираємо дані з форми
+    // 1. Збираємо дані з форми (код без змін)
     QJsonObject userData;
     userData["fio"] = ui->lineEditPIB->text();
     userData["is_active"] = ui->checkBoxIsActive->isChecked();
-    userData["telegram_id"] = ui->lineEditTelegramId->text().toLongLong(); // Конвертуємо в число
+    userData["telegram_id"] = ui->lineEditTelegramId->text().toLongLong();
     userData["jira_token"] = ui->lineEditJiraToken->text();
-
     QJsonArray rolesArray;
-    // Проходимо по всіх віджетах в нашому layout для ролей
     for (int i = 0; i < ui->rolesLayout->count(); ++i) {
         QCheckBox* checkBox = qobject_cast<QCheckBox*>(ui->rolesLayout->itemAt(i)->widget());
         if (checkBox && checkBox->isChecked()) {
@@ -133,12 +141,18 @@ void UserEditDialog::on_buttonBox_accepted()
     userData["roles"] = rolesArray;
 
     // 2. Відправляємо дані на сервер
-    // З'єднуємо сигнал успіху з закриттям вікна
-    connect(&ApiClient::instance(), &ApiClient::userUpdateSuccess, this, &UserEditDialog::QDialog::accept);
-    // З'єднуємо сигнал помилки з показом повідомлення
-    connect(&ApiClient::instance(), &ApiClient::userUpdateFailed, this, [&](const QString& error){
-        QMessageBox::critical(this, "Помилка збереження", "Не вдалося зберегти зміни:\n" + error);
+    // === АДАПТОВАНО ТУТ ===
+    connect(&ApiClient::instance(), &ApiClient::userUpdateSuccess, this, &UserEditDialog::accept);
+    connect(&ApiClient::instance(), &ApiClient::userUpdateFailed, this, [&](const ApiError& error){
+        QMessageBox msgBox;
+        msgBox.setIcon(QMessageBox::Critical);
+        msgBox.setText("Не вдалося зберегти зміни.");
+        msgBox.setInformativeText(error.errorString);
+        msgBox.setDetailedText(QString("URL: %1\nHTTP Status: %2").arg(error.requestUrl).arg(error.httpStatusCode));
+        msgBox.exec();
+        // Вікно не закриваємо, щоб користувач міг спробувати ще раз
     });
+
     ApiClient::instance().updateUser(m_userId, userData);
 }
 

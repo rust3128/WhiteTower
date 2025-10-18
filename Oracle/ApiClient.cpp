@@ -54,41 +54,32 @@ void ApiClient::onLoginReplyFinished()
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
     if (!reply) return;
 
+    ApiError error;
+    error.requestUrl = reply->request().url().toString();
+    error.httpStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
     if (reply->error() != QNetworkReply::NoError) {
-        emit loginFailed("Network error: " + reply->errorString());
-        reply->deleteLater();
-        return;
-    }
-
-    QByteArray responseData = reply->readAll();
-    QJsonDocument doc = QJsonDocument::fromJson(responseData);
-    int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-
-    if (statusCode == 200 && doc.isObject()) {
-        QJsonObject responseObj = doc.object();
-
-        // === ЗМІНЕНО ТУТ: Зберігаємо токен ===
+        error.errorString = "Network error: " + reply->errorString();
+        emit loginFailed(error);
+    } else if (error.httpStatusCode != 200) {
+        QJsonObject jsonObj = QJsonDocument::fromJson(reply->readAll()).object();
+        error.errorString = jsonObj["error"].toString("Unknown server error");
+        emit loginFailed(error);
+    } else {
+        QJsonObject responseObj = QJsonDocument::fromJson(reply->readAll()).object();
         if (responseObj.contains("token")) {
             m_authToken = responseObj["token"].toString();
         }
-
         User* user = User::fromJson(responseObj["user"].toObject());
         if (user) {
             emit loginSuccess(user);
         } else {
-            emit loginFailed("Failed to parse user profile from server response.");
+            error.errorString = "Failed to parse user profile from server response.";
+            emit loginFailed(error);
         }
-    } else {
-        QString errorMsg = "Unknown error";
-        if (doc.isObject() && doc.object().contains("error")) {
-            errorMsg = doc.object()["error"].toString();
-        }
-        emit loginFailed(QString("Login failed (HTTP %1): %2").arg(statusCode).arg(errorMsg));
     }
-
     reply->deleteLater();
 }
-
 
 void ApiClient::fetchAllUsers()
 {
@@ -102,23 +93,28 @@ void ApiClient::onUsersReplyFinished()
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
     if (!reply) return;
 
+    ApiError error;
+    error.requestUrl = reply->request().url().toString();
+    error.httpStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
     if (reply->error() != QNetworkReply::NoError) {
-        emit usersFetchFailed(reply->errorString());
-        reply->deleteLater();
-        return;
+        error.errorString = "Network error: " + reply->errorString();
+        emit usersFetchFailed(error);
+    } else if (error.httpStatusCode != 200) {
+        QJsonObject jsonObj = QJsonDocument::fromJson(reply->readAll()).object();
+        error.errorString = jsonObj["error"].toString("Unknown server error");
+        emit usersFetchFailed(error);
+    } else {
+        QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+        if (doc.isArray()) {
+            emit usersFetched(doc.array());
+        } else {
+            error.errorString = "Invalid response from server: expected a JSON array.";
+            emit usersFetchFailed(error);
+        }
     }
-
-    QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
-    if (!doc.isArray()) {
-        emit usersFetchFailed("Invalid response from server: expected a JSON array.");
-        reply->deleteLater();
-        return;
-    }
-
-    emit usersFetched(doc.array());
     reply->deleteLater();
 }
-
 void ApiClient::fetchUserById(int userId)
 {
     QString url = m_serverUrl + QString("/api/users/%1").arg(userId);
@@ -133,17 +129,29 @@ void ApiClient::onUserDetailsReplyFinished()
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
     if (!reply) return;
 
+    ApiError error;
+    error.requestUrl = reply->request().url().toString();
+    error.httpStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
+
     if (reply->error() != QNetworkReply::NoError) {
-        emit userDetailsFetchFailed(reply->errorString());
+        error.errorString = "Network error: " + reply->errorString();
+        emit userDetailsFetchFailed(error);
+    } else if (error.httpStatusCode != 200) {
+        QJsonObject jsonObj = QJsonDocument::fromJson(reply->readAll()).object();
+        error.errorString = jsonObj["error"].toString("Unknown server error");
+        emit userDetailsFetchFailed(error);
     } else {
         QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
-        if (doc.isObject()) {
+        if (doc.isArray()) {
             emit userDetailsFetched(doc.object());
         } else {
-            emit userDetailsFetchFailed("Invalid response from server: expected a JSON object.");
+            error.errorString = "Invalid response from server: expected a JSON array.";
+            emit userDetailsFetchFailed(error);
         }
     }
     reply->deleteLater();
+
 }
 
 void ApiClient::fetchAllRoles()
@@ -158,14 +166,24 @@ void ApiClient::onRolesReplyFinished()
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
     if (!reply) return;
 
+    ApiError error;
+    error.requestUrl = reply->request().url().toString();
+    error.httpStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
     if (reply->error() != QNetworkReply::NoError) {
-        emit rolesFetchFailed(reply->errorString());
+        error.errorString = "Network error: " + reply->errorString();
+        emit rolesFetchFailed(error);
+    } else if (error.httpStatusCode != 200) {
+        QJsonObject jsonObj = QJsonDocument::fromJson(reply->readAll()).object();
+        error.errorString = jsonObj["error"].toString("Unknown server error");
+        emit rolesFetchFailed(error);
     } else {
         QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
         if (doc.isArray()) {
             emit rolesFetched(doc.array());
         } else {
-            emit rolesFetchFailed("Invalid response from server: expected a JSON array of roles.");
+            error.errorString = "Invalid response from server: expected a JSON array.";
+            emit rolesFetchFailed(error);
         }
     }
     reply->deleteLater();
@@ -188,12 +206,32 @@ void ApiClient::onUserUpdateReplyFinished()
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
     if (!reply) return;
 
-    int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    if (reply->error() == QNetworkReply::NoError && (statusCode == 200 || statusCode == 204)) { // 204 No Content теж є успіхом
+    // 1 & 2: Створюємо об'єкт помилки та заповнюємо базові дані
+    ApiError error;
+    error.requestUrl = reply->request().url().toString();
+    error.httpStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
+    // Перевіряємо на успіх (відсутність мережевих помилок І правильний статус-код)
+    if (reply->error() == QNetworkReply::NoError && (error.httpStatusCode == 200 || error.httpStatusCode == 204))
+    {
+        // 4. Успіх: відправляємо відповідний сигнал
         emit userUpdateSuccess();
-    } else {
-        emit userUpdateFailed(QString("HTTP %1: ").arg(statusCode) + reply->readAll());
     }
+    else
+    {
+        // 3. Помилка: заповнюємо деталі і відправляємо сигнал про помилку
+        if (reply->error() != QNetworkReply::NoError) {
+            // Це мережева помилка (напр., сервер недоступний)
+            error.errorString = "Network error: " + reply->errorString();
+        } else {
+            // Це помилка від сервера (напр., 404 Not Found, 500 Internal Error)
+            // Читаємо тіло відповіді, щоб отримати текст помилки від сервера
+            QJsonObject jsonObj = QJsonDocument::fromJson(reply->readAll()).object();
+            error.errorString = jsonObj["error"].toString("Unknown server error from body");
+        }
+        emit userUpdateFailed(error);
+    }
+
     reply->deleteLater();
 }
 
@@ -209,62 +247,331 @@ void ApiClient::onClientsReplyFinished()
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
     if (!reply) return;
 
-    if (reply->error() != QNetworkReply::NoError) {
-        emit clientsFetchFailed(reply->errorString());
-    } else {
+    // 1 & 2: Створюємо об'єкт помилки та заповнюємо базові дані
+    ApiError error;
+    error.requestUrl = reply->request().url().toString();
+    error.httpStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
+    // Перевіряємо на успіх (відсутність мережевих помилок І статус-код 200 ОК)
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200)
+    {
         QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
         if (doc.isArray()) {
+            // 4. Успіх: тіло відповіді - це масив, як і очікувалося
             emit clientsFetched(doc.array());
         } else {
-            emit clientsFetchFailed("Invalid response from server: expected a JSON array of clients.");
+            // 3. Помилка: сервер повернув 200 ОК, але тіло відповіді - не масив
+            error.errorString = "Invalid response from server: expected a JSON array.";
+            emit clientsFetchFailed(error);
         }
     }
+    else
+    {
+        // 3. Помилка: або мережева, або від сервера
+        if (reply->error() != QNetworkReply::NoError) {
+            // Мережева помилка
+            error.errorString = "Network error: " + reply->errorString();
+        } else {
+            // Помилка, яку повернув сервер (напр. 401, 404, 500)
+            QJsonObject jsonObj = QJsonDocument::fromJson(reply->readAll()).object();
+            error.errorString = jsonObj["error"].toString("Unknown server error");
+        }
+        emit clientsFetchFailed(error);
+    }
+
     reply->deleteLater();
 }
 
-void ApiClient::createClient(const QString& clientName)
+void ApiClient::createClient(const QJsonObject& clientData)
 {
     QNetworkRequest request = createAuthenticatedRequest(QUrl(m_serverUrl + "/api/clients"));
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
-    QJsonObject json{{"client_name", clientName}};
-
-    QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(json).toJson());
+    // Тепер ми відправляємо повний об'єкт, а не тільки ім'я
+    QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(clientData).toJson());
     connect(reply, &QNetworkReply::finished, this, &ApiClient::onCreateClientReplyFinished);
 }
 
 void ApiClient::onCreateClientReplyFinished()
 {
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
-    if (!reply) {
-        return;
-    }
+    if (!reply) return;
 
-    // 1. Спочатку перевіряємо наявність мережевих помилок
-    if (reply->error() != QNetworkReply::NoError) {
-        emit clientCreateFailed("Network error: " + reply->errorString());
-        reply->deleteLater();
-        return;
-    }
+    // 1 & 2: Створюємо об'єкт помилки та заповнюємо базові дані
+    ApiError error;
+    error.requestUrl = reply->request().url().toString();
+    error.httpStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
-    // 2. Отримуємо статус-код відповіді
-    int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-
-    // 3. Перевіряємо, чи є статус-код успішним (201 Created)
-    if (statusCode == 201) {
+    // Перевіряємо на успіх (відсутність мережевих помилок І статус-код 201 Created)
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 201)
+    {
         QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
         if (doc.isObject()) {
-            // Якщо все добре, відправляємо сигнал про успіх з даними нового клієнта
+            // 4. Успіх: тіло відповіді - це об'єкт, як і очікувалося
             emit clientCreateSuccess(doc.object());
         } else {
-            emit clientCreateFailed("Invalid success response from server: expected a JSON object.");
+            // 3. Помилка: сервер повернув 201, але тіло відповіді некоректне
+            error.errorString = "Invalid success response from server: expected a JSON object.";
+            emit clientCreateFailed(error);
         }
-    } else {
-        // Якщо статус-код інший, це помилка
-        QString errorBody = reply->readAll();
-        emit clientCreateFailed(QString("Failed to create client (HTTP %1): %2").arg(statusCode).arg(errorBody));
+    }
+    else
+    {
+        // 3. Помилка: або мережева, або від сервера
+        if (reply->error() != QNetworkReply::NoError) {
+            // Мережева помилка
+            error.errorString = "Network error: " + reply->errorString();
+        } else {
+            // Помилка, яку повернув сервер (напр. 400, 404, 500)
+            QJsonObject jsonObj = QJsonDocument::fromJson(reply->readAll()).object();
+            error.errorString = jsonObj["error"].toString("Unknown server error");
+        }
+        emit clientCreateFailed(error);
     }
 
-    // 4. Очищуємо пам'ять
+    reply->deleteLater();
+}
+
+
+void ApiClient::fetchClientById(int clientId)
+{
+    QNetworkRequest request = createAuthenticatedRequest(QUrl(m_serverUrl + QString("/api/clients/%1").arg(clientId)));
+    QNetworkReply* reply = m_networkManager->get(request);
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onClientDetailsReplyFinished);
+}
+
+void ApiClient::onClientDetailsReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    // 1 & 2: Створюємо об'єкт помилки та заповнюємо базові дані
+    ApiError error;
+    error.requestUrl = reply->request().url().toString();
+    error.httpStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
+    // Перевіряємо на успіх (відсутність мережевих помилок І статус-код 200 ОК)
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200)
+    {
+        QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+        if (doc.isObject()) {
+            // 4. Успіх: тіло відповіді - це об'єкт, як і очікувалося
+            emit clientDetailsFetched(doc.object());
+        } else {
+            // 3. Помилка: сервер повернув 200 ОК, але тіло відповіді - не об'єкт
+            error.errorString = "Invalid response from server: expected a JSON object.";
+            emit clientDetailsFetchFailed(error);
+        }
+    }
+    else
+    {
+        // 3. Помилка: або мережева, або від сервера
+        if (reply->error() != QNetworkReply::NoError) {
+            // Мережева помилка
+            error.errorString = "Network error: " + reply->errorString();
+        } else {
+            // Помилка, яку повернув сервер (напр. 401, 404, 500)
+            QJsonObject jsonObj = QJsonDocument::fromJson(reply->readAll()).object();
+            error.errorString = jsonObj["error"].toString("Unknown server error");
+        }
+        emit clientDetailsFetchFailed(error);
+    }
+
+    reply->deleteLater();
+}
+
+void ApiClient::fetchAllIpGenMethods()
+{
+    QNetworkRequest request = createAuthenticatedRequest(QUrl(m_serverUrl + "/api/ip-gen-methods"));
+    QNetworkReply* reply = m_networkManager->get(request);
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onIpGenMethodsReplyFinished);
+}
+
+void ApiClient::onIpGenMethodsReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    ApiError error;
+    error.requestUrl = reply->request().url().toString();
+    error.httpStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200)
+    {
+        QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+        if (doc.isArray()) {
+            emit ipGenMethodsFetched(doc.array());
+        } else {
+            error.errorString = "Invalid response from server: expected a JSON array.";
+            emit ipGenMethodsFetchFailed(error);
+        }
+    }
+    else
+    {
+        if (reply->error() != QNetworkReply::NoError) {
+            error.errorString = "Network error: " + reply->errorString();
+        } else {
+            QJsonObject jsonObj = QJsonDocument::fromJson(reply->readAll()).object();
+            error.errorString = jsonObj["error"].toString("Unknown server error");
+        }
+        emit ipGenMethodsFetchFailed(error);
+    }
+    reply->deleteLater();
+}
+
+
+void ApiClient::testDbConnection(const QJsonObject& config)
+{
+    QNetworkRequest request = createAuthenticatedRequest(QUrl(m_serverUrl + "/api/connections/test"));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(config).toJson());
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onConnectionTestReplyFinished);
+}
+
+void ApiClient::onConnectionTestReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    ApiError error;
+    error.requestUrl = reply->request().url().toString();
+    error.httpStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
+    if (reply->error() != QNetworkReply::NoError) {
+        error.errorString = "Network error: " + reply->errorString();
+        emit connectionTestFailed(error);
+    } else if (error.httpStatusCode != 200) {
+        // Якщо статус не 200, це точно помилка
+        QJsonObject jsonObj = QJsonDocument::fromJson(reply->readAll()).object();
+        error.errorString = jsonObj["error"].toString("Non-200 status code received");
+        emit connectionTestFailed(error);
+    } else {
+        // Статус 200 ОК, тепер аналізуємо тіло відповіді
+        QJsonObject jsonObj = QJsonDocument::fromJson(reply->readAll()).object();
+        if (jsonObj["status"] == "success") {
+            // Успіх, відправляємо звичайний QString, як і раніше
+            emit connectionTestSuccess(jsonObj["message"].toString());
+        } else {
+            // Логічна помилка, яку повернув сервер
+            error.errorString = jsonObj["message"].toString("Connection test failed on server side.");
+            emit connectionTestFailed(error);
+        }
+    }
+
+    reply->deleteLater();
+}
+
+void ApiClient::updateClient(int clientId, const QJsonObject& clientData)
+{
+    QString url = m_serverUrl + QString("/api/clients/%1").arg(clientId);
+    QNetworkRequest request = createAuthenticatedRequest(QUrl(url));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    // Використовуємо метод PUT для оновлення
+    QNetworkReply* reply = m_networkManager->put(request, QJsonDocument(clientData).toJson());
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onClientUpdateReplyFinished);
+}
+
+void ApiClient::onClientUpdateReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    ApiError error;
+    error.requestUrl = reply->request().url().toString();
+    error.httpStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
+    // === ВИПРАВЛЕНО ТУТ: Правильна перевірка статусу для оновлення (200 або 204) ===
+    // 201 (Created) - для створення, а 200 (OK) або 204 (No Content) - для оновлення.
+    if (reply->error() == QNetworkReply::NoError && (error.httpStatusCode == 200 || error.httpStatusCode == 204)) {
+        emit clientUpdateSuccess();
+    } else {
+        if (reply->error() != QNetworkReply::NoError) {
+            error.errorString = "Network error: " + reply->errorString();
+        } else {
+            QJsonObject jsonObj = QJsonDocument::fromJson(reply->readAll()).object();
+            error.errorString = jsonObj["error"].toString("Unknown server error");
+        }
+
+        // === ВИПРАВЛЕНО ТУТ: Викликаємо правильний сигнал ===
+        emit clientUpdateFailed(error);
+    }
+
+    reply->deleteLater();
+}
+
+
+void ApiClient::fetchSettings(const QString& appName)
+{
+    QNetworkRequest request = createAuthenticatedRequest(QUrl(m_serverUrl + "/api/settings/" + appName));
+    QNetworkReply* reply = m_networkManager->get(request);
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onSettingsReplyFinished);
+}
+
+void ApiClient::updateSettings(const QString& appName, const QVariantMap& settings)
+{
+    QNetworkRequest request = createAuthenticatedRequest(QUrl(m_serverUrl + "/api/settings/" + appName));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    QNetworkReply* reply = m_networkManager->put(request, QJsonDocument::fromVariant(settings).toJson());
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onSettingsUpdateReplyFinished);
+}
+
+void ApiClient::onSettingsReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    ApiError error;
+    error.requestUrl = reply->request().url().toString();
+    error.httpStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200)
+    {
+        QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+        if (doc.isObject()) {
+            // Успіх: конвертуємо JSON-об'єкт в QVariantMap і відправляємо
+            emit settingsFetched(doc.object().toVariantMap());
+        } else {
+            error.errorString = "Invalid response from server: expected a JSON object.";
+            emit settingsFetchFailed(error);
+        }
+    }
+    else
+    {
+        if (reply->error() != QNetworkReply::NoError) {
+            error.errorString = "Network error: " + reply->errorString();
+        } else {
+            QJsonObject jsonObj = QJsonDocument::fromJson(reply->readAll()).object();
+            error.errorString = jsonObj["error"].toString("Unknown server error");
+        }
+        emit settingsFetchFailed(error);
+    }
+    reply->deleteLater();
+}
+
+void ApiClient::onSettingsUpdateReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    ApiError error;
+    error.requestUrl = reply->request().url().toString();
+    error.httpStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
+    // Для оновлення успіхом вважається 200 OK або 204 No Content
+    if (reply->error() == QNetworkReply::NoError && (error.httpStatusCode == 200 || error.httpStatusCode == 204))
+    {
+        emit settingsUpdateSuccess();
+    }
+    else
+    {
+        if (reply->error() != QNetworkReply::NoError) {
+            error.errorString = "Network error: " + reply->errorString();
+        } else {
+            QJsonObject jsonObj = QJsonDocument::fromJson(reply->readAll()).object();
+            error.errorString = jsonObj["error"].toString("Unknown server error");
+        }
+        emit settingsUpdateFailed(error);
+    }
     reply->deleteLater();
 }

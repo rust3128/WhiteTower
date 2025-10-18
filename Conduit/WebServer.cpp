@@ -64,6 +64,24 @@ void WebServer::setupRoutes()
     m_httpServer->route("/api/clients", QHttpServerRequest::Method::Post, [this](const QHttpServerRequest &request) {
         return handleCreateClientRequest(request);
     });
+
+    m_httpServer->route("/api/clients/<arg>", QHttpServerRequest::Method::Get,
+                        [this](const QString &clientId, const QHttpServerRequest &request) {
+                            return handleGetClientByIdRequest(clientId, request);
+                        });
+    m_httpServer->route("/api/ip-gen-methods", QHttpServerRequest::Method::Get, [this](const QHttpServerRequest &request) {
+        return handleGetIpGenMethodsRequest(request);
+    });
+
+    // Додайте в setupRoutes()
+    m_httpServer->route("/api/connections/test", QHttpServerRequest::Method::Post, [this](const QHttpServerRequest &request) {
+        return handleTestConnectionRequest(request);
+    });
+
+    m_httpServer->route("/api/clients/<arg>", QHttpServerRequest::Method::Put,
+                        [this](const QString &clientId, const QHttpServerRequest &request) {
+                            return handleUpdateClientRequest(clientId, request);
+                        });
 }
 
 // Допоміжний метод для логування запиту
@@ -100,6 +118,14 @@ QHttpServerResponse WebServer::createJsonResponse(const QJsonObject &body, QHttp
 {
     QByteArray bodyJson = QJsonDocument(body).toJson(QJsonDocument::Compact);
 
+    // === ДОДАНО ТУТ: Автоматичне логування помилок ===
+    // Якщо статус-код 400 або вище (Bad Request, Unauthorized, Not Found, Internal Server Error і т.д.),
+    // то записуємо тіло помилки в лог сервера.
+    if (statusCode >= QHttpServerResponse::StatusCode::BadRequest) {
+        logCritical() << "Server Response Error:" << static_cast<int>(statusCode)
+        << QJsonDocument(body).toJson(QJsonDocument::Compact);
+    }
+    // =======================================================
     // === ВИПРАВЛЕНО ТУТ: Додаємо .noquote() до виклику логера ===
     // Цей метод каже QDebug виводити наступний рядок "як є", без лапок.
     logInfo().noquote() << QString("Response: status %1, type: application/json, body: %2")
@@ -657,5 +683,132 @@ QHttpServerResponse WebServer::handleCreateClientRequest(const QHttpServerReques
                                   QHttpServerResponse::StatusCode::Created);
     } else {
         return createJsonResponse({{"error", "Failed to create client in database"}}, QHttpServerResponse::StatusCode::InternalServerError);
+    }
+}
+
+QHttpServerResponse WebServer::handleGetClientByIdRequest(const QString &clientId, const QHttpServerRequest &request)
+{
+    User* user = authenticateRequest(request);
+    if (!user) {
+        return createJsonResponse({{"error", "Unauthorized"}}, QHttpServerResponse::StatusCode::Unauthorized);
+    }
+    delete user;
+
+    logRequest(request);
+
+    bool ok;
+    int id = clientId.toInt(&ok);
+    if (!ok) {
+        return createJsonResponse({{"error", "Invalid client ID"}}, QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    QJsonObject clientData = DbManager::instance().loadClientDetails(id);
+
+    if (clientData.isEmpty()) {
+        return createJsonResponse({{"error", "Client not found"}}, QHttpServerResponse::StatusCode::NotFound);
+    }
+
+    return createJsonResponse(clientData, QHttpServerResponse::StatusCode::Ok);
+}
+
+
+QHttpServerResponse WebServer::handleGetIpGenMethodsRequest(const QHttpServerRequest &request)
+{
+    logRequest(request);
+    QList<QVariantMap> methodsData = DbManager::instance().loadAllIpGenMethods();
+    QJsonArray jsonArray;
+    for (const QVariantMap &methodMap : methodsData) {
+        jsonArray.append(QJsonObject::fromVariantMap(methodMap));
+    }
+
+    // 3. Створюємо та логуємо відповідь
+    // QByteArray bodyJson = QJsonDocument(jsonArray).toJson(QJsonDocument::Compact);
+    // logInfo().noquote() << QString("Response: status 200, type: application/json, body: %1")
+    //                            .arg(QString::fromUtf8(bodyJson));
+    return QHttpServerResponse(jsonArray);
+}
+
+
+
+
+// Додайте реалізацію обробника
+QHttpServerResponse WebServer::handleTestConnectionRequest(const QHttpServerRequest &request)
+{
+    User* user = authenticateRequest(request);
+    if (!user) {
+        return createJsonResponse({{"error", "Unauthorized"}}, QHttpServerResponse::StatusCode::Unauthorized);
+    }
+    delete user;
+
+    logRequest(request);
+
+    QJsonDocument doc = QJsonDocument::fromJson(request.body());
+    if (!doc.isObject()) {
+        return createJsonResponse({{"error", "Invalid JSON"}}, QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    QString error;
+    if (DbManager::testConnection(doc.object(), error)) {
+        return createJsonResponse({{"status", "success"}, {"message", "Підключення успішне!"}}, QHttpServerResponse::StatusCode::Ok);
+    } else {
+        return createJsonResponse({{"status", "failure"}, {"message", error}}, QHttpServerResponse::StatusCode::Ok); // Повертаємо 200 ОК, але з помилкою в тілі
+    }
+}
+
+
+QHttpServerResponse WebServer::handleUpdateClientRequest(const QString &clientId, const QHttpServerRequest &request)
+{
+    User* user = authenticateRequest(request);
+    if (!user) {
+        return createJsonResponse({{"error", "Unauthorized"}}, QHttpServerResponse::StatusCode::Unauthorized);
+    }
+    // TODO: Додати перевірку, чи має користувач право редагувати (адмін/менеджер)
+    delete user;
+
+    logRequest(request);
+
+    bool ok;
+    int id = clientId.toInt(&ok);
+    if (!ok) {
+        return createJsonResponse({{"error", "Invalid client ID format"}}, QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    QJsonDocument doc = QJsonDocument::fromJson(request.body());
+    if (!doc.isObject()) {
+        return createJsonResponse({{"error", "Invalid JSON body"}}, QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    if (DbManager::instance().updateClient(id, doc.object())) {
+        return QHttpServerResponse(QHttpServerResponse::StatusCode::Ok); // Успіх, 200 OK
+    } else {
+        return createJsonResponse({{"error", "Failed to update client in database"}}, QHttpServerResponse::StatusCode::InternalServerError);
+    }
+}
+
+
+QHttpServerResponse WebServer::handleGetSettingsRequest(const QString& appName, const QHttpServerRequest& request)
+{
+    if (!authenticateRequest(request))
+        return QHttpServerResponse(QHttpServerResponse::StatusCode::Unauthorized);
+
+    logRequest(request);
+    QVariantMap settings = DbManager::instance().loadSettings(appName);
+    return createJsonResponse(QJsonObject::fromVariantMap(settings), QHttpServerResponse::StatusCode::Ok);
+}
+
+QHttpServerResponse WebServer::handleUpdateSettingsRequest(const QString& appName, const QHttpServerRequest& request)
+{
+    if (!authenticateRequest(request))
+        return QHttpServerResponse(QHttpServerResponse::StatusCode::Unauthorized);
+
+    logRequest(request);
+    QJsonDocument doc = QJsonDocument::fromJson(request.body());
+    if (!doc.isObject())
+        return createJsonResponse({{"error", "Invalid JSON body"}}, QHttpServerResponse::StatusCode::BadRequest);
+
+    if (DbManager::instance().saveSettings(appName, doc.object().toVariantMap())) {
+        return QHttpServerResponse(QHttpServerResponse::StatusCode::Ok);
+    } else {
+        return createJsonResponse({{"error", "Failed to save settings"}}, QHttpServerResponse::StatusCode::InternalServerError);
     }
 }

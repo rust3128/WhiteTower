@@ -3,6 +3,7 @@
 #include "./ui_mainwindow.h"
 #include "Users/userlistdialog.h"
 #include "Clients/clientslistdialog.h"
+#include "Settings/settingsdialog.h"
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -28,7 +29,14 @@ void MainWindow::on_actionUsers_triggered()
 
 void MainWindow::on_actionClients_triggered()
 {
-    ClientsListDialog *clnList = new ClientsListDialog();
-    clnList->exec();
+    ClientsListDialog dlg(this);
+    dlg.exec();
+}
+
+
+void MainWindow::on_action_triggered()
+{
+    SettingsDialog dlg(this);
+    dlg.exec();
 }
 

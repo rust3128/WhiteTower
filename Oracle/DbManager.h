@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QDateTime>
 
+
 class ConfigManager;
 class User;
 
@@ -19,6 +20,7 @@ public:
     bool isConnected() const;
     QString lastError() const;
     QVariantMap loadSettings(const QString& appName);
+    bool saveSettings(const QString& appName, const QVariantMap& settings);
 
     int getOrCreateUser(const QString& login, bool& ok);
     User* loadUser(int userId);
@@ -29,6 +31,10 @@ public:
     int findUserIdByToken(const QByteArray& tokenHash);
     QList<QVariantMap> loadAllClients();
     int createClient(const QString& clientName);
+    QJsonObject loadClientDetails(int clientId);
+    QList<QVariantMap> loadAllIpGenMethods();
+    static bool testConnection(const QJsonObject& config, QString& error);
+    bool updateClient(int clientId, const QJsonObject& clientData);
 
 private:
     DbManager(); // Конструктор тепер приватний

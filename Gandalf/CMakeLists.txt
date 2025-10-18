@@ -23,6 +23,7 @@ add_executable(Gandalf
     Users/userlistdialog.h Users/userlistdialog.cpp Users/userlistdialog.ui
     Users/usereditdialog.h Users/usereditdialog.cpp Users/usereditdialog.ui
     Clients/clientslistdialog.h Clients/clientslistdialog.cpp Clients/clientslistdialog.ui
+    Settings/settingsdialog.h Settings/settingsdialog.cpp Settings/settingsdialog.ui
 )
 
 # Вказуємо, де шукати заголовні файли (зокрема, з нашої бібліотеки Oracle)

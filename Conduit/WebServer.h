@@ -42,6 +42,18 @@ private:
     QHttpServerResponse handleGetClientsRequest(const QHttpServerRequest &request);
     // Маршрут /api/clients", QHttpServerRequest::Method::Post,
     QHttpServerResponse handleCreateClientRequest(const QHttpServerRequest &request);
+    // маршрут GET /api/clients/<arg>
+    QHttpServerResponse handleGetClientByIdRequest(const QString &clientId, const QHttpServerRequest &request);
+    // Маршрут GET /api/ip-gen-methods
+    QHttpServerResponse handleGetIpGenMethodsRequest(const QHttpServerRequest &request);
+    // POST /api/connections/test
+    QHttpServerResponse handleTestConnectionRequest(const QHttpServerRequest &request);
+    // /api/clients/<arg>
+    QHttpServerResponse handleUpdateClientRequest(const QString &clientId, const QHttpServerRequest &request);
+    // Get /api/settings/<arg>
+    QHttpServerResponse handleGetSettingsRequest(const QString& appName, const QHttpServerRequest& request);
+    // Put /api/settings/<arg>
+    QHttpServerResponse handleUpdateSettingsRequest(const QString& appName, const QHttpServerRequest& request);
 private:
     QHttpServer* m_httpServer;
     quint16 m_port;

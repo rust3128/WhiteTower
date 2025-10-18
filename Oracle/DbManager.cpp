@@ -2,11 +2,13 @@
 #include "ConfigManager.h" // Підключаємо повне оголошення тут
 #include "Logger.h"
 #include "User.h"
+#include "criptpass.h"
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QVariantMap>
 #include <QJsonArray>
 #include <QCryptographicHash>
+#include <QUuid>
 
 DbManager& DbManager::instance()
 {
@@ -360,4 +362,216 @@ int DbManager::createClient(const QString& clientName)
     int newClientId = query.value(0).toInt();
     logInfo() << "Created new client '" << clientName << "' with ID:" << newClientId;
     return newClientId;
+}
+
+QJsonObject DbManager::loadClientDetails(int clientId)
+{
+    QJsonObject clientData;
+    if (!isConnected()) return clientData;
+
+    QSqlQuery query(m_db);
+    // Складний запит, що збирає дані з усіх таблиць, пов'язаних з клієнтом
+    query.prepare(
+        "SELECT "
+        "  c.CLIENT_NAME, c.IS_ACTIVE, c.SYNC_METHOD, c.IP_GEN_METHOD_ID, "
+        "  c.TERM_ID_MIN, c.TERM_ID_MAX, c.GAS_STATION_DB_PASSWORD, "
+        "  d.DB_HOST, d.DB_PORT, d.DB_PATH, d.DB_USER, d.DB_PASSWORD "
+        "FROM CLIENTS c "
+        "LEFT JOIN CLIENT_CONFIG_DIRECT d ON c.CLIENT_ID = d.CLIENT_ID "
+        "WHERE c.CLIENT_ID = :id"
+        );
+    query.bindValue(":id", clientId);
+
+    if (!query.exec() || !query.next()) {
+        logCritical() << "Failed to load client details for ID" << clientId << ":" << query.lastError().text();
+        return clientData;
+    }
+
+    // Заповнюємо JSON-об'єкт отриманими даними
+    clientData["client_id"] = clientId;
+    clientData["client_name"] = query.value("CLIENT_NAME").toString();
+    clientData["is_active"] = query.value("IS_ACTIVE").toBool();
+    clientData["sync_method"] = query.value("SYNC_METHOD").toString();
+    clientData["ip_gen_method_id"] = query.value("IP_GEN_METHOD_ID").toInt();
+    clientData["term_id_min"] = query.value("TERM_ID_MIN").toInt();
+    clientData["term_id_max"] = query.value("TERM_ID_MAX").toInt();
+    clientData["gas_station_db_password"] = CriptPass::instance().decriptPass(query.value("GAS_STATION_DB_PASSWORD").toString());
+
+
+    // Додаємо дані з дочірніх таблиць, якщо вони є
+    if (clientData["sync_method"] == "DIRECT") {
+        QJsonObject directConfig;
+        directConfig["db_host"] = query.value("DB_HOST").toString();
+        directConfig["db_port"] = query.value("DB_PORT").toInt();
+        directConfig["db_path"] = query.value("DB_PATH").toString();
+        directConfig["db_user"] = query.value("DB_USER").toString();
+        directConfig["db_password"] = CriptPass::instance().decriptPass(query.value("DB_PASSWORD").toString()); // Розшифровуємо
+        clientData["config_direct"] = directConfig;
+    }
+    // Тут буде аналогічна логіка для PALANTIR та FILE
+
+    return clientData;
+}
+
+
+QList<QVariantMap> DbManager::loadAllIpGenMethods()
+{
+    QList<QVariantMap> methods;
+    if (!isConnected()) return methods;
+
+    QSqlQuery query("SELECT METHOD_ID, METHOD_NAME FROM IP_GEN_METHODS ORDER BY METHOD_ID", m_db);
+    if (!query.exec()) {
+        logCritical() << "Failed to load IP Gen Methods:" << query.lastError().text();
+        return methods;
+    }
+
+    while (query.next()) {
+        QVariantMap method;
+        method["method_id"] = query.value("METHOD_ID");
+        method["method_name"] = query.value("METHOD_NAME");
+        methods.append(method);
+    }
+    return methods;
+}
+
+bool DbManager::testConnection(const QJsonObject& config, QString& error)
+{
+    const QString connName = QUuid::createUuid().toString();
+    bool success = false;
+
+    // === ВИПРАВЛЕНО ТУТ: Додаємо локальну область видимості ===
+    {
+        // 1. Створюємо тимчасове з'єднання
+        QSqlDatabase db = QSqlDatabase::addDatabase("QIBASE", connName);
+
+        db.setHostName(config["db_host"].toString());
+        db.setPort(config["db_port"].toInt());
+        db.setDatabaseName(config["db_path"].toString());
+        db.setUserName(config["db_user"].toString());
+        // Пароль для перевірки ми отримуємо в чистому вигляді, тому шифрувати його не треба
+        // АЛЕ якщо він приходить зашифрованим, то треба розшифрувати
+        db.setPassword(config["db_password"].toString());
+
+        success = db.open();
+        if (!success) {
+            error = db.lastError().text();
+        }
+
+        db.close();
+
+    } // <-- В цей момент об'єкт 'db' гарантовано знищується, і посилання на з'єднання звільняється
+
+    // 2. Тепер, коли з'єднання ніхто не використовує, його безпечно видалити
+    QSqlDatabase::removeDatabase(connName);
+
+    return success;
+}
+
+
+bool DbManager::updateClient(int clientId, const QJsonObject& clientData)
+{
+    if (!isConnected()) {
+        logCritical() << "Cannot update client: no DB connection";
+        return false;
+    }
+
+    if (!m_db.transaction()) {
+        logCritical() << "Failed to start transaction for updating client.";
+        return false;
+    }
+
+    // 1. Оновлюємо головну таблицю CLIENTS
+    QSqlQuery query(m_db);
+    query.prepare("UPDATE CLIENTS SET "
+                  "CLIENT_NAME = :name, "
+                  "IS_ACTIVE = :isActive, "
+                  "SYNC_METHOD = :syncMethod, "
+                  "IP_GEN_METHOD_ID = :ipGenMethodId, "
+                  "TERM_ID_MIN = :termMin, "
+                  "TERM_ID_MAX = :termMax, "
+                  "GAS_STATION_DB_PASSWORD = :azsDbPass "
+                  "WHERE CLIENT_ID = :id");
+    query.bindValue(":name", clientData["client_name"].toString());
+    query.bindValue(":isActive", clientData["is_active"].toBool());
+    query.bindValue(":syncMethod", clientData["sync_method"].toString());
+    query.bindValue(":ipGenMethodId", clientData["ip_gen_method_id"].toInt());
+    query.bindValue(":termMin", clientData["term_id_min"].toString().toInt());
+    query.bindValue(":termMax", clientData["term_id_max"].toString().toInt());
+    query.bindValue(":azsDbPass", CriptPass::instance().criptPass(clientData["gas_station_db_password"].toString()));
+    query.bindValue(":id", clientId);
+
+    if (!query.exec()) {
+        logCritical() << "Failed to update CLIENTS table:" << query.lastError().text();
+        m_db.rollback();
+        return false;
+    }
+
+    // 2. Оновлюємо конфігурацію для 'DIRECT' (якщо вона є)
+    if (clientData.contains("config_direct")) {
+        QJsonObject directConfig = clientData["config_direct"].toObject();
+        QSqlQuery configQuery(m_db);
+        configQuery.prepare("UPDATE OR INSERT INTO CLIENT_CONFIG_DIRECT "
+                            "(CLIENT_ID, DB_HOST, DB_PORT, DB_PATH, DB_USER, DB_PASSWORD) "
+                            "VALUES (:id, :host, :port, :path, :user, :pass) "
+                            "MATCHING (CLIENT_ID)");
+        configQuery.bindValue(":id", clientId);
+        configQuery.bindValue(":host", directConfig["db_host"].toString());
+        configQuery.bindValue(":port", directConfig["db_port"].toInt());
+        configQuery.bindValue(":path", directConfig["db_path"].toString());
+        configQuery.bindValue(":user", directConfig["db_user"].toString());
+        configQuery.bindValue(":pass", CriptPass::instance().criptPass(directConfig["db_password"].toString()));
+
+        if (!configQuery.exec()) {
+            logCritical() << "Failed to update CLIENT_CONFIG_DIRECT:" << configQuery.lastError().text();
+            m_db.rollback();
+            return false;
+        }
+    }
+    // (тут буде аналогічна логіка для config_palantir та config_file)
+
+    if (!m_db.commit()) {
+        logCritical() << "Failed to commit client update transaction.";
+        m_db.rollback();
+        return false;
+    }
+
+    return true;
+}
+
+bool DbManager::saveSettings(const QString& appName, const QVariantMap& settings)
+{
+    if (!isConnected()) {
+        logCritical() << "Cannot save settings: no DB connection";
+        return false;
+    }
+
+    // Використовуємо транзакцію для гарантії, що або всі налаштування збережуться, або жодне
+    if (!m_db.transaction()) {
+        logCritical() << "Failed to start transaction for saving settings.";
+        return false;
+    }
+
+    QSqlQuery query(m_db);
+    // Firebird підтримує UPDATE OR INSERT, що ідеально для нашого випадку
+    query.prepare("UPDATE OR INSERT INTO APP_SETTINGS (APP_NAME, PARAM_NAME, PARAM_VALUE) "
+                  "VALUES (:appName, :paramName, :paramValue) "
+                  "MATCHING (APP_NAME, PARAM_NAME)");
+
+    for (auto it = settings.constBegin(); it != settings.constEnd(); ++it) {
+        query.bindValue(":appName", appName);
+        query.bindValue(":paramName", it.key());
+        query.bindValue(":paramValue", it.value());
+        if (!query.exec()) {
+            logCritical() << "Failed to save setting" << it.key() << ":" << query.lastError().text();
+            m_db.rollback(); // Відкочуємо транзакцію при першій же помилці
+            return false;
+        }
+    }
+
+    if (!m_db.commit()) {
+        logCritical() << "Failed to commit settings transaction.";
+        m_db.rollback();
+        return false;
+    }
+    return true;
 }

@@ -30,7 +30,14 @@
     <addaction name="actionUsers"/>
     <addaction name="actionClients"/>
    </widget>
+   <widget class="QMenu" name="menuSettings">
+    <property name="title">
+     <string>Налаштування</string>
+    </property>
+    <addaction name="action"/>
+   </widget>
    <addaction name="menu"/>
+   <addaction name="menuSettings"/>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
   <action name="actionUsers">
@@ -49,6 +56,15 @@
    </property>
    <property name="text">
     <string>Клієнти</string>
+   </property>
+  </action>
+  <action name="action">
+   <property name="icon">
+    <iconset resource="resource.qrc">
+     <normaloff>:/res/Images/settings_icon.png</normaloff>:/res/Images/settings_icon.png</iconset>
+   </property>
+   <property name="text">
+    <string>Параметри</string>
    </property>
   </action>
  </widget>

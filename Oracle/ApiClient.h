@@ -11,6 +11,13 @@ class QNetworkReply;
 class QNetworkRequest;
 class User;
 
+struct ApiError {
+    int httpStatusCode = 0;
+    QString requestUrl;
+    QString errorString; // Помилка мережі або з тіла відповіді
+};
+Q_DECLARE_METATYPE(ApiError)
+
 class ApiClient : public QObject
 {
     Q_OBJECT
@@ -24,36 +31,61 @@ public:
     void fetchAllRoles();
     void updateUser(int userId, const QJsonObject& userData);
     void fetchAllClients();
-    void createClient(const QString& clientName);
+    void createClient(const QJsonObject& clientData);
+    void fetchClientById(int clientId);
+    void fetchAllIpGenMethods();
+    void testDbConnection(const QJsonObject& config);
+    void updateClient(int clientId, const QJsonObject& clientData);
+    void fetchSettings(const QString& appName);
+    void updateSettings(const QString& appName, const QVariantMap& settings);
 
 signals:
     // Сигнали для логіну
     void loginSuccess(User* user);
-    void loginFailed(const QString& errorString);
+    void loginFailed(const ApiError& error);
 
     // Сигнали для списку користувачів
     void usersFetched(const QJsonArray& users);
-    void usersFetchFailed(const QString& error);
+    void usersFetchFailed(const ApiError& error);
 
     // Сигнали для одного користувача
     void userDetailsFetched(const QJsonObject& user);
-    void userDetailsFetchFailed(const QString& error);
+    void userDetailsFetchFailed(const ApiError& error);
 
     // Сигнали для ролей
     void rolesFetched(const QJsonArray& roles);
-    void rolesFetchFailed(const QString& error);
+    void rolesFetchFailed(const ApiError& error);
 
     // Сигнали для оновлення користувача
     void userUpdateSuccess();
-    void userUpdateFailed(const QString& error);
+    void userUpdateFailed(const ApiError& error);
 
     // Сигнали для списку клієнтів
     void clientsFetched(const QJsonArray& clients);
-    void clientsFetchFailed(const QString& error);
+    void clientsFetchFailed(const ApiError& error);
 
     // Сигнали для створення клієнта
     void clientCreateSuccess(const QJsonObject& newClient);
-    void clientCreateFailed(const QString& error); // <-- ЦЕЙ СИГНАЛ БУЛО ПРОПУЩЕНО
+    void clientCreateFailed(const ApiError& error); // <-- ЦЕЙ СИГНАЛ БУЛО ПРОПУЩЕНО
+
+    void clientDetailsFetched(const QJsonObject& client);
+    void clientDetailsFetchFailed(const ApiError& error);
+
+    void ipGenMethodsFetched(const QJsonArray& methods);
+    void ipGenMethodsFetchFailed(const ApiError& error);
+
+    void connectionTestSuccess(const QString& message);
+    void connectionTestFailed(const ApiError& error);
+
+    void clientUpdateSuccess();
+    void clientUpdateFailed(const ApiError& error);
+
+    // Додайте в signals секцію
+    void settingsFetched(const QVariantMap& settings);
+    void settingsFetchFailed(const ApiError& error);
+
+    void settingsUpdateSuccess();
+    void settingsUpdateFailed(const ApiError& error);
 
 private slots:
     void onLoginReplyFinished();
@@ -63,6 +95,12 @@ private slots:
     void onUserUpdateReplyFinished();
     void onClientsReplyFinished();
     void onCreateClientReplyFinished(); // <-- ЦЕЙ СЛОТ БУЛО ПРОПУЩЕНО
+    void onClientDetailsReplyFinished();
+    void onIpGenMethodsReplyFinished();
+    void onConnectionTestReplyFinished();
+    void onClientUpdateReplyFinished();
+    void onSettingsReplyFinished();
+    void onSettingsUpdateReplyFinished();
 
 private:
     ApiClient(QObject* parent = nullptr);

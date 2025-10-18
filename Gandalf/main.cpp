@@ -93,9 +93,18 @@ int main(int argc, char *argv[])
         w.show();
     });
 
-    QObject::connect(&ApiClient::instance(), &ApiClient::loginFailed, [&](const QString& error) {
-        logCritical() << "Login failed:" << error;
-        QMessageBox::critical(nullptr, "Помилка входу", "Не вдалося ідентифікувати користувача:\n" + error);
+    QObject::connect(&ApiClient::instance(), &ApiClient::loginFailed, [&](const ApiError& error) {
+        logCritical() << "Login failed:" << error.errorString << error.httpStatusCode << error.requestUrl;
+
+        QMessageBox msgBox;
+        msgBox.setIcon(QMessageBox::Critical);
+        msgBox.setText("Помилка входу");
+        msgBox.setInformativeText("Не вдалося ідентифікувати користувача.\n" + error.errorString);
+        msgBox.setDetailedText(QString("URL: %1\nHTTP Status: %2")
+                                   .arg(error.requestUrl)
+                                   .arg(error.httpStatusCode));
+        msgBox.exec();
+
         a.quit();
     });
 
