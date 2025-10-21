@@ -82,6 +82,16 @@ void WebServer::setupRoutes()
                         [this](const QString &clientId, const QHttpServerRequest &request) {
                             return handleUpdateClientRequest(clientId, request);
                         });
+    m_httpServer->route("/api/settings/<arg>", QHttpServerRequest::Method::Get,
+                        [this](const QString& appName, const QHttpServerRequest& request){
+                            return handleGetSettingsRequest(appName, request);
+                        });
+
+    // === ДОДАЙТЕ ВІДСУТНІЙ МАРШРУТ ТУТ ===
+    m_httpServer->route("/api/settings/<arg>", QHttpServerRequest::Method::Put,
+                        [this](const QString& appName, const QHttpServerRequest& request){
+                            return handleUpdateSettingsRequest(appName, request);
+                        });
 }
 
 // Допоміжний метод для логування запиту

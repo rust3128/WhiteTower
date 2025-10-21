@@ -90,6 +90,7 @@ int main(int argc, char *argv[])
     QObject::connect(&ApiClient::instance(), &ApiClient::loginSuccess, [&](User* user) {
         logInfo() << "Login successful for user:" << user->fio();
         SessionManager::instance().setCurrentUser(user);
+        ApiClient::instance().fetchSettings("Gandalf");
         w.show();
     });
 
@@ -107,6 +108,21 @@ int main(int argc, char *argv[])
 
         a.quit();
     });
+
+    // ===  завантаження налаштувань ===
+    QObject::connect(&ApiClient::instance(), &ApiClient::settingsFetched, [](const QVariantMap& settings){
+        logInfo() << "Successfully loaded" << settings.count() << "settings for Gandalf.";
+        for (auto it = settings.constBegin(); it != settings.constEnd(); ++it) {
+            // Зберігаємо кожен завантажений параметр в AppParams
+            AppParams::instance().setParam("Gandalf", it.key(), it.value());
+        }
+    });
+
+    QObject::connect(&ApiClient::instance(), &ApiClient::settingsFetchFailed, [](const ApiError& error){
+        logCritical() << "Failed to fetch application settings:" << error.errorString;
+        // Можна показати QMessageBox, якщо ці налаштування критично важливі
+    });
+    // =========================================================================
 
     QString username = QProcessEnvironment::systemEnvironment().value("USERNAME");
     ApiClient::instance().login(username);
