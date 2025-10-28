@@ -1,18 +1,13 @@
-#include "MainWindow.h"
 #include "Oracle/Logger.h"
-#include "Oracle/ApiClient.h"
-#include "Oracle/User.h"
 #include "Oracle/AppParams.h"
-#include "Oracle/SessionManager.h"
+#include "ApplicationController.h" // Наш новий клас
 
 #include <QApplication>
 #include <QFileInfo>
 #include <QMessageBox>
-#include <QProcessEnvironment>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QDir>
 #include <QTranslator>
+#include <QJsonDocument>
 
 // --- ОНОВЛЕНА ФУНКЦІЯ РОБОТИ З КОНФІГУРАЦІЄЮ ---
 // Тепер вона перевіряє, створює (якщо потрібно) і завантажує конфігурацію.
@@ -65,67 +60,26 @@ int main(int argc, char *argv[])
 
     logInfo() << "Gandalf application starting...";
 
-    // --- БЛОК ЗАВАНТАЖЕННЯ ПЕРЕКЛАДІВ ---
+
     QTranslator qtTranslator;
     if (qtTranslator.load(":/res/Translations/qtbase_uk.qm")) {
         a.installTranslator(&qtTranslator);
     } else {
         logWarning() << "Could not load Qt base translations for Ukrainian.";
     }
-    // ------------------------------------
 
-    // 1. Налаштовуємо та завантажуємо URL API-сервера
+    // Налаштовуємо URL API-сервера
     QString apiUrl = setupApiConfiguration();
     if (apiUrl.isEmpty()) {
-        QMessageBox::critical(nullptr, "Помилка конфігурації", "Не вдалося прочитати або створити файл конфігурації Config/config.json");
+        QMessageBox::critical(nullptr, "Помилка конфігурації", "...");
         return 1;
     }
-
-    // 2. Зберігаємо URL в AppParams, щоб ApiClient міг його знайти
     AppParams::instance().setParam("Global", "ApiBaseUrl", apiUrl);
     logInfo() << "API Server URL set to:" << apiUrl;
 
-    // 3. Запускаємо асинхронний логін (цей код вже використовує ApiClient, який тепер знає адресу)
-    MainWindow w;
-    QObject::connect(&ApiClient::instance(), &ApiClient::loginSuccess, [&](User* user) {
-        logInfo() << "Login successful for user:" << user->fio();
-        SessionManager::instance().setCurrentUser(user);
-        ApiClient::instance().fetchSettings("Gandalf");
-        w.show();
-    });
-
-    QObject::connect(&ApiClient::instance(), &ApiClient::loginFailed, [&](const ApiError& error) {
-        logCritical() << "Login failed:" << error.errorString << error.httpStatusCode << error.requestUrl;
-
-        QMessageBox msgBox;
-        msgBox.setIcon(QMessageBox::Critical);
-        msgBox.setText("Помилка входу");
-        msgBox.setInformativeText("Не вдалося ідентифікувати користувача.\n" + error.errorString);
-        msgBox.setDetailedText(QString("URL: %1\nHTTP Status: %2")
-                                   .arg(error.requestUrl)
-                                   .arg(error.httpStatusCode));
-        msgBox.exec();
-
-        a.quit();
-    });
-
-    // ===  завантаження налаштувань ===
-    QObject::connect(&ApiClient::instance(), &ApiClient::settingsFetched, [](const QVariantMap& settings){
-        logInfo() << "Successfully loaded" << settings.count() << "settings for Gandalf.";
-        for (auto it = settings.constBegin(); it != settings.constEnd(); ++it) {
-            // Зберігаємо кожен завантажений параметр в AppParams
-            AppParams::instance().setParam("Gandalf", it.key(), it.value());
-        }
-    });
-
-    QObject::connect(&ApiClient::instance(), &ApiClient::settingsFetchFailed, [](const ApiError& error){
-        logCritical() << "Failed to fetch application settings:" << error.errorString;
-        // Можна показати QMessageBox, якщо ці налаштування критично важливі
-    });
-    // =========================================================================
-
-    QString username = QProcessEnvironment::systemEnvironment().value("USERNAME");
-    ApiClient::instance().login(username);
+    // 2. Створюємо і запускаємо контролер
+    ApplicationController controller;
+    controller.start();
 
     return a.exec();
 }

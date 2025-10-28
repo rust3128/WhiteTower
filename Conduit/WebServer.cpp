@@ -14,6 +14,7 @@
 #include <QJsonArray>
 #include <QCryptographicHash>
 #include <QHttpServerResponse>
+#include <QtConcurrent>
 
 
 WebServer::WebServer(quint16 port, QObject *parent)
@@ -91,6 +92,16 @@ void WebServer::setupRoutes()
     m_httpServer->route("/api/settings/<arg>", QHttpServerRequest::Method::Put,
                         [this](const QString& appName, const QHttpServerRequest& request){
                             return handleUpdateSettingsRequest(appName, request);
+                        });
+
+    m_httpServer->route("/api/clients/<arg>/sync", QHttpServerRequest::Method::Post,
+                        [this](const QString& clientId, const QHttpServerRequest& request) {
+                            return handleSyncClientObjectsRequest(clientId, request);
+                        });
+
+    m_httpServer->route("/api/clients/<arg>/sync-status", QHttpServerRequest::Method::Get,
+                        [this](const QString& clientId, const QHttpServerRequest& request) {
+                            return handleGetSyncStatusRequest(clientId, request);
                         });
 }
 
@@ -821,4 +832,63 @@ QHttpServerResponse WebServer::handleUpdateSettingsRequest(const QString& appNam
     } else {
         return createJsonResponse({{"error", "Failed to save settings"}}, QHttpServerResponse::StatusCode::InternalServerError);
     }
+}
+
+QHttpServerResponse WebServer::handleSyncClientObjectsRequest(const QString& clientId, const QHttpServerRequest& request)
+{
+    logRequest(request);
+
+    User* user = authenticateRequest(request);
+    if (!user) {
+        return createJsonResponse({{"error", "Unauthorized"}}, QHttpServerResponse::StatusCode::Unauthorized);
+    }
+    delete user;
+
+    bool ok;
+    int id = clientId.toInt(&ok);
+    if (!ok) {
+        return createJsonResponse({{"error", "Invalid client ID format"}}, QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    QThreadPool::globalInstance()->start([id]() {
+        try {
+            logInfo() << "Starting background synchronization for client ID:" << id;
+            QVariantMap result = DbManager::instance().syncClientObjects(id);
+
+            if (result.contains("error")) {
+                logCritical() << "Synchronization failed for client" << id << ":" << result["error"].toString();
+            } else {
+                logInfo() << "Synchronization completed for client" << id
+                          << ". Processed" << result["processed_count"].toInt() << "objects.";
+            }
+        } catch (const std::exception& e) {
+            logCritical() << "!!! CRITICAL EXCEPTION in sync thread for client" << id << ":" << e.what();
+        } catch (...) {
+            logCritical() << "!!! UNKNOWN CRITICAL EXCEPTION in sync thread for client" << id;
+        }
+    });
+
+    return createJsonResponse({{"status", "Synchronization started in background"}},
+                              QHttpServerResponse::StatusCode::Accepted);
+}
+
+
+QHttpServerResponse WebServer::handleGetSyncStatusRequest(const QString &clientId, const QHttpServerRequest &request)
+{
+    logRequest(request);
+
+    User* user = authenticateRequest(request);
+    if (!user) {
+        return createJsonResponse({{"error", "Unauthorized"}}, QHttpServerResponse::StatusCode::Unauthorized);
+    }
+    delete user;
+
+    bool ok;
+    int id = clientId.toInt(&ok);
+    if (!ok) {
+        return createJsonResponse({{"error", "Invalid client ID"}}, QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    QVariantMap status = DbManager::instance().getSyncStatus(id);
+    return createJsonResponse(QJsonObject::fromVariantMap(status), QHttpServerResponse::StatusCode::Ok);
 }

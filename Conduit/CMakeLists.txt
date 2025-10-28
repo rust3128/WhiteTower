@@ -11,7 +11,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Знаходимо Qt один раз, перераховуючи всі потрібні компоненти
-find_package(Qt6 REQUIRED COMPONENTS Core Sql Network HttpServer)
+find_package(Qt6 REQUIRED COMPONENTS Core Sql Network HttpServer Concurrent)
 
 # Вказуємо лише ті файли, які потрібно компілювати
 add_executable(Conduit
@@ -30,6 +30,7 @@ target_link_libraries(Conduit PRIVATE
     Qt6::Sql
     Qt6::Network
     Qt6::HttpServer
+    Qt6::Concurrent
     Oracle
 )
 

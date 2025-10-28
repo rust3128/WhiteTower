@@ -14,7 +14,7 @@ ClientsListDialog::ClientsListDialog(QWidget *parent)
 {
     ui->setupUi(this);
     setWindowTitle("Довідник клієнтів");
-
+    m_syncStatusTimer = new QTimer(this);
     createConnections();
     loadInitialData(); // Запускаємо завантаження даних
     createUI();
@@ -84,6 +84,25 @@ void ClientsListDialog::createConnections()
     });
 
     connect(ui->clientsListWidget, &QListWidget::currentItemChanged, this, &ClientsListDialog::onClientSelected);
+
+    ui->pushButtonSync->setCheckable(true);
+    connect(ui->pushButtonSync, &QPushButton::toggled, this, &ClientsListDialog::onSyncButtonToggled);
+
+    // З'єднуємо сигнали для отримання статусу
+    connect(&ApiClient::instance(), &ApiClient::syncRequestAcknowledged, this, &ClientsListDialog::onSyncRequestAcknowledged);
+    connect(&ApiClient::instance(), &ApiClient::syncStatusFetched, this, &ClientsListDialog::onSyncStatusReceived);
+    connect(m_syncStatusTimer, &QTimer::timeout, this, &ClientsListDialog::checkSyncStatus);
+
+    // Обробка помилок (опціонально, але рекомендовано)
+    connect(&ApiClient::instance(), &ApiClient::syncStatusFetchFailed, this, [this](int clientId, const ApiError& error){
+        if (clientId == m_syncingClientId) {
+            m_syncStatusTimer->stop();
+            ui->pushButtonSync->setChecked(false); // "Відтискаємо" кнопку
+            ui->pushButtonSync->setText("Синхронізувати");
+            ui->pushButtonSync->setEnabled(true);
+            QMessageBox::warning(this, "Помилка", "Не вдалося отримати статус синхронізації:\n" + error.errorString);
+        }
+    });
 }
 
 
@@ -158,6 +177,7 @@ void ClientsListDialog::onClientSelected(QListWidgetItem *current)
         return;
     }
     m_currentClientId = current->data(Qt::UserRole).toInt(); // Зберігаємо ID обраного клієнта
+    ui->pushButtonSync->setEnabled(current != nullptr);
     ApiClient::instance().fetchClientById(m_currentClientId);
 }
 
@@ -298,3 +318,100 @@ void ClientsListDialog::on_buttonBox_rejected()
     this->reject();
 }
 
+void ClientsListDialog::onSyncButtonClicked()
+{
+    if (m_currentClientId != -1) {
+        logDebug() << "Sync button clicked for client ID:" << m_currentClientId;
+        ui->pushButtonSync->setEnabled(false); // Вимикаємо кнопку, щоб уникнути подвійних кліків
+        ui->pushButtonSync->setText("Синхронізація...");
+
+        ApiClient::instance().syncClientObjects(m_currentClientId);
+    }
+}
+
+// void ClientsListDialog::onSyncRequestAcknowledged(int clientId, bool success, const ApiError& details)
+// {
+//     if (clientId != m_currentClientId) {
+//         return;
+//     }
+
+//     ui->pushButtonSync->setEnabled(true);
+//     ui->pushButtonSync->setText("Синхронізувати об'єкти");
+
+//     if (success) {
+//         QMessageBox::information(this,
+//                                  "Завдання прийнято",
+//                                  QString("Сервер почав синхронізацію для клієнта (ID: %1).\n%2")
+//                                      .arg(clientId).arg(details.errorString)); // Використовуємо поле зі структури
+//     } else {
+//         // Тепер ми можемо показати більш детальну помилку!
+//         QMessageBox msgBox(this);
+//         msgBox.setIcon(QMessageBox::Warning);
+//         msgBox.setText(QString("Не вдалося запустити синхронізацію для клієнта (ID: %1).").arg(clientId));
+//         msgBox.setInformativeText(details.errorString);
+//         msgBox.setDetailedText(QString("URL: %1\nHTTP Status: %2").arg(details.requestUrl).arg(details.httpStatusCode));
+//         msgBox.exec();
+//     }
+// }
+
+
+void ClientsListDialog::onSyncButtonToggled(bool checked)
+{
+    if (checked) {
+        // Кнопку натиснули - запускаємо синхронізацію
+        if (m_currentClientId == -1) {
+            ui->pushButtonSync->setChecked(false); // Відтискаємо, якщо клієнт не обраний
+            return;
+        }
+        ui->pushButtonSync->setText("Синхронізація...");
+        ui->pushButtonSync->setEnabled(false); // Блокуємо, поки не отримаємо відповідь
+        ApiClient::instance().syncClientObjects(m_currentClientId);
+    } else {
+        // Кнопку "відтиснули" програмно, коли все завершено - нічого не робимо
+    }
+}
+
+// Цей слот реагує на початкову відповідь сервера (202 Accepted)
+void ClientsListDialog::onSyncRequestAcknowledged(int clientId, bool success, const ApiError& details)
+{
+    if (success) {
+        m_syncingClientId = clientId;
+        ui->pushButtonSync->setEnabled(true); // Розблоковуємо, щоб показати процес
+        m_syncStatusTimer->start(2000); // Запускаємо опитування кожні 2 секунди
+    } else {
+        QMessageBox::critical(this, "Помилка запуску", details.errorString);
+        ui->pushButtonSync->setChecked(false);
+        ui->pushButtonSync->setText("Синхронізувати");
+        ui->pushButtonSync->setEnabled(true);
+    }
+}
+
+// Цей слот викликається таймером
+void ClientsListDialog::checkSyncStatus()
+{
+    if (m_syncingClientId != -1) {
+        ApiClient::instance().fetchSyncStatus(m_syncingClientId);
+    }
+}
+
+// Цей слот обробляє отриманий статус
+void ClientsListDialog::onSyncStatusReceived(int clientId, const QJsonObject& status)
+{
+    if (clientId != m_syncingClientId) return; // Ігноруємо, якщо це не наш клієнт
+
+    QString currentStatus = status["status"].toString();
+    if (currentStatus == "SUCCESS") {
+        m_syncStatusTimer->stop();
+        m_syncingClientId = -1;
+        ui->pushButtonSync->setChecked(false); // "Відтискаємо" кнопку
+        ui->pushButtonSync->setText("Синхронізувати");
+        QMessageBox::information(this, "Успіх", "Синхронізація успішно завершена.\n" + status["message"].toString());
+    } else if (currentStatus == "FAILED") {
+        m_syncStatusTimer->stop();
+        m_syncingClientId = -1;
+        ui->pushButtonSync->setChecked(false);
+        ui->pushButtonSync->setText("Синхронізувати");
+        QMessageBox::critical(this, "Помилка", "Синхронізація не вдалася:\n" + status["message"].toString());
+    }
+    // Якщо статус "PENDING" або інший, просто чекаємо наступного спрацювання таймера
+}

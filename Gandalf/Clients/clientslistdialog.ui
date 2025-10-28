@@ -49,6 +49,32 @@
           <string>Загальні</string>
          </attribute>
          <layout class="QGridLayout" name="gridLayout_6">
+          <item row="0" column="0">
+           <widget class="QLabel" name="labelTitle">
+            <property name="font">
+             <font>
+              <pointsize>12</pointsize>
+              <bold>true</bold>
+             </font>
+            </property>
+            <property name="text">
+             <string>Назва клієнта</string>
+            </property>
+           </widget>
+          </item>
+          <item row="5" column="3">
+           <spacer name="horizontalSpacer">
+            <property name="orientation">
+             <enum>Qt::Orientation::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>40</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
           <item row="5" column="0" colspan="2">
            <widget class="QGroupBox" name="groupBox_3">
             <property name="title">
@@ -110,30 +136,17 @@
             </layout>
            </widget>
           </item>
-          <item row="2" column="1" colspan="2">
-           <widget class="QLineEdit" name="lineEditClientName">
-            <property name="jsonKey" stdset="0">
-             <string>client_name</string>
-            </property>
-           </widget>
-          </item>
-          <item row="0" column="0">
-           <widget class="QLabel" name="labelTitle">
-            <property name="font">
-             <font>
-              <pointsize>12</pointsize>
-              <bold>true</bold>
-             </font>
-            </property>
-            <property name="text">
-             <string>Назва клієнта</string>
-            </property>
-           </widget>
-          </item>
           <item row="2" column="0">
            <widget class="QLabel" name="label">
             <property name="text">
              <string>Клієнт:</string>
+            </property>
+           </widget>
+          </item>
+          <item row="3" column="1" colspan="2">
+           <widget class="QComboBox" name="comboBoxSyncMetod">
+            <property name="jsonKey" stdset="0">
+             <string>sync_method</string>
             </property>
            </widget>
           </item>
@@ -144,13 +157,6 @@
             </property>
            </widget>
           </item>
-          <item row="3" column="0">
-           <widget class="QLabel" name="label_2">
-            <property name="text">
-             <string>Метод синхронізації:</string>
-            </property>
-           </widget>
-          </item>
           <item row="1" column="0">
            <widget class="QCheckBox" name="checkBoxIsActive">
             <property name="text">
@@ -158,6 +164,13 @@
             </property>
             <property name="jsonKey" stdset="0">
              <string>is_active</string>
+            </property>
+           </widget>
+          </item>
+          <item row="4" column="1" colspan="2">
+           <widget class="QComboBox" name="comboBoxTemplateHostname">
+            <property name="jsonKey" stdset="0">
+             <string>ip_gen_method_id</string>
             </property>
            </widget>
           </item>
@@ -177,17 +190,10 @@
             </layout>
            </widget>
           </item>
-          <item row="3" column="1" colspan="2">
-           <widget class="QComboBox" name="comboBoxSyncMetod">
+          <item row="2" column="1" colspan="2">
+           <widget class="QLineEdit" name="lineEditClientName">
             <property name="jsonKey" stdset="0">
-             <string>sync_method</string>
-            </property>
-           </widget>
-          </item>
-          <item row="4" column="1" colspan="2">
-           <widget class="QComboBox" name="comboBoxTemplateHostname">
-            <property name="jsonKey" stdset="0">
-             <string>ip_gen_method_id</string>
+             <string>client_name</string>
             </property>
            </widget>
           </item>
@@ -204,18 +210,22 @@
             </property>
            </spacer>
           </item>
-          <item row="5" column="3">
-           <spacer name="horizontalSpacer">
-            <property name="orientation">
-             <enum>Qt::Orientation::Horizontal</enum>
+          <item row="3" column="0">
+           <widget class="QLabel" name="label_2">
+            <property name="text">
+             <string>Метод синхронізації:</string>
             </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>40</width>
-              <height>20</height>
-             </size>
+           </widget>
+          </item>
+          <item row="7" column="2">
+           <widget class="QPushButton" name="pushButtonSync">
+            <property name="enabled">
+             <bool>false</bool>
             </property>
-           </spacer>
+            <property name="text">
+             <string>Синхронізувати об'єкти</string>
+            </property>
+           </widget>
           </item>
          </layout>
         </widget>

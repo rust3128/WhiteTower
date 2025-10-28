@@ -10,6 +10,41 @@
 #include <QJsonArray>
 #include <QUrl>
 
+// Використовуємо анонімний простір імен, щоб зробити цю функцію
+// видимою тільки всередині цього файлу (це гарна практика).
+namespace {
+ApiError parseReply(QNetworkReply* reply)
+{
+    ApiError error;
+    if (!reply) {
+        error.errorString = "Internal error: QNetworkReply object is null.";
+        return error;
+    }
+
+    error.requestUrl = reply->request().url().toString();
+    error.httpStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    error.responseBody = reply->readAll(); // Читаємо тіло відповіді ОДИН РАЗ
+
+    if (reply->error() != QNetworkReply::NoError) {
+        // Мережева помилка (немає з'єднання, таймаут і т.д.)
+        error.errorString = "Network error: " + reply->errorString();
+    } else {
+        // Сервер відповів, але це може бути помилка (4xx, 5xx)
+        // Намагаємось розібрати JSON з тіла відповіді
+        QJsonObject jsonObj = QJsonDocument::fromJson(error.responseBody).object();
+        if (jsonObj.contains("error")) {
+            error.errorString = jsonObj["error"].toString();
+        } else if (jsonObj.contains("message")) {
+            error.errorString = jsonObj["message"].toString();
+        } else {
+            error.errorString = "Unknown server error.";
+        }
+    }
+    return error;
+}
+} // кінець анонімного простору імен
+
+
 ApiClient& ApiClient::instance()
 {
     static ApiClient self;
@@ -572,6 +607,73 @@ void ApiClient::onSettingsUpdateReplyFinished()
             error.errorString = jsonObj["error"].toString("Unknown server error");
         }
         emit settingsUpdateFailed(error);
+    }
+    reply->deleteLater();
+}
+
+
+void ApiClient::syncClientObjects(int clientId)
+{
+    logInfo() << " Call syncClientObjects";
+
+    QString url = m_serverUrl + QString("/api/clients/%1/sync").arg(clientId);
+    QNetworkRequest request = createAuthenticatedRequest(QUrl(url));
+
+    QNetworkReply* reply = m_networkManager->post(request, QByteArray());
+
+    // Зберігаємо ID клієнта у властивості запиту, щоб отримати його в слоті
+    reply->setProperty("clientId", clientId);
+
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onSyncReplyFinished);
+}
+
+void ApiClient::onSyncReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    int clientId = reply->property("clientId").toInt();
+    ApiError errorDetails = parseReply(reply); // Отримуємо повну структуру з помилкою
+
+    if (reply->error() == QNetworkReply::NoError && errorDetails.httpStatusCode == 202) {
+        // Успіх: сервер прийняв завдання
+        QJsonObject body = QJsonDocument::fromJson(errorDetails.responseBody).object();
+
+        // Створюємо тимчасовий об'єкт ApiError для передачі повідомлення про успіх
+        ApiError successDetails;
+        successDetails.errorString = body["status"].toString("Sync started.");
+
+        emit syncRequestAcknowledged(clientId, true, successDetails);
+    } else {
+        // Помилка: сервер відхилив запит, передаємо всю структуру помилки
+        emit syncRequestAcknowledged(clientId, false, errorDetails);
+    }
+    reply->deleteLater();
+}
+
+
+void ApiClient::fetchSyncStatus(int clientId)
+{
+    QString url = m_serverUrl + QString("/api/clients/%1/sync-status").arg(clientId);
+    QNetworkRequest request = createAuthenticatedRequest(QUrl(url));
+
+    QNetworkReply* reply = m_networkManager->get(request);
+    reply->setProperty("clientId", clientId); // Зберігаємо ID для слота
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onSyncStatusReplyFinished);
+}
+
+void ApiClient::onSyncStatusReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    int clientId = reply->property("clientId").toInt();
+    ApiError errorDetails = parseReply(reply);
+
+    if (reply->error() == QNetworkReply::NoError) {
+        emit syncStatusFetched(clientId, QJsonDocument::fromJson(errorDetails.responseBody).object());
+    } else {
+        emit syncStatusFetchFailed(clientId, errorDetails);
     }
     reply->deleteLater();
 }

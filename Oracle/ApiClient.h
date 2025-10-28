@@ -11,10 +11,12 @@ class QNetworkReply;
 class QNetworkRequest;
 class User;
 
+// Структура для зберігання детальної інформації про помилку API
 struct ApiError {
-    int httpStatusCode = 0;
-    QString requestUrl;
-    QString errorString; // Помилка мережі або з тіла відповіді
+    int httpStatusCode = 0;         // Напр., 404, 500
+    QString requestUrl;             // URL, на який йшов запит
+    QString errorString;            // Текстовий опис помилки
+    QByteArray responseBody;        // Тіло відповіді від сервера (може містити JSON з деталями)
 };
 Q_DECLARE_METATYPE(ApiError)
 
@@ -38,6 +40,8 @@ public:
     void updateClient(int clientId, const QJsonObject& clientData);
     void fetchSettings(const QString& appName);
     void updateSettings(const QString& appName, const QVariantMap& settings);
+    void syncClientObjects(int clientId);
+    void fetchSyncStatus(int clientId);
 
 signals:
     // Сигнали для логіну
@@ -87,6 +91,11 @@ signals:
     void settingsUpdateSuccess();
     void settingsUpdateFailed(const ApiError& error);
 
+    void syncRequestAcknowledged(int clientId, bool success, const ApiError& details);
+
+    void syncStatusFetched(int clientId, const QJsonObject& status);
+    void syncStatusFetchFailed(int clientId, const ApiError& error);
+
 private slots:
     void onLoginReplyFinished();
     void onUsersReplyFinished();
@@ -101,6 +110,8 @@ private slots:
     void onClientUpdateReplyFinished();
     void onSettingsReplyFinished();
     void onSettingsUpdateReplyFinished();
+    void onSyncReplyFinished();
+    void onSyncStatusReplyFinished();
 
 private:
     ApiClient(QObject* parent = nullptr);

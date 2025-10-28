@@ -35,10 +35,16 @@ public:
     QList<QVariantMap> loadAllIpGenMethods();
     static bool testConnection(const QJsonObject& config, QString& error);
     bool updateClient(int clientId, const QJsonObject& clientData);
-
+    QVariantMap syncClientObjects(int clientId);
+    QVariantMap getSyncStatus(int clientId);
 private:
     DbManager(); // Конструктор тепер приватний
     ~DbManager();
+
+    // --- Методи-стратегії для синхронізації ---
+    QVariantMap syncViaDirectConnection(int clientId, const QJsonObject& clientDetails);
+    QVariantMap syncViaPalantir(int clientId, const QJsonObject& clientDetails);
+    QVariantMap syncViaFile(int clientId, const QJsonObject& clientDetails);
 
     // Забороняємо копіювання
     DbManager(const DbManager&) = delete;

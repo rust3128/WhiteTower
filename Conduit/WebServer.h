@@ -54,6 +54,10 @@ private:
     QHttpServerResponse handleGetSettingsRequest(const QString& appName, const QHttpServerRequest& request);
     // Put /api/settings/<arg>
     QHttpServerResponse handleUpdateSettingsRequest(const QString& appName, const QHttpServerRequest& request);
+    // POST /api/clients/<arg>/sync
+    QHttpServerResponse handleSyncClientObjectsRequest(const QString& clientId, const QHttpServerRequest& request);
+    // Get /api/clients/<arg>/sync-status
+    QHttpServerResponse handleGetSyncStatusRequest(const QString &clientId, const QHttpServerRequest &request);
 private:
     QHttpServer* m_httpServer;
     quint16 m_port;

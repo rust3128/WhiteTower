@@ -575,3 +575,237 @@ bool DbManager::saveSettings(const QString& appName, const QVariantMap& settings
     }
     return true;
 }
+
+// ===================================================================
+// РЕАЛІЗАЦІЯ СТРАТЕГІЇ "ПРЯМЕ ПІДКЛЮЧЕННЯ"
+// ===================================================================
+QVariantMap DbManager::syncViaDirectConnection(int clientId, const QJsonObject& clientDetails)
+{
+    logInfo() << "Executing DIRECT sync strategy for client" << clientId;
+
+    if (!clientDetails.contains("config_direct")) {
+        return {{"error", "Direct connection configuration is missing for the client."}};
+    }
+    QJsonObject dbConfig = clientDetails["config_direct"].toObject();
+
+    // Імена для тимчасових, потокобезпечних з'єднань
+    const QString clientConnName = "client_sync_conn_" + QUuid::createUuid().toString();
+    const QString localConnName = "local_sync_conn_" + QUuid::createUuid().toString();
+
+    // Використовуємо блок {}, щоб гарантувати, що об'єкти QSqlDatabase
+    // будуть знищені до виклику removeDatabase
+    {
+        // === 1. Створюємо тимчасове з'єднання до БД клієнта ===
+        QSqlDatabase clientDb = QSqlDatabase::addDatabase("QIBASE", clientConnName);
+        clientDb.setHostName(dbConfig["db_host"].toString());
+        clientDb.setPort(dbConfig["db_port"].toInt());
+        clientDb.setDatabaseName(dbConfig["db_path"].toString());
+        clientDb.setUserName(dbConfig["db_user"].toString());
+        clientDb.setPassword(dbConfig["db_password"].toString()); // Використовуємо вже розшифрований пароль
+
+        if (!clientDb.open()) {
+            QString error = clientDb.lastError().text();
+            QSqlDatabase::removeDatabase(clientConnName);
+            return {{"error", "Failed to connect to client database: " + error}};
+        }
+
+        // === 2. Створюємо тимчасове з'єднання до НАШОЇ БД ===
+        QSqlDatabase localDb = QSqlDatabase::cloneDatabase(m_db, localConnName);
+        if (!localDb.open()) {
+            QString error = localDb.lastError().text();
+            clientDb.close();
+            QSqlDatabase::removeDatabase(clientConnName);
+            QSqlDatabase::removeDatabase(localConnName);
+            return {{"error", "Failed to open a thread-local connection to the main database: " + error}};
+        }
+
+        // === 3. ВИКОНУЄМО ВАШ ФІНАЛЬНИЙ ЗАПИТ ===
+        QSqlQuery getObjectsQuery(clientDb);
+        getObjectsQuery.prepare("SELECT "
+                                "    t.TERMINAL_ID, "
+                                "    (select o.name from terminals o where o.terminal_id = t.owner_id) as REGION_NAME, "
+                                "    t.NAME, "
+                                "    t.ADRESS, " // Використовуємо ADRESS з бази клієнта
+                                "    t.PHONE, "
+                                "    t.LATITUDE, "
+                                "    t.LONGITUDE, "
+                                "    t.ISACTIVE, " // Використовуємо ISACTIVE
+                                "    t.ISWORK "    // Використовуємо ISWORK
+                                "FROM "
+                                "    terminals t "
+                                "WHERE "
+                                "    t.TERMINAL_ID BETWEEN :minTermId AND :maxTermId "
+                                "ORDER BY "
+                                "    t.TERMINAL_ID");
+
+        getObjectsQuery.bindValue(":minTermId", clientDetails["term_id_min"].toInt());
+        getObjectsQuery.bindValue(":maxTermId", clientDetails["term_id_max"].toInt());
+
+        if (!getObjectsQuery.exec()) {
+            QString error = getObjectsQuery.lastError().text();
+            localDb.close(); clientDb.close();
+            QSqlDatabase::removeDatabase(localConnName); QSqlDatabase::removeDatabase(clientConnName);
+            return {{"error", "Failed to query objects from client database: " + error}};
+        }
+
+        // === 4. ОБРОБЛЯЄМО РЕЗУЛЬТАТИ ===
+        if (!localDb.transaction()) {
+            localDb.close(); clientDb.close();
+            QSqlDatabase::removeDatabase(localConnName); QSqlDatabase::removeDatabase(clientConnName);
+            return {{"error", "Failed to start transaction."}};
+        }
+
+        QSqlQuery syncQuery(localDb);
+        syncQuery.prepare("UPDATE OR INSERT INTO OBJECTS (CLIENT_ID, TERMINAL_ID, NAME, ADDRESS, IS_ACTIVE, IS_WORK, PHONE, REGION_NAME, LATITUDE, LONGITUDE) "
+                          "VALUES (:clientId, :termId, :name, :address, :isActive, :isWork, :phone, :region, :lat, :lon) "
+                          "MATCHING (CLIENT_ID, TERMINAL_ID)");
+        int processedCount = 0;
+        while (getObjectsQuery.next()) {
+            syncQuery.bindValue(":clientId", clientId);
+            syncQuery.bindValue(":termId", getObjectsQuery.value("TERMINAL_ID"));
+            syncQuery.bindValue(":name", getObjectsQuery.value("NAME"));
+            syncQuery.bindValue(":address", getObjectsQuery.value("ADRESS")); // Читаємо ADRESS
+            syncQuery.bindValue(":isActive", getObjectsQuery.value("ISACTIVE")); // Читаємо ISACTIVE
+            syncQuery.bindValue(":isWork", getObjectsQuery.value("ISWORK"));     // Читаємо ISWORK
+            syncQuery.bindValue(":phone", getObjectsQuery.value("PHONE"));
+            syncQuery.bindValue(":region", getObjectsQuery.value("REGION_NAME"));
+            syncQuery.bindValue(":lat", getObjectsQuery.value("LATITUDE"));
+            syncQuery.bindValue(":lon", getObjectsQuery.value("LONGITUDE"));
+
+            if (!syncQuery.exec()) {
+                QString error = syncQuery.lastError().text();
+                localDb.rollback();
+                localDb.close(); clientDb.close();
+                QSqlDatabase::removeDatabase(localConnName); QSqlDatabase::removeDatabase(clientConnName);
+                return {{"error", "Failed to sync object: " + error}};
+            }
+            processedCount++;
+        }
+
+// === ЗАМІНЮЄМО БЛОК ОНОВЛЕННЯ СТАТУСУ ===
+    QSqlQuery finalStatusQuery(localDb);
+    QString finalStatus;
+    QString finalMessage;
+
+    // Визначаємо фінальний статус на основі результату коміту
+    if (localDb.commit()) {
+        finalStatus = "SUCCESS";
+        finalMessage = QString("Synchronized %1 objects.").arg(processedCount);
+        logInfo() << "Successfully synchronized" << processedCount << "objects for client ID" << clientId;
+    } else {
+        finalStatus = "FAILED";
+        finalMessage = "Failed to commit transaction: " + localDb.lastError().text();
+        localDb.rollback();
+        logCritical() << finalMessage;
+    }
+
+    finalStatusQuery.prepare("UPDATE SYNC_STATUS SET LAST_SYNC_DATE = CURRENT_TIMESTAMP, "
+                             "LAST_SYNC_STATUS = :status, LAST_SYNC_MESSAGE = :message "
+                             "WHERE CLIENT_ID = :clientId");
+    finalStatusQuery.bindValue(":status", finalStatus);
+    finalStatusQuery.bindValue(":message", finalMessage);
+    finalStatusQuery.bindValue(":clientId", clientId);
+
+    if (!finalStatusQuery.exec()) {
+        logCritical() << "FATAL: Could not write final sync status for client" << clientId << ":" << finalStatusQuery.lastError().text();
+    }
+
+    // === КОРЕКТНЕ ЗАВЕРШЕННЯ ===
+    clientDb.close();
+    localDb.close();
+    QSqlDatabase::removeDatabase(clientConnName);
+    QSqlDatabase::removeDatabase(localConnName);
+
+    if (finalStatus == "SUCCESS") {
+         return {{"status", "success"}, {"processed_count", processedCount}};
+    } else {
+        return {{"error", finalMessage}};
+    }
+}
+}
+
+// ===================================================================
+// ГОЛОВНИЙ МЕТОД-"ДИСПЕТЧЕР"
+// ===================================================================
+QVariantMap DbManager::syncClientObjects(int clientId)
+{
+    // --- 1. Оновлюємо статус на "PENDING" (Виконується) ---
+    // Це відбувається в основному потоці, ще до запуску фонового завдання
+    QSqlQuery statusQuery(m_db);
+    statusQuery.prepare("UPDATE OR INSERT INTO SYNC_STATUS (CLIENT_ID, LAST_SYNC_STATUS, LAST_SYNC_MESSAGE) "
+                        "VALUES (:clientId, 'PENDING', 'Synchronization has been queued.') "
+                        "MATCHING (CLIENT_ID)");
+    statusQuery.bindValue(":clientId", clientId);
+    if (!statusQuery.exec()) {
+        logCritical() << "Could not set PENDING status for client sync:" << statusQuery.lastError().text();
+        return {{"error", "Failed to initialize sync status."}};
+    }
+
+    // --- 2. Завантажуємо деталі клієнта ---
+    // (використовуємо з'єднання за замовчуванням, оскільки ми ще в головному потоці)
+    QJsonObject clientDetails = loadClientDetails(clientId);
+    if (clientDetails.isEmpty()) {
+        // Якщо клієнта не знайдено, оновлюємо статус на "FAILED"
+        statusQuery.prepare("UPDATE SYNC_STATUS SET LAST_SYNC_STATUS = 'FAILED', "
+                            "LAST_SYNC_MESSAGE = 'Client not found.' WHERE CLIENT_ID = :clientId");
+        statusQuery.bindValue(":clientId", clientId);
+        statusQuery.exec();
+        return {{"error", QString("Client with ID %1 not found.").arg(clientId)}};
+    }
+
+    QString syncMethod = clientDetails["sync_method"].toString().toUpper();
+    logInfo() << QString("Initiating synchronization for client %1 with method '%2'")
+                     .arg(clientId).arg(syncMethod);
+
+    // --- 3. Викликаємо відповідну стратегію ---
+    // Результат тепер буде записаний у базу даних самою стратегією
+    if (syncMethod == "DIRECT") {
+        return syncViaDirectConnection(clientId, clientDetails);
+    } else if (syncMethod == "PALANTIR") {
+        return syncViaPalantir(clientId, clientDetails);
+    } else if (syncMethod == "FILE") {
+        return syncViaFile(clientId, clientDetails);
+    } else {
+        QString errorMsg = QString("Unknown synchronization method '%1'").arg(syncMethod);
+        statusQuery.prepare("UPDATE SYNC_STATUS SET LAST_SYNC_STATUS = 'FAILED', "
+                            "LAST_SYNC_MESSAGE = :msg WHERE CLIENT_ID = :clientId");
+        statusQuery.bindValue(":msg", errorMsg);
+        statusQuery.bindValue(":clientId", clientId);
+        statusQuery.exec();
+        return {{"error", errorMsg}};
+    }
+}
+
+// 2. Заглушка для "PALANTIR"
+QVariantMap DbManager::syncViaPalantir(int clientId, const QJsonObject& clientDetails)
+{
+    logInfo() << "Attempted to sync via PALANTIR for client" << clientId << "(not implemented yet).";
+    Q_UNUSED(clientDetails); // Поки що не використовуємо
+    return {{"error", "Synchronization via Palantir is not yet implemented."}};
+}
+
+// 3. Заглушка для "FILE"
+QVariantMap DbManager::syncViaFile(int clientId, const QJsonObject& clientDetails)
+{
+    logInfo() << "Attempted to sync via FILE for client" << clientId << "(not implemented yet).";
+    Q_UNUSED(clientDetails); // Поки що не використовуємо
+    return {{"error", "Synchronization via File is not yet implemented."}};
+}
+
+QVariantMap DbManager::getSyncStatus(int clientId)
+{
+    QSqlQuery query(m_db);
+    query.prepare("SELECT LAST_SYNC_DATE, LAST_SYNC_STATUS, LAST_SYNC_MESSAGE "
+                  "FROM SYNC_STATUS WHERE CLIENT_ID = :clientId");
+    query.bindValue(":clientId", clientId);
+
+    if (query.exec() && query.next()) {
+        return {
+            {"last_sync_date", query.value("LAST_SYNC_DATE")},
+            {"status", query.value("LAST_SYNC_STATUS")},
+            {"message", query.value("LAST_SYNC_MESSAGE")}
+        };
+    }
+    // Якщо запису немає, повертаємо статус "Невідомий"
+    return {{"status", "UNKNOWN"}};
+}
