@@ -42,6 +42,8 @@ public:
     void updateSettings(const QString& appName, const QVariantMap& settings);
     void syncClientObjects(int clientId);
     void fetchSyncStatus(int clientId);
+    void fetchObjects(const QVariantMap& filters = {});
+    void fetchRegionsList();
 
 signals:
     // Сигнали для логіну
@@ -96,6 +98,12 @@ signals:
     void syncStatusFetched(int clientId, const QJsonObject& status);
     void syncStatusFetchFailed(int clientId, const ApiError& error);
 
+    void objectsFetched(const QJsonArray& objects);
+    void objectsFetchFailed(const ApiError& error);
+
+    void regionsListFetched(const QStringList& regions);
+    void regionsListFetchFailed(const ApiError& error);
+
 private slots:
     void onLoginReplyFinished();
     void onUsersReplyFinished();
@@ -112,6 +120,8 @@ private slots:
     void onSettingsUpdateReplyFinished();
     void onSyncReplyFinished();
     void onSyncStatusReplyFinished();
+    void onObjectsReplyFinished();
+    void onRegionsListReplyFinished();
 
 private:
     ApiClient(QObject* parent = nullptr);

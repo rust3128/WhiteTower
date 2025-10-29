@@ -9,6 +9,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QUrl>
+#include <QUrlQuery>
 
 // Використовуємо анонімний простір імен, щоб зробити цю функцію
 // видимою тільки всередині цього файлу (це гарна практика).
@@ -674,6 +675,76 @@ void ApiClient::onSyncStatusReplyFinished()
         emit syncStatusFetched(clientId, QJsonDocument::fromJson(errorDetails.responseBody).object());
     } else {
         emit syncStatusFetchFailed(clientId, errorDetails);
+    }
+    reply->deleteLater();
+}
+
+
+void ApiClient::fetchObjects(const QVariantMap &filters)
+{
+    QUrl url(m_serverUrl + "/api/objects");
+
+    // Цей код вже готовий для майбутньої фільтрації
+    if (!filters.isEmpty()) {
+        QUrlQuery query;
+        for (auto it = filters.constBegin(); it != filters.constEnd(); ++it) {
+            query.addQueryItem(it.key(), it.value().toString());
+        }
+        url.setQuery(query);
+    }
+
+    QNetworkRequest request = createAuthenticatedRequest(url);
+    QNetworkReply* reply = m_networkManager->get(request);
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onObjectsReplyFinished);
+}
+
+void ApiClient::onObjectsReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    ApiError error = parseReply(reply);
+    if (reply->error() == QNetworkReply::NoError) {
+        QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
+        if (doc.isObject() && doc.object().contains("objects")) {
+            emit objectsFetched(doc.object()["objects"].toArray());
+        } else {
+            error.errorString = "Invalid response from server: 'objects' array not found.";
+            emit objectsFetchFailed(error);
+        }
+    } else {
+        emit objectsFetchFailed(error);
+    }
+    reply->deleteLater();
+}
+
+void ApiClient::fetchRegionsList()
+{
+    QNetworkRequest request = createAuthenticatedRequest(QUrl(m_serverUrl + "/api/regions-list"));
+    QNetworkReply* reply = m_networkManager->get(request);
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onRegionsListReplyFinished);
+}
+
+void ApiClient::onRegionsListReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    ApiError error = parseReply(reply);
+    if (reply->error() == QNetworkReply::NoError) {
+        QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
+        if (doc.isObject() && doc.object().contains("regions")) {
+            QStringList regions;
+            for (const auto& val : doc.object()["regions"].toArray()) {
+                regions.append(val.toString());
+            }
+            emit regionsListFetched(regions);
+        } else {
+            error.errorString = "Invalid response from server: 'regions' array not found.";
+            emit regionsListFetchFailed(error);
+        }
+    } else {
+        emit regionsListFetchFailed(error);
     }
     reply->deleteLater();
 }

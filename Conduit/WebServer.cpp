@@ -14,7 +14,7 @@
 #include <QJsonArray>
 #include <QCryptographicHash>
 #include <QHttpServerResponse>
-#include <QtConcurrent>
+#include <QUrlQuery>
 
 
 WebServer::WebServer(quint16 port, QObject *parent)
@@ -102,6 +102,16 @@ void WebServer::setupRoutes()
     m_httpServer->route("/api/clients/<arg>/sync-status", QHttpServerRequest::Method::Get,
                         [this](const QString& clientId, const QHttpServerRequest& request) {
                             return handleGetSyncStatusRequest(clientId, request);
+                        });
+
+    m_httpServer->route("/api/objects", QHttpServerRequest::Method::Get,
+                        [this](const QHttpServerRequest &request) {
+                            return handleGetObjectsRequest(request);
+                        });
+
+    m_httpServer->route("/api/regions-list", QHttpServerRequest::Method::Get,
+                        [this](const QHttpServerRequest &request) {
+                            return handleGetRegionsListRequest(request);
                         });
 }
 
@@ -891,4 +901,59 @@ QHttpServerResponse WebServer::handleGetSyncStatusRequest(const QString &clientI
 
     QVariantMap status = DbManager::instance().getSyncStatus(id);
     return createJsonResponse(QJsonObject::fromVariantMap(status), QHttpServerResponse::StatusCode::Ok);
+}
+
+
+QHttpServerResponse WebServer::handleGetObjectsRequest(const QHttpServerRequest &request)
+{
+    logRequest(request);
+    if (!authenticateRequest(request)) {
+        return createJsonResponse({{"error", "Unauthorized"}}, QHttpServerResponse::StatusCode::Unauthorized);
+    }
+
+    // --- ОСНОВНА ЗМІНА ТУТ ---
+    // 1. Розбираємо параметри з URL
+    QVariantMap filters;
+    const QUrlQuery query(request.url());
+
+    if (query.hasQueryItem("clientId"))
+        filters["clientId"] = query.queryItemValue("clientId").toInt();
+
+    if (query.hasQueryItem("region"))
+        filters["region"] = query.queryItemValue("region");
+
+    if (query.hasQueryItem("search"))
+        filters["search"] = query.queryItemValue("search");
+
+    if (query.hasQueryItem("isActive"))
+        filters["isActive"] = query.queryItemValue("isActive") == "true";
+
+    if (query.hasQueryItem("isWork"))
+        filters["isWork"] = query.queryItemValue("isWork") == "true";
+
+    if (query.hasQueryItem("terminalId"))
+        filters["terminalId"] = query.queryItemValue("terminalId").toInt();
+    // -----------------------
+
+    // 2. Викликаємо новий метод з фільтрами
+    QList<QVariantMap> objects = DbManager::instance().getObjects(filters);
+
+    // (Код для перетворення QList<QVariantMap> в QJsonArray залишається без змін)
+    QJsonArray jsonArray;
+    for (const auto& map : objects) {
+        jsonArray.append(QJsonObject::fromVariantMap(map));
+    }
+    QJsonObject responseBody;
+    responseBody["objects"] = jsonArray;
+
+    return createJsonResponse(responseBody, QHttpServerResponse::StatusCode::Ok);
+}
+
+QHttpServerResponse WebServer::handleGetRegionsListRequest(const QHttpServerRequest &request)
+{
+    if (!authenticateRequest(request))
+        return createJsonResponse({{"error", "Unauthorized"}}, QHttpServerResponse::StatusCode::Unauthorized);
+
+    QStringList regions = DbManager::instance().getUniqueRegionsList();
+    return createJsonResponse({{"regions", QJsonArray::fromStringList(regions)}}, QHttpServerResponse::StatusCode::Ok);
 }

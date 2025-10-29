@@ -5,5 +5,6 @@
         <file>res/Images/user_edit.png</file>
         <file>res/Images/cletnts_list.png</file>
         <file>res/Images/settings_icon.png</file>
+        <file>res/Images/gas_stantion.png</file>
     </qresource>
 </RCC>

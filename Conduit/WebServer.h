@@ -58,6 +58,11 @@ private:
     QHttpServerResponse handleSyncClientObjectsRequest(const QString& clientId, const QHttpServerRequest& request);
     // Get /api/clients/<arg>/sync-status
     QHttpServerResponse handleGetSyncStatusRequest(const QString &clientId, const QHttpServerRequest &request);
+    // Get /api/objects
+    QHttpServerResponse handleGetObjectsRequest(const QHttpServerRequest &request);
+    // GET /api/regions-list
+    QHttpServerResponse handleGetRegionsListRequest(const QHttpServerRequest &request);
+
 private:
     QHttpServer* m_httpServer;
     quint16 m_port;

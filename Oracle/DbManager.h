@@ -37,6 +37,9 @@ public:
     bool updateClient(int clientId, const QJsonObject& clientData);
     QVariantMap syncClientObjects(int clientId);
     QVariantMap getSyncStatus(int clientId);
+    QList<QVariantMap> getObjects(const QVariantMap& filters);
+    QStringList getUniqueRegionsList();
+
 private:
     DbManager(); // Конструктор тепер приватний
     ~DbManager();

@@ -665,8 +665,13 @@ QVariantMap DbManager::syncViaDirectConnection(int clientId, const QJsonObject& 
             syncQuery.bindValue(":termId", getObjectsQuery.value("TERMINAL_ID"));
             syncQuery.bindValue(":name", getObjectsQuery.value("NAME"));
             syncQuery.bindValue(":address", getObjectsQuery.value("ADRESS")); // Читаємо ADRESS
-            syncQuery.bindValue(":isActive", getObjectsQuery.value("ISACTIVE")); // Читаємо ISACTIVE
-            syncQuery.bindValue(":isWork", getObjectsQuery.value("ISWORK"));     // Читаємо ISWORK
+            bool isActive = (getObjectsQuery.value("ISACTIVE").toString().trimmed() == "T");
+            bool isWork = (getObjectsQuery.value("ISWORK").toString().trimmed() == "T");
+            // Новий діагностичний лог
+            logInfo() << "Raw ISACTIVE: '" << getObjectsQuery.value("ISACTIVE").toString()
+                      << "', Raw ISWORK: '" << getObjectsQuery.value("ISWORK").toString() << "'";
+            syncQuery.bindValue(":isActive", isActive);
+            syncQuery.bindValue(":isWork", isWork);
             syncQuery.bindValue(":phone", getObjectsQuery.value("PHONE"));
             syncQuery.bindValue(":region", getObjectsQuery.value("REGION_NAME"));
             syncQuery.bindValue(":lat", getObjectsQuery.value("LATITUDE"));
@@ -808,4 +813,95 @@ QVariantMap DbManager::getSyncStatus(int clientId)
     }
     // Якщо запису немає, повертаємо статус "Невідомий"
     return {{"status", "UNKNOWN"}};
+}
+
+QList<QVariantMap> DbManager::getObjects(const QVariantMap &filters)
+{
+    QList<QVariantMap> objects;
+    QString queryString = "SELECT o.*, c.CLIENT_NAME "
+                          "FROM OBJECTS o "
+                          "JOIN CLIENTS c ON o.CLIENT_ID = c.CLIENT_ID";
+
+    QStringList whereConditions;
+    QVariantMap bindValues;
+
+    if (filters.contains("clientId")) {
+        whereConditions.append("o.CLIENT_ID = :clientId");
+        bindValues[":clientId"] = filters["clientId"];
+    }
+    if (filters.contains("region")) {
+        whereConditions.append("o.REGION_NAME = :region");
+        bindValues[":region"] = filters["region"];
+    }
+    if (filters.contains("isActive")) {
+        whereConditions.append("o.IS_ACTIVE = :isActive");
+        bindValues[":isActive"] = filters["isActive"];
+    }
+    if (filters.contains("isWork")) {
+        whereConditions.append("o.IS_WORK = :isWork");
+        bindValues[":isWork"] = filters["isWork"];
+    }
+
+    // 6. Фільтр за ID терміналу
+    if (filters.contains("terminalId")) {
+        whereConditions.append("o.TERMINAL_ID = :terminalId");
+        bindValues[":terminalId"] = filters["terminalId"];
+    }
+
+    // --- ЗМІНЕНО ТУТ ---
+    if (filters.contains("search") && !filters["search"].toString().isEmpty()) {
+        whereConditions.append("(o.NAME CONTAINING :search OR o.ADDRESS CONTAINING :search)");
+        bindValues[":search"] = filters["search"];
+    }
+    // -------------------
+
+    if (!whereConditions.isEmpty()) {
+        queryString += " WHERE " + whereConditions.join(" AND ");
+    }
+    queryString += " ORDER BY o.CLIENT_ID, o.TERMINAL_ID";
+
+    logDebug() << "Executing SQL:" << queryString;
+    logDebug() << "With BIND values:" << bindValues;
+
+    QSqlQuery query(m_db);
+    query.prepare(queryString);
+
+    for (auto it = bindValues.constBegin(); it != bindValues.constEnd(); ++it) {
+        query.bindValue(it.key(), it.value());
+    }
+
+    if (!query.exec()) {
+        logCritical() << "Failed to fetch filtered objects:" << query.lastError().text();
+        return objects;
+    }
+
+    while (query.next()) {
+        QVariantMap object;
+        object["object_id"] = query.value("OBJECT_ID");
+        object["client_id"] = query.value("CLIENT_ID");
+        object["client_name"] = query.value("CLIENT_NAME");
+        object["terminal_id"] = query.value("TERMINAL_ID");
+        object["name"] = query.value("NAME");
+        object["address"] = query.value("ADDRESS");
+        object["region_name"] = query.value("REGION_NAME");
+        object["is_active"] = query.value("IS_ACTIVE");
+        object["is_work"] = query.value("IS_WORK");
+        objects.append(object);
+    }
+    return objects;
+}
+
+
+QStringList DbManager::getUniqueRegionsList()
+{
+    QStringList regions;
+    QSqlQuery query("SELECT DISTINCT REGION_NAME FROM OBJECTS WHERE REGION_NAME IS NOT NULL AND REGION_NAME <> '' ORDER BY REGION_NAME", m_db);
+    if (!query.exec()) {
+        logCritical() << "Failed to fetch unique regions list:" << query.lastError().text();
+        return regions;
+    }
+    while (query.next()) {
+        regions.append(query.value(0).toString());
+    }
+    return regions;
 }

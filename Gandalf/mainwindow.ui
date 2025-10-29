@@ -29,6 +29,7 @@
     </property>
     <addaction name="actionUsers"/>
     <addaction name="actionClients"/>
+    <addaction name="actionObjectsList"/>
    </widget>
    <widget class="QMenu" name="menuSettings">
     <property name="title">
@@ -65,6 +66,15 @@
    </property>
    <property name="text">
     <string>Параметри</string>
+   </property>
+  </action>
+  <action name="actionObjectsList">
+   <property name="icon">
+    <iconset resource="resource.qrc">
+     <normaloff>:/res/Images/gas_stantion.png</normaloff>:/res/Images/gas_stantion.png</iconset>
+   </property>
+   <property name="text">
+    <string>Список об'єктів</string>
    </property>
   </action>
  </widget>
