@@ -44,6 +44,10 @@ public:
     void fetchSyncStatus(int clientId);
     void fetchObjects(const QVariantMap& filters = {});
     void fetchRegionsList();
+    // метод для встановлення URL:
+    void setServerUrl(const QString& url);
+    // метод для реєстрації:
+    void registerBotUser(const QJsonObject& userData);
 
 signals:
     // Сигнали для логіну
@@ -104,6 +108,9 @@ signals:
     void regionsListFetched(const QStringList& regions);
     void regionsListFetchFailed(const ApiError& error);
 
+    void botUserRegistered(const QJsonObject& result);
+    void botUserRegistrationFailed(const ApiError& error);
+
 private slots:
     void onLoginReplyFinished();
     void onUsersReplyFinished();
@@ -122,6 +129,7 @@ private slots:
     void onSyncStatusReplyFinished();
     void onObjectsReplyFinished();
     void onRegionsListReplyFinished();
+    void onBotRegisterReplyFinished();
 
 private:
     ApiClient(QObject* parent = nullptr);

@@ -10,6 +10,7 @@
 #include <QCryptographicHash>
 #include <QUuid>
 
+
 DbManager& DbManager::instance()
 {
     static DbManager self;
@@ -904,4 +905,65 @@ QStringList DbManager::getUniqueRegionsList()
         regions.append(query.value(0).toString());
     }
     return regions;
+}
+
+
+/**
+ * @brief Створює запит на доступ для нового користувача Telegram.
+ * Створює НЕАКТИВНИЙ запис в основній таблиці USERS.
+ * @param userData JSON-об'єкт, що містить 'telegram_id', 'username', 'first_name'.
+ * @return JSON-об'єкт зі статусом операції.
+ */
+QJsonObject DbManager::registerBotUser(const QJsonObject &userData)
+{
+    // 1. Отримуємо дані з JSON об'єкта
+    qint64 telegramId = userData["telegram_id"].toVariant().toLongLong();
+    QString username = userData["username"].toString();
+    QString firstName = userData["first_name"].toString();
+
+    if (telegramId == 0) {
+        qCritical() << "Telegram ID is missing in registration data.";
+        return {{"status", "error"}, {"message", "Telegram ID is missing"}};
+    }
+
+    QSqlQuery query(m_db);
+
+    // 2. Перевірка на дублікати
+    query.prepare("SELECT USER_ID FROM USERS WHERE TELEGRAM_ID = :telegram_id");
+    query.bindValue(":telegram_id", telegramId);
+    if (!query.exec()) {
+        qCritical() << "Failed to check for existing telegram user:" << query.lastError().text();
+        return {{"status", "error"}, {"message", "Database check failed."}};
+    }
+
+    if (query.next()) {
+        qInfo() << "Registration request for telegram_id" << telegramId << "already exists.";
+        return {{"status", "exists"}, {"message", "Request for this user has already been sent."}};
+    }
+
+    // --- ПОЧАТОК ВИПРАВЛЕННЯ ---
+
+    // 3. Готуємо SQL-запит з ПРАВИЛЬНИМИ іменами полів та іменованими плейсхолдерами
+    // USER_LOGIN замість LOGIN, USER_FIO замість FIO, видалено неіснуючий ROLE_ID.
+    // IS_ACTIVE встановлюємо в 0 згідно з планом.
+    query.prepare("INSERT INTO USERS (USER_LOGIN, USER_FIO, TELEGRAM_ID, IS_ACTIVE) "
+                  "VALUES (:user_login, :user_fio, :telegram_id, 0)");
+
+    // 4. Прив'язуємо значення до відповідних плейсхолдерів
+    query.bindValue(":user_login", username);
+    query.bindValue(":user_fio", firstName);
+    query.bindValue(":telegram_id", telegramId);
+
+    // --- КІНЕЦЬ ВИПРАВЛЕННЯ ---
+
+
+    // 5. Виконуємо запит
+    if (!query.exec()) {
+        qCritical() << "Failed to insert new pending user:" << query.lastError().text();
+        return {{"status", "error"}, {"message", "Failed to create user request record."}};
+    }
+
+    // 6. Успішна відповідь
+    qInfo() << "Successfully created a pending access request for user" << username;
+    return {{"status", "success"}, {"message", "Your access request has been sent for review."}};
 }

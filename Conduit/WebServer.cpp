@@ -113,6 +113,10 @@ void WebServer::setupRoutes()
                         [this](const QHttpServerRequest &request) {
                             return handleGetRegionsListRequest(request);
                         });
+
+    m_httpServer->route("/api/bot/register", QHttpServerRequest::Method::Post, [this](const QHttpServerRequest &request) {
+        return handleBotRegisterRequest(request);
+    });
 }
 
 // Допоміжний метод для логування запиту
@@ -956,4 +960,29 @@ QHttpServerResponse WebServer::handleGetRegionsListRequest(const QHttpServerRequ
 
     QStringList regions = DbManager::instance().getUniqueRegionsList();
     return createJsonResponse({{"regions", QJsonArray::fromStringList(regions)}}, QHttpServerResponse::StatusCode::Ok);
+}
+
+
+QHttpServerResponse WebServer::handleBotRegisterRequest(const QHttpServerRequest &request)
+{
+    logRequest(request);
+    QJsonDocument doc = QJsonDocument::fromJson(request.body());
+    if (!doc.isObject()) {
+        return createJsonResponse({{"error", "Invalid JSON body"}}, QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    QJsonObject userData = doc.object();
+    // Перевіряємо наявність обов'язкових полів
+    if (!userData.contains("telegram_id") || !userData.contains("username")) {
+        return createJsonResponse({{"error", "Missing required fields: telegram_id, username"}},
+                                  QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    QJsonObject result = DbManager::instance().registerBotUser(userData);
+
+    if (result["status"] == "error") {
+        return createJsonResponse(result, QHttpServerResponse::StatusCode::InternalServerError);
+    }
+
+    return createJsonResponse(result, QHttpServerResponse::StatusCode::Ok);
 }

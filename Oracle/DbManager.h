@@ -40,6 +40,8 @@ public:
     QList<QVariantMap> getObjects(const QVariantMap& filters);
     QStringList getUniqueRegionsList();
 
+    QJsonObject registerBotUser(const QJsonObject& userData);
+
 private:
     DbManager(); // Конструктор тепер приватний
     ~DbManager();

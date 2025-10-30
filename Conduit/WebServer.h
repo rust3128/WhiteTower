@@ -62,7 +62,8 @@ private:
     QHttpServerResponse handleGetObjectsRequest(const QHttpServerRequest &request);
     // GET /api/regions-list
     QHttpServerResponse handleGetRegionsListRequest(const QHttpServerRequest &request);
-
+    // POST /api/bot/register
+    QHttpServerResponse handleBotRegisterRequest(const QHttpServerRequest& request);
 private:
     QHttpServer* m_httpServer;
     quint16 m_port;

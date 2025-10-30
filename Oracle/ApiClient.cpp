@@ -748,3 +748,36 @@ void ApiClient::onRegionsListReplyFinished()
     }
     reply->deleteLater();
 }
+
+
+void ApiClient::setServerUrl(const QString& url)
+{
+    if (!url.isEmpty()) {
+        m_serverUrl = url;
+    }
+}
+
+void ApiClient::registerBotUser(const QJsonObject& userData)
+{
+    QNetworkRequest request(QUrl(m_serverUrl + "/api/bot/register"));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    // Цей запит не потребує аутентифікації
+
+    QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(userData).toJson());
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onBotRegisterReplyFinished);
+}
+
+void ApiClient::onBotRegisterReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    ApiError error = parseReply(reply);
+    if (reply->error() == QNetworkReply::NoError) {
+        emit botUserRegistered(QJsonDocument::fromJson(error.responseBody).object());
+    } else {
+        emit botUserRegistrationFailed(error);
+    }
+    reply->deleteLater();
+}
+
