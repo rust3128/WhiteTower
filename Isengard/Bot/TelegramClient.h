@@ -6,25 +6,30 @@
 #include <QJsonArray>
 
 class QNetworkAccessManager;
+class QTimer;
 
 class TelegramClient : public QObject
 {
     Q_OBJECT
 public:
-    explicit TelegramClient(const QString& token, QObject *parent = nullptr);
-    void getUpdates(qint64 offset = 0);
-    void sendMessage(qint64 chatId, const QString& text);
+    explicit TelegramClient(const QString& token, QObject* parent = nullptr);
+
+    void startPolling();
+    void stopPolling();
 
 signals:
     void updatesReceived(const QJsonArray& updates);
-    void errorOccurred(const QString& errorString);
+    void errorOccurred(const QString& error);
 
 private slots:
-    void onGetUpdatesFinished();
+    void getUpdates();
+    void onUpdatesReplyFinished();
 
 private:
-    const QString m_apiUrl;
+    QString m_token;
+    qint64 m_lastUpdateId = 0;
     QNetworkAccessManager* m_networkManager;
+    QTimer* m_pollingTimer;
 };
 
 #endif // TELEGRAMCLIENT_H

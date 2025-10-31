@@ -1,60 +1,70 @@
 #include "TelegramClient.h"
-#include "Oracle/Logger.h"
 #include <QNetworkAccessManager>
 #include <QNetworkRequest>
 #include <QNetworkReply>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QTimer>
+#include <QUrl>
 #include <QUrlQuery>
 
-TelegramClient::TelegramClient(const QString &token, QObject *parent)
-    : QObject{parent}
-    , m_apiUrl(QString("https://api.telegram.org/bot%1").arg(token))
+TelegramClient::TelegramClient(const QString& token, QObject* parent)
+    : QObject(parent), m_token(token)
 {
     m_networkManager = new QNetworkAccessManager(this);
+    m_pollingTimer = new QTimer(this);
+    // Таймер буде викликати слот getUpdates кожні 2 секунди
+    connect(m_pollingTimer, &QTimer::timeout, this, &TelegramClient::getUpdates);
 }
 
-void TelegramClient::getUpdates(qint64 offset)
+void TelegramClient::startPolling()
 {
-    QUrl url(m_apiUrl + "/getUpdates");
+    if (!m_pollingTimer->isActive()) {
+        getUpdates(); // Робимо перший запит негайно
+        m_pollingTimer->start(2000); // Потім запускаємо опитування кожні 2 секунди
+    }
+}
+
+void TelegramClient::stopPolling()
+{
+    m_pollingTimer->stop();
+}
+
+// Приватний метод для запиту оновлень
+void TelegramClient::getUpdates()
+{
+    QUrl url("https://api.telegram.org/bot" + m_token + "/getUpdates");
     QUrlQuery query;
-    query.addQueryItem("offset", QString::number(offset));
-    query.addQueryItem("timeout", "10"); // Чекати на відповідь 10 секунд
+    query.addQueryItem("offset", QString::number(m_lastUpdateId + 1));
+    query.addQueryItem("timeout", "10"); // Час очікування на стороні Telegram
     url.setQuery(query);
 
     QNetworkRequest request(url);
     QNetworkReply* reply = m_networkManager->get(request);
-    connect(reply, &QNetworkReply::finished, this, &TelegramClient::onGetUpdatesFinished);
+    connect(reply, &QNetworkReply::finished, this, &TelegramClient::onUpdatesReplyFinished);
 }
 
-void TelegramClient::onGetUpdatesFinished()
+void TelegramClient::onUpdatesReplyFinished()
 {
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
     if (!reply) return;
 
     if (reply->error() != QNetworkReply::NoError) {
-        emit errorOccurred("Network error: " + reply->errorString());
+        emit errorOccurred(reply->errorString());
     } else {
         QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
-        if (doc.isObject() && doc.object()["ok"].toBool()) {
-            emit updatesReceived(doc.object()["result"].toArray());
-        } else {
-            emit errorOccurred("Telegram API error: " + doc.toJson());
+        if (doc.isObject()) {
+            QJsonObject obj = doc.object();
+            if (obj["ok"].toBool()) {
+                QJsonArray updates = obj["result"].toArray();
+                if (!updates.isEmpty()) {
+                    // Оновлюємо ID останнього повідомлення
+                    m_lastUpdateId = updates.last().toObject()["update_id"].toVariant().toLongLong();
+                    // І сповіщаємо "мозок" про нові події
+                    emit updatesReceived(updates);
+                }
+            }
         }
     }
     reply->deleteLater();
-}
-
-void TelegramClient::sendMessage(qint64 chatId, const QString &text)
-{
-    QUrl url(m_apiUrl + "/sendMessage");
-    QJsonObject json;
-    json["chat_id"] = chatId;
-    json["text"] = text;
-
-    QNetworkRequest request(url);
-    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-
-    // Цей запит нас не дуже цікавить, тому відповідь не обробляємо
-    m_networkManager->post(request, QJsonDocument(json).toJson());
 }

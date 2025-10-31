@@ -18,6 +18,8 @@ add_executable(Isengard
     main.cpp
     Bot/TelegramClient.h
     Bot/TelegramClient.cpp
+    Bot/Bot.h
+    Bot/Bot.cpp
 
 )
 

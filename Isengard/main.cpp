@@ -7,10 +7,13 @@
 #include <QDir>
 #include <QFile>
 #include <QVariantMap>
+#include <QCoreApplication>
+#include <QFileInfo>
+#include "Oracle/Logger.h"
+#include "Oracle/AppParams.h"
+#include "Bot/Bot.h" // Наш новий головний клас
 
 #include "Oracle/Logger.h"
-#include "Bot/TelegramClient.h"
-#include "Oracle/ApiClient.h"
 #include "Oracle/AppParams.h"
 
 // Змінна для зберігання ID останнього оновлення
@@ -68,90 +71,35 @@ QVariantMap setupBotConfiguration()
 }
 
 
+
+
+// ... функція setupBotConfiguration() залишається без змін ...
+
 int main(int argc, char *argv[])
 {
     QCoreApplication a(argc, argv);
     QCoreApplication::setApplicationName("Isengard");
     preInitLogger(QFileInfo(a.applicationFilePath()).baseName());
 
-    logInfo() << "Isengard bot starting...";
+    logInfo() << "Isengard application starting...";
 
     // 1. Отримуємо налаштування
     QVariantMap config = setupBotConfiguration();
     const QString botToken = config["botToken"].toString();
     const QString apiUrl = config["apiUrl"].toString();
 
-    // 2. Перевіряємо налаштування
-    if (botToken.isEmpty() || botToken.startsWith("YOUR")) {
-        logCritical() << "Bot token is missing or not set. Shutting down.";
-        return 1;
-    }
-    if (apiUrl.isEmpty()) {
-        logCritical() << "API Server URL is missing. Shutting down.";
+    if (botToken.isEmpty() || botToken.startsWith("YOUR") || apiUrl.isEmpty()) {
+        logCritical() << "Bot token or API URL is not set. Shutting down.";
         return 1;
     }
 
-    // 3. КЛЮЧОВИЙ КРОК: Зберігаємо URL в глобальні параметри ДО створення ApiClient
-    AppParams::instance().setParam("Global", "ApiBaseUrl", apiUrl); // <--- ВИРІШЕННЯ ПРОБЛЕМИ
+    // 2. Налаштовуємо глобальні параметри для ApiClient
+    AppParams::instance().setParam("Global", "ApiBaseUrl", apiUrl);
 
-    // 4. Тепер, коли параметр встановлено, отримуємо екземпляр ApiClient
-    // Його конструктор тепер успішно знайде потрібний URL в AppParams.
-    ApiClient& apiClient = ApiClient::instance();
+    // 3. Створюємо і запускаємо "мозок" бота
+    Bot bot(botToken);
+    bot.start();
 
-    // Створюємо клієнт для Telegram
-    TelegramClient telegramClient(botToken);
-
-    // 5. Налаштовуємо обробники відповідей від сервера
-    QObject::connect(&apiClient, &ApiClient::botUserRegistered, [](const QJsonObject& response) {
-        logInfo() << "Server response: User successfully registered." << response;
-    });
-    QObject::connect(&apiClient, &ApiClient::botUserRegistrationFailed, [](const ApiError& error) {
-        logCritical() << "Server response: User registration failed:" << error.errorString;
-    });
-
-    // ... решта коду залишається без змін ...
-
-    QObject::connect(&telegramClient, &TelegramClient::updatesReceived, [&](const QJsonArray& updates) {
-        if (updates.isEmpty()) {
-            telegramClient.getUpdates(g_lastUpdateId + 1);
-            return;
-        }
-
-        for (const QJsonValue& updateValue : updates) {
-            QJsonObject updateObj = updateValue.toObject();
-            g_lastUpdateId = updateObj["update_id"].toVariant().toLongLong();
-
-            if (updateObj.contains("message")) {
-                QJsonObject message = updateObj["message"].toObject();
-                QString text = message["text"].toString();
-
-                if (text == "/start") {
-                    QJsonObject from = message["from"].toObject();
-                    qint64 userId = from["id"].toVariant().toLongLong();
-                    QString username = from["username"].toString();
-                    QString firstName = from["first_name"].toString();
-
-                    logInfo() << "User" << username << "(" << userId << ") sent /start. Sending registration request...";
-
-                    QJsonObject payload;
-                    payload["telegram_id"] = userId;
-                    payload["username"] = username;
-                    payload["first_name"] = firstName;
-
-                    apiClient.registerBotUser(payload);
-                }
-            }
-        }
-        telegramClient.getUpdates(g_lastUpdateId + 1);
-    });
-
-    QObject::connect(&telegramClient, &TelegramClient::errorOccurred, [&](const QString& error){
-        logCritical() << "An error occurred with Telegram:" << error;
-        QTimer::singleShot(5000, [&](){ telegramClient.getUpdates(g_lastUpdateId + 1); });
-    });
-
-    logInfo() << "Starting to poll for updates from Telegram...";
-    telegramClient.getUpdates(0);
-
+    // 4. Запускаємо цикл обробки подій
     return a.exec();
 }
