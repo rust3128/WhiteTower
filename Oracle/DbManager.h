@@ -39,8 +39,11 @@ public:
     QVariantMap getSyncStatus(int clientId);
     QList<QVariantMap> getObjects(const QVariantMap& filters);
     QStringList getUniqueRegionsList();
-
     QJsonObject registerBotUser(const QJsonObject& userData);
+    QJsonArray getPendingBotRequests();
+    bool rejectBotRequest(int requestId);
+    bool approveBotRequest(int requestId, const QString& login);
+    bool linkBotRequest(int requestId, int existingUserId);
 
 private:
     DbManager(); // Конструктор тепер приватний

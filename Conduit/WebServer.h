@@ -24,6 +24,7 @@ private:
                                            QHttpServerResponse::StatusCode statusCode);
     QHttpServerResponse createJsonResponse(const QJsonObject &body,
                                            QHttpServerResponse::StatusCode statusCode);
+    QHttpServerResponse createJsonResponse(const QJsonArray &body, QHttpServerResponse::StatusCode statusCode);
     // Маршрут "/"
     QHttpServerResponse handleRootRequest(const QHttpServerRequest &request);
     // маршрут /status
@@ -64,6 +65,14 @@ private:
     QHttpServerResponse handleGetRegionsListRequest(const QHttpServerRequest &request);
     // POST /api/bot/register
     QHttpServerResponse handleBotRegisterRequest(const QHttpServerRequest& request);
+    // Get /api/bot/requests
+    QHttpServerResponse handleGetBotRequests(const QHttpServerRequest& request);
+    // Post /api/bot/reject
+    QHttpServerResponse handleRejectBotRequest(const QHttpServerRequest& request);
+    // POST /api/bot/approve
+    QHttpServerResponse handleApproveBotRequest(const QHttpServerRequest& request);
+    // POST /api/bot/link
+    QHttpServerResponse handleLinkBotRequest(const QHttpServerRequest& request);
 private:
     QHttpServer* m_httpServer;
     quint16 m_port;

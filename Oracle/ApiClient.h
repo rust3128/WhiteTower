@@ -48,6 +48,10 @@ public:
     void setServerUrl(const QString& url);
     // метод для реєстрації:
     void registerBotUser(const QJsonObject& userData);
+    void fetchBotRequests();
+    void rejectBotRequest(int requestId);
+    void approveBotRequest(int requestId, const QString& login);
+    void linkBotRequest(int requestId, int userId);
 
 signals:
     // Сигнали для логіну
@@ -111,6 +115,18 @@ signals:
     void botUserRegistered(const QJsonObject& result);
     void botUserRegistrationFailed(const ApiError& error);
 
+    void botRequestsFetched(const QJsonArray& requests);
+    void botRequestsFetchFailed(const ApiError& error);
+
+    void botRequestRejected(int requestId);
+    void botRequestRejectFailed(const ApiError& error);
+
+    void botRequestApproved(int requestId);
+    void botRequestApproveFailed(const ApiError& error);
+
+    void botRequestLinked(int requestId);
+    void botRequestLinkFailed(const ApiError& error);
+
 private slots:
     void onLoginReplyFinished();
     void onUsersReplyFinished();
@@ -118,7 +134,7 @@ private slots:
     void onRolesReplyFinished();
     void onUserUpdateReplyFinished();
     void onClientsReplyFinished();
-    void onCreateClientReplyFinished(); // <-- ЦЕЙ СЛОТ БУЛО ПРОПУЩЕНО
+    void onCreateClientReplyFinished();
     void onClientDetailsReplyFinished();
     void onIpGenMethodsReplyFinished();
     void onConnectionTestReplyFinished();
@@ -130,7 +146,10 @@ private slots:
     void onObjectsReplyFinished();
     void onRegionsListReplyFinished();
     void onBotRegisterReplyFinished();
-
+    void onBotRequestsReplyFinished();
+    void onBotRequestRejectReplyFinished();
+    void onBotRequestApproveReplyFinished();
+    void onBotRequestLinkReplyFinished();
 private:
     ApiClient(QObject* parent = nullptr);
     ~ApiClient() = default;

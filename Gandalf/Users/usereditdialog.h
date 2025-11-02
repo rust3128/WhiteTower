@@ -1,6 +1,7 @@
 #ifndef USEREDITDIALOG_H
 #define USEREDITDIALOG_H
 
+#include "Oracle/ApiClient.h"
 #include <QDialog>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -23,6 +24,7 @@ private slots:
     void on_buttonBox_rejected();
 
     void on_buttonBox_accepted();
+    void onUpdateFailed(const ApiError& error);
 
 private:
     void populateForm();

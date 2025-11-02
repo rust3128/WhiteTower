@@ -165,29 +165,27 @@ void ApiClient::onUserDetailsReplyFinished()
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
     if (!reply) return;
 
-    ApiError error;
-    error.requestUrl = reply->request().url().toString();
-    error.httpStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    ApiError error = parseReply(reply); // Використовуємо наш універсальний парсер
 
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200)
+    {
+        QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
 
-    if (reply->error() != QNetworkReply::NoError) {
-        error.errorString = "Network error: " + reply->errorString();
-        emit userDetailsFetchFailed(error);
-    } else if (error.httpStatusCode != 200) {
-        QJsonObject jsonObj = QJsonDocument::fromJson(reply->readAll()).object();
-        error.errorString = jsonObj["error"].toString("Unknown server error");
-        emit userDetailsFetchFailed(error);
-    } else {
-        QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
-        if (doc.isArray()) {
+        // --- ПОЧАТОК ЗМІН ---
+        // Сервер повертає ОБ'ЄКТ користувача, а не МАСИВ
+        if (doc.isObject()) {
             emit userDetailsFetched(doc.object());
         } else {
-            error.errorString = "Invalid response from server: expected a JSON array.";
+            // --- КІНЕЦЬ ЗМІН ---
+            error.errorString = "Invalid response from server: expected a JSON object.";
             emit userDetailsFetchFailed(error);
         }
     }
+    else
+    {
+        emit userDetailsFetchFailed(error);
+    }
     reply->deleteLater();
-
 }
 
 void ApiClient::fetchAllRoles()
@@ -781,3 +779,168 @@ void ApiClient::onBotRegisterReplyFinished()
     reply->deleteLater();
 }
 
+
+void ApiClient::fetchBotRequests()
+{
+    // Створюємо запит з аутентифікацією
+    QNetworkRequest request = createAuthenticatedRequest(QUrl(m_serverUrl + "/api/bot/requests"));
+    QNetworkReply* reply = m_networkManager->get(request);
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onBotRequestsReplyFinished);
+}
+
+
+void ApiClient::onBotRequestsReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    ApiError error = parseReply(reply); // Використовуємо наш універсальний парсер помилок
+
+    // Перевіряємо, чи все пройшло успішно
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200)
+    {
+        QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
+        if (doc.isArray()) {
+            // Успіх: відправляємо сигнал з масивом запитів
+            emit botRequestsFetched(doc.array());
+        } else {
+            // Помилка: сервер повернув не масив
+            error.errorString = "Invalid response from server: expected a JSON array.";
+            emit botRequestsFetchFailed(error);
+        }
+    }
+    else
+    {
+        // Помилка: або мережева, або від сервера
+        emit botRequestsFetchFailed(error);
+    }
+
+    reply->deleteLater();
+}
+
+// --- Додайте цей метод кудись до інших публічних методів ---
+
+void ApiClient::rejectBotRequest(int requestId)
+{
+    QNetworkRequest request = createAuthenticatedRequest(QUrl(m_serverUrl + "/api/bot/reject"));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    // Створюємо тіло запиту: {"request_id": 123}
+    QJsonObject jsonBody;
+    jsonBody["request_id"] = requestId;
+
+    QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(jsonBody).toJson());
+
+    // Зберігаємо ID запиту, щоб знати в слоті, про що прийшла відповідь
+    reply->setProperty("requestId", requestId);
+
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onBotRequestRejectReplyFinished);
+}
+
+// --- Додайте цей слот кудись до інших слотів-обробників ---
+
+void ApiClient::onBotRequestRejectReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    int requestId = reply->property("requestId").toInt();
+    ApiError error = parseReply(reply); // Використовуємо наш універсальний парсер
+
+    // Перевіряємо на успіх (код 200 OK)
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200)
+    {
+        emit botRequestRejected(requestId);
+    }
+    else
+    {
+        // Помилка (або мережева, або від сервера)
+        emit botRequestRejectFailed(error);
+    }
+
+    reply->deleteLater();
+}
+
+
+
+void ApiClient::approveBotRequest(int requestId, const QString& login)
+{
+    QNetworkRequest request = createAuthenticatedRequest(QUrl(m_serverUrl + "/api/bot/approve"));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    // Створюємо тіло запиту: {"request_id": 123, "login": "r.sydorenko"}
+    QJsonObject jsonBody;
+    jsonBody["request_id"] = requestId;
+    jsonBody["login"] = login;
+
+    QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(jsonBody).toJson());
+
+    // Зберігаємо ID запиту, щоб знати в слоті, про що прийшла відповідь
+    reply->setProperty("requestId", requestId);
+
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onBotRequestApproveReplyFinished);
+}
+
+
+void ApiClient::onBotRequestApproveReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    int requestId = reply->property("requestId").toInt();
+    ApiError error = parseReply(reply); // Використовуємо наш універсальний парсер
+
+    // Перевіряємо на успіх (код 200 OK)
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200)
+    {
+        emit botRequestApproved(requestId);
+    }
+    else
+    {
+        // Помилка (або мережева, або від сервера)
+        emit botRequestApproveFailed(error);
+    }
+
+    reply->deleteLater();
+}
+
+
+void ApiClient::linkBotRequest(int requestId, int userId)
+{
+    QNetworkRequest request = createAuthenticatedRequest(QUrl(m_serverUrl + "/api/bot/link"));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    // Створюємо тіло запиту: {"request_id": 123, "user_id": 456}
+    QJsonObject jsonBody;
+    jsonBody["request_id"] = requestId;
+    jsonBody["user_id"] = userId;
+
+    QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(jsonBody).toJson());
+
+    // Зберігаємо ID запиту, щоб знати в слоті, про що прийшла відповідь
+    reply->setProperty("requestId", requestId);
+
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onBotRequestLinkReplyFinished);
+}
+
+void ApiClient::onBotRequestLinkReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    int requestId = reply->property("requestId").toInt();
+    ApiError error = parseReply(reply); // Використовуємо наш універсальний парсер
+
+    // Перевіряємо на успіх (код 200 OK)
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200)
+    {
+        emit botRequestLinked(requestId);
+    }
+    else
+    {
+        // Помилка (або мережева, або від сервера)
+        emit botRequestLinkFailed(error);
+    }
+
+    reply->deleteLater();
+}

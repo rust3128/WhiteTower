@@ -123,21 +123,35 @@ User* DbManager::loadUser(int userId)
         return nullptr;
     }
 
-    // Запит для отримання основних даних
     QSqlQuery userQuery(m_db);
-    userQuery.prepare("SELECT user_login, user_fio, is_active, telegram_id, jira_token "
-                      "FROM USERS WHERE user_id = :id");
+    // --- ПОЧАТОК ЗМІН ---
+    // Використовуємо LEFT JOIN, щоб отримати TELEGRAM_ID з пов'язаного запиту,
+    // не чіпаючи таблицю USERS
+    userQuery.prepare("SELECT u.USER_LOGIN, u.USER_FIO, u.IS_ACTIVE, b.TELEGRAM_ID, u.JIRA_TOKEN "
+                      "FROM USERS u "
+                      "LEFT JOIN BOT_PENDING_REQUESTS b ON u.BOT_REQUEST_ID = b.REQUEST_ID "
+                      "WHERE u.USER_ID = :id");
+    // --- КІНЕЦЬ ЗМІН ---
     userQuery.bindValue(":id", userId);
 
-    if (!userQuery.exec() || !userQuery.next()) { /* ... */ }
+    if (!userQuery.exec()) {
+        logCritical() << "Failed to load user data:" << userQuery.lastError().text();
+        return nullptr;
+    }
+
+    if (!userQuery.next()) {
+        logWarning() << "No user found with ID:" << userId;
+        return nullptr;
+    }
 
     QString login = userQuery.value(0).toString();
     QString fio = userQuery.value(1).toString();
     bool isActive = userQuery.value(2).toBool();
-    qint64 telegramId = userQuery.value(3).toLongLong(); // Читаємо нові поля
-    QString jiraToken = userQuery.value(4).toString();  // Читаємо нові поля
+    // Поле 3 (b.TELEGRAM_ID) може бути NULL, toLongLong() коректно це обробить (поверне 0)
+    qint64 telegramId = userQuery.value(3).toLongLong();
+    QString jiraToken = userQuery.value(4).toString();
 
-    // Запит для отримання ролей
+    // Запит для отримання ролей (без змін)
     QStringList roles;
     QSqlQuery rolesQuery(m_db);
     rolesQuery.prepare("SELECT r.ROLE_NAME FROM USER_ROLES ur "
@@ -150,7 +164,7 @@ User* DbManager::loadUser(int userId)
         }
     }
 
-     return new User(userId, login, fio, isActive, roles, telegramId, jiraToken);
+    return new User(userId, login, fio, isActive, roles, telegramId, jiraToken);
 }
 
 
@@ -211,33 +225,32 @@ bool DbManager::updateUser(int userId, const QJsonObject& userData)
         return false;
     }
 
-    // Відкриваємо транзакцію. Всі запити до commit() або rollback() будуть єдиним цілим.
     if (!m_db.transaction()) {
         logCritical() << "Failed to start transaction:" << m_db.lastError().text();
         return false;
     }
 
-    // 1. Оновлюємо основні дані в таблиці USERS
+    // --- ПОЧАТОК ЗМІН ---
+    // 1. Оновлюємо основні дані в таблиці USERS (БЕЗ TELEGRAM_ID)
     QSqlQuery updateQuery(m_db);
     updateQuery.prepare("UPDATE USERS SET "
                         "USER_FIO = :fio, "
                         "IS_ACTIVE = :isActive, "
-                        "TELEGRAM_ID = :telegramId, "
                         "JIRA_TOKEN = :jiraToken "
                         "WHERE USER_ID = :id");
     updateQuery.bindValue(":fio", userData["fio"].toString());
     updateQuery.bindValue(":isActive", userData["is_active"].toBool());
-    updateQuery.bindValue(":telegramId", userData["telegram_id"].toVariant().toLongLong());
     updateQuery.bindValue(":jiraToken", userData["jira_token"].toString());
     updateQuery.bindValue(":id", userId);
+    // --- КІНЕЦЬ ЗМІН ---
 
     if (!updateQuery.exec()) {
         logCritical() << "Failed to update USERS table:" << updateQuery.lastError().text();
-        m_db.rollback(); // Відкочуємо транзакцію при помилці
+        m_db.rollback();
         return false;
     }
 
-    // 2. Повністю видаляємо старі ролі користувача
+    // 2. Оновлення ролей (без змін)
     QSqlQuery deleteRolesQuery(m_db);
     deleteRolesQuery.prepare("DELETE FROM USER_ROLES WHERE USER_ID = :id");
     deleteRolesQuery.bindValue(":id", userId);
@@ -247,13 +260,10 @@ bool DbManager::updateUser(int userId, const QJsonObject& userData)
         return false;
     }
 
-    // 3. Додаємо нові ролі
     QJsonArray roles = userData["roles"].toArray();
     for (const QJsonValue &roleValue : roles) {
         QString roleName = roleValue.toString();
-
         QSqlQuery insertRoleQuery(m_db);
-        // Вставляємо зв'язку, отримуючи ROLE_ID за його назвою
         insertRoleQuery.prepare("INSERT INTO USER_ROLES (USER_ID, ROLE_ID) "
                                 "VALUES (:userId, (SELECT ROLE_ID FROM ROLES WHERE ROLE_NAME = :roleName))");
         insertRoleQuery.bindValue(":userId", userId);
@@ -265,10 +275,8 @@ bool DbManager::updateUser(int userId, const QJsonObject& userData)
         }
     }
 
-    // Якщо всі кроки пройшли успішно, підтверджуємо транзакцію
     if (!m_db.commit()) {
         logCritical() << "Failed to commit transaction:" << m_db.lastError().text();
-        // Firebird може автоматично відкотити транзакцію при невдалому коміті, але для надійності можна викликати rollback()
         m_db.rollback();
         return false;
     }
@@ -916,23 +924,22 @@ QStringList DbManager::getUniqueRegionsList()
  */
 QJsonObject DbManager::registerBotUser(const QJsonObject &userData)
 {
-    // 1. Отримуємо дані з JSON об'єкта
+    // 1. Отримуємо дані з JSON
     qint64 telegramId = userData["telegram_id"].toVariant().toLongLong();
-    QString username = userData["username"].toString();
-    QString firstName = userData["first_name"].toString();
-
     if (telegramId == 0) {
         qCritical() << "Telegram ID is missing in registration data.";
         return {{"status", "error"}, {"message", "Telegram ID is missing"}};
     }
+    QString username = userData["username"].toString();
+    QString firstName = userData["first_name"].toString();
 
     QSqlQuery query(m_db);
 
-    // 2. Перевірка на дублікати
-    query.prepare("SELECT USER_ID FROM USERS WHERE TELEGRAM_ID = :telegram_id");
+    // 2. Перевіряємо, чи не існує вже запиту від цього користувача
+    query.prepare("SELECT REQUEST_ID FROM BOT_PENDING_REQUESTS WHERE TELEGRAM_ID = :telegram_id");
     query.bindValue(":telegram_id", telegramId);
     if (!query.exec()) {
-        qCritical() << "Failed to check for existing telegram user:" << query.lastError().text();
+        qCritical() << "Failed to check for existing bot request:" << query.lastError().text();
         return {{"status", "error"}, {"message", "Database check failed."}};
     }
 
@@ -941,29 +948,202 @@ QJsonObject DbManager::registerBotUser(const QJsonObject &userData)
         return {{"status", "exists"}, {"message", "Request for this user has already been sent."}};
     }
 
-    // --- ПОЧАТОК ВИПРАВЛЕННЯ ---
-
-    // 3. Готуємо SQL-запит з ПРАВИЛЬНИМИ іменами полів та іменованими плейсхолдерами
-    // USER_LOGIN замість LOGIN, USER_FIO замість FIO, видалено неіснуючий ROLE_ID.
-    // IS_ACTIVE встановлюємо в 0 згідно з планом.
-    query.prepare("INSERT INTO USERS (USER_LOGIN, USER_FIO, TELEGRAM_ID, IS_ACTIVE) "
-                  "VALUES (:user_login, :user_fio, :telegram_id, 0)");
-
-    // 4. Прив'язуємо значення до відповідних плейсхолдерів
-    query.bindValue(":user_login", username);
-    query.bindValue(":user_fio", firstName);
+    // 3. Створюємо новий запит в таблиці BOT_PENDING_REQUESTS
+    query.prepare("INSERT INTO BOT_PENDING_REQUESTS (TELEGRAM_ID, TELEGRAM_USERNAME, TELEGRAM_FIO) "
+                  "VALUES (:telegram_id, :username, :fio)");
     query.bindValue(":telegram_id", telegramId);
+    query.bindValue(":username", username);
+    query.bindValue(":fio", firstName);
 
-    // --- КІНЕЦЬ ВИПРАВЛЕННЯ ---
-
-
-    // 5. Виконуємо запит
     if (!query.exec()) {
-        qCritical() << "Failed to insert new pending user:" << query.lastError().text();
+        qCritical() << "Failed to insert new bot request:" << query.lastError().text();
         return {{"status", "error"}, {"message", "Failed to create user request record."}};
     }
 
-    // 6. Успішна відповідь
+    // 4. Успішна відповідь
     qInfo() << "Successfully created a pending access request for user" << username;
     return {{"status", "success"}, {"message", "Your access request has been sent for review."}};
+}
+
+/**
+ * @brief Повертає список неактивних користувачів, які надіслали запит через бота.
+ * @return QJsonArray масив об'єктів, кожен з яких містить user_id, login та fio.
+ */
+QJsonArray DbManager::getPendingBotRequests()
+{
+    QJsonArray requestsArray;
+    QSqlQuery query(m_db);
+
+    // --- ОСНОВНА ЗМІНА ТУТ ---
+    // Тепер ми вибираємо дані з BOT_PENDING_REQUESTS зі статусом PENDING
+    query.prepare("SELECT REQUEST_ID, TELEGRAM_USERNAME, TELEGRAM_FIO FROM BOT_PENDING_REQUESTS "
+                  "WHERE STATUS = 'PENDING' "
+                  "ORDER BY REQUEST_DATE DESC"); // Сортуємо, щоб новіші були зверху
+
+    if (!query.exec()) {
+        qCritical() << "Failed to fetch pending bot requests:" << query.lastError().text();
+        return requestsArray;
+    }
+
+    while (query.next()) {
+        QJsonObject requestObject;
+        // Зверніть увагу на імена полів, які ми повертаємо в JSON.
+        // Ми використовуємо "request_id", "login" та "fio", щоб UI в Gandalf,
+        // який ми вже написали, продовжував працювати без змін.
+        requestObject["request_id"] = query.value("REQUEST_ID").toInt();
+        requestObject["login"] = query.value("TELEGRAM_USERNAME").toString();
+        requestObject["fio"] = query.value("TELEGRAM_FIO").toString();
+        requestsArray.append(requestObject);
+    }
+
+    qInfo() << "Fetched" << requestsArray.count() << "pending bot requests.";
+    return requestsArray;
+}
+
+/**
+ * @brief Відхиляє запит на доступ від бота.
+ * @param requestId ID запиту з таблиці BOT_PENDING_REQUESTS.
+ * @return true, якщо статус успішно оновлено на 'REJECTED', інакше false.
+ */
+bool DbManager::rejectBotRequest(int requestId)
+{
+    QSqlQuery query(m_db);
+    query.prepare("UPDATE BOT_PENDING_REQUESTS SET STATUS = 'REJECTED' "
+                  "WHERE REQUEST_ID = :request_id AND STATUS = 'PENDING'");
+    query.bindValue(":request_id", requestId);
+
+    if (!query.exec()) {
+        qCritical() << "Failed to reject bot request for ID" << requestId << ":" << query.lastError().text();
+        return false;
+    }
+
+    if (query.numRowsAffected() == 0) {
+        qWarning() << "Could not reject bot request for ID" << requestId << ". Request not found or status was not 'PENDING'.";
+        return false;
+    }
+
+    qInfo() << "Bot request ID" << requestId << "has been rejected.";
+    return true;
+}
+
+/**
+ * @brief Схвалює запит, створює нового користувача (або знаходить існуючого за логіном)
+ * і прив'язує до нього запит від бота.
+ * @param requestId ID запиту з BOT_PENDING_REQUESTS.
+ * @param login Новий корпоративний логін для користувача (або існуючий).
+ * @return true, якщо всі операції пройшли успішно, інакше false.
+ */
+bool DbManager::approveBotRequest(int requestId, const QString& login)
+{
+    if (!isConnected()) {
+        logCritical() << "Cannot approve bot request: no DB connection";
+        return false;
+    }
+
+    // --- Починаємо транзакцію ---
+    if (!m_db.transaction()) {
+        logCritical() << "Failed to start transaction for approving bot request.";
+        return false;
+    }
+
+    // Крок 1: Створюємо (або отримуємо) користувача за допомогою вашої процедури
+    bool ok = false;
+    int userId = getOrCreateUser(login, ok);
+
+    if (!ok || userId <= 0) {
+        logCritical() << "GET_OR_CREATE_USER failed for login:" << login;
+        m_db.rollback();
+        return false;
+    }
+
+    // Крок 2: Прив'язуємо BOT_REQUEST_ID до цього користувача
+    QSqlQuery updateUsersQuery(m_db);
+    updateUsersQuery.prepare("UPDATE USERS SET BOT_REQUEST_ID = :request_id "
+                             "WHERE USER_ID = :user_id");
+    updateUsersQuery.bindValue(":request_id", requestId);
+    updateUsersQuery.bindValue(":user_id", userId);
+
+    if (!updateUsersQuery.exec()) {
+        logCritical() << "Failed to link bot request ID" << requestId << "to user ID" << userId << ":" << updateUsersQuery.lastError().text();
+        m_db.rollback();
+        return false;
+    }
+
+    // Крок 3: Оновлюємо статус самого запиту на 'APPROVED'
+    QSqlQuery updateRequestsQuery(m_db);
+    updateRequestsQuery.prepare("UPDATE BOT_PENDING_REQUESTS SET STATUS = 'APPROVED' "
+                                "WHERE REQUEST_ID = :request_id AND STATUS = 'PENDING'");
+    updateRequestsQuery.bindValue(":request_id", requestId);
+
+    if (!updateRequestsQuery.exec()) {
+        logCritical() << "Failed to set request status to 'APPROVED' for ID" << requestId << ":" << updateRequestsQuery.lastError().text();
+        m_db.rollback();
+        return false;
+    }
+
+    // Якщо все пройшло добре, підтверджуємо транзакцію
+    if (!m_db.commit()) {
+        logCritical() << "Failed to commit approve transaction:" << m_db.lastError().text();
+        m_db.rollback(); // На випадок, якщо коміт не вдався
+        return false;
+    }
+
+    qInfo() << "Successfully approved bot request ID" << requestId << "and linked to user" << login << "(ID:" << userId << ")";
+    return true;
+}
+
+
+/**
+ * @brief Прив'язує запит від бота до існуючого облікового запису користувача.
+ * @param requestId ID запиту з BOT_PENDING_REQUESTS.
+ * @param existingUserId ID існуючого користувача з таблиці USERS.
+ * @return true, якщо всі операції пройшли успішно, інакше false.
+ */
+bool DbManager::linkBotRequest(int requestId, int existingUserId)
+{
+    if (!isConnected()) {
+        logCritical() << "Cannot link bot request: no DB connection";
+        return false;
+    }
+
+    // --- Починаємо транзакцію ---
+    if (!m_db.transaction()) {
+        logCritical() << "Failed to start transaction for linking bot request.";
+        return false;
+    }
+
+    // Крок 1: Прив'язуємо BOT_REQUEST_ID до існуючого користувача
+    QSqlQuery updateUsersQuery(m_db);
+    updateUsersQuery.prepare("UPDATE USERS SET BOT_REQUEST_ID = :request_id "
+                             "WHERE USER_ID = :user_id");
+    updateUsersQuery.bindValue(":request_id", requestId);
+    updateUsersQuery.bindValue(":user_id", existingUserId);
+
+    if (!updateUsersQuery.exec()) {
+        logCritical() << "Failed to link bot request ID" << requestId << "to user ID" << existingUserId << ":" << updateUsersQuery.lastError().text();
+        m_db.rollback();
+        return false;
+    }
+
+    // Крок 2: Оновлюємо статус самого запиту на 'LINKED'
+    QSqlQuery updateRequestsQuery(m_db);
+    updateRequestsQuery.prepare("UPDATE BOT_PENDING_REQUESTS SET STATUS = 'LINKED' "
+                                "WHERE REQUEST_ID = :request_id AND STATUS = 'PENDING'");
+    updateRequestsQuery.bindValue(":request_id", requestId);
+
+    if (!updateRequestsQuery.exec()) {
+        logCritical() << "Failed to set request status to 'LINKED' for ID" << requestId << ":" << updateRequestsQuery.lastError().text();
+        m_db.rollback();
+        return false;
+    }
+
+    // Якщо все пройшло добре, підтверджуємо транзакцію
+    if (!m_db.commit()) {
+        logCritical() << "Failed to commit link transaction:" << m_db.lastError().text();
+        m_db.rollback();
+        return false;
+    }
+
+    qInfo() << "Successfully linked bot request ID" << requestId << "to existing user ID" << existingUserId;
+    return true;
 }
