@@ -73,6 +73,11 @@ QNetworkRequest ApiClient::createAuthenticatedRequest(const QUrl &url)
     return request;
 }
 
+void ApiClient::setBotApiKey(const QString& key)
+{
+    m_botApiKey = key;
+}
+
 void ApiClient::login(const QString& username)
 {
     QJsonObject json;
@@ -958,16 +963,20 @@ void ApiClient::onBotRequestLinkReplyFinished()
 
 void ApiClient::checkBotUserStatus(const QJsonObject& message)
 {
-    QNetworkRequest request(QUrl(m_serverUrl + "/api/bot/me"));
+    // --- ЗМІНЕНО ТУТ ---
+    // Ми просто замінюємо QNetworkRequest на наш новий хелпер,
+    // який автоматично додає "X-Bot-Token".
+    QNetworkRequest request = createBotRequest(QUrl(m_serverUrl + "/api/bot/me"));
+    // --- КІНЕЦЬ ЗМІН ---
+
+    // (Решта вашого коду залишається БЕЗ ЗМІН)
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
     QJsonObject jsonBody;
-    // Беремо ID з об'єкта "from" всередині "message"
     jsonBody["telegram_id"] = message["from"].toObject()["id"].toVariant().toLongLong();
 
     QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(jsonBody).toJson());
 
-    // --- ЗМІНЕНО: "Прикріплюємо" все повідомлення ---
     reply->setProperty("messageData", message);
 
     connect(reply, &QNetworkReply::finished, this, &ApiClient::onBotUserStatusReplyFinished);
@@ -999,5 +1008,216 @@ void ApiClient::onBotUserStatusReplyFinished()
         emit botUserStatusCheckFailed(error);
     }
 
+    reply->deleteLater();
+}
+
+//
+/**
+ * @brief Створює запит для Бота з ключем API та ID користувача Telegram.
+ * Використовується для доступу до ЗАХИЩЕНИХ маршрутів (напр., /api/clients).
+ */
+QNetworkRequest ApiClient::createBotRequest(const QUrl &url, qint64 telegramId)
+{
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    // Додаємо два наші нові заголовки
+    request.setRawHeader("X-Bot-Token", m_botApiKey.toUtf8());
+    request.setRawHeader("X-Telegram-ID", QByteArray::number(telegramId));
+    return request;
+}
+
+/**
+ * @brief Створює запит для Бота ТІЛЬКИ з ключем API.
+ * Використовується для ПУБЛІЧНИХ маршрутів бота (напр., /api/bot/me),
+ * щоб захистити їх від сторонніх.
+ */
+QNetworkRequest ApiClient::createBotRequest(const QUrl &url)
+{
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    // Додаємо один заголовок
+    request.setRawHeader("X-Bot-Token", m_botApiKey.toUtf8());
+    return request;
+}
+
+
+/**
+ * @brief (Новий) Запитує список клієнтів, доступних для цього користувача бота.
+ */
+void ApiClient::fetchBotClients(qint64 telegramId)
+{
+    // Використовуємо наш новий хелпер, що додає X-Bot-Token та X-Telegram-ID
+    QNetworkRequest request = createBotRequest(QUrl(m_serverUrl + "/api/clients"), telegramId);
+
+    QNetworkReply* reply = m_networkManager->get(request);
+
+    // Зберігаємо telegramId, щоб знати, кому відповідати у слоті
+    reply->setProperty("telegram_id", QVariant(telegramId));
+
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onBotClientsReplyFinished);
+}
+
+/**
+ * @brief (Новий) Обробляє відповідь від /api/clients для бота.
+ */
+void ApiClient::onBotClientsReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    // Отримуємо telegramId, який ми зберегли
+    qint64 telegramId = reply->property("telegram_id").toLongLong();
+
+    ApiError error = parseReply(reply); // Використовуємо наш універсальний парсер
+
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200)
+    {
+        QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
+        if (doc.isArray()) {
+            // Успіх
+            emit botClientsFetched(doc.array(), telegramId);
+        } else {
+            // Помилка: відповідь не є масивом
+            error.errorString = "Invalid response from server: expected a JSON array.";
+            emit botClientsFetchFailed(error, telegramId);
+        }
+    }
+    else
+    {
+        // Помилка: мережева або серверна
+        emit botClientsFetchFailed(error, telegramId);
+    }
+    reply->deleteLater();
+}
+
+
+//
+
+/**
+ * @brief (НОВИЙ) Адмін-бот запитує список запитів на реєстрацію.
+ */
+void ApiClient::fetchBotRequestsForAdmin(qint64 telegramId)
+{
+    // Використовуємо той самий маршрут, що й Gandalf, але з аутентифікацією бота
+    QNetworkRequest request = createBotRequest(QUrl(m_serverUrl + "/api/bot/requests"), telegramId);
+
+    QNetworkReply* reply = m_networkManager->get(request);
+
+    // Зберігаємо telegramId, щоб знати, кому відповідати
+    reply->setProperty("telegram_id", QVariant(telegramId));
+
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onBotAdminRequestsReplyFinished);
+}
+
+/**
+ * @brief (НОВИЙ СЛОТ) Обробляє відповідь від /api/bot/requests для адмін-бота.
+ */
+void ApiClient::onBotAdminRequestsReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    qint64 telegramId = reply->property("telegram_id").toLongLong();
+    ApiError error = parseReply(reply); // Використовуємо наш універсальний парсер
+
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200)
+    {
+        QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
+        if (doc.isArray()) {
+            // Успіх
+            emit botAdminRequestsFetched(doc.array(), telegramId);
+        } else {
+            // Помилка: відповідь не є масивом
+            error.errorString = "Invalid response from server: expected a JSON array.";
+            emit botAdminRequestsFetchFailed(error, telegramId);
+        }
+    }
+    else
+    {
+        // Помилка: мережева або серверна
+        emit botAdminRequestsFetchFailed(error, telegramId);
+    }
+    reply->deleteLater();
+}
+
+//
+/**
+ * @brief (ОНОВЛЕНО) Адмін-бот схвалює запит на реєстрацію.
+ * Тепер також надсилає 'login'.
+ */
+void ApiClient::approveBotRequestForAdmin(qint64 adminTelegramId, int requestId, const QString& login)
+{
+    QNetworkRequest request = createBotRequest(QUrl(m_serverUrl + "/api/bot/approve"), adminTelegramId);
+
+    QJsonObject body;
+    body["request_id"] = requestId;
+    body["login"] = login; // <-- ДОДАНО (це виправляє помилку 400)
+
+    QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(body).toJson());
+
+    reply->setProperty("telegram_id", QVariant(adminTelegramId));
+    reply->setProperty("request_id", QVariant(requestId));
+
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onBotAdminApproveReplyFinished);
+}
+
+/**
+ * @brief (ОНОВЛЕНО) Адмін-бот відхиляє запит на реєстрацію.
+ * Тепер також надсилає 'login'.
+ */
+void ApiClient::rejectBotRequestForAdmin(qint64 adminTelegramId, int requestId, const QString& login)
+{
+    QNetworkRequest request = createBotRequest(QUrl(m_serverUrl + "/api/bot/reject"), adminTelegramId);
+
+    QJsonObject body;
+    body["request_id"] = requestId;
+    body["login"] = login; // <-- ДОДАНО (для узгодженості)
+
+    QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(body).toJson());
+
+    reply->setProperty("telegram_id", QVariant(adminTelegramId));
+    reply->setProperty("request_id", QVariant(requestId));
+
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onBotAdminRejectReplyFinished);
+}
+
+
+/**
+ * @brief (НОВИЙ СЛОТ) Обробляє відповідь на схвалення запиту.
+ */
+void ApiClient::onBotAdminApproveReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    qint64 telegramId = reply->property("telegram_id").toLongLong();
+    int requestId = reply->property("request_id").toInt();
+    ApiError error = parseReply(reply);
+
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200) {
+        emit botAdminRequestApproved(requestId, telegramId);
+    } else {
+        emit botAdminRequestApproveFailed(error, telegramId);
+    }
+    reply->deleteLater();
+}
+
+/**
+ * @brief (НОВИЙ СЛОТ) Обробляє відповідь на відхилення запиту.
+ */
+void ApiClient::onBotAdminRejectReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    qint64 telegramId = reply->property("telegram_id").toLongLong();
+    int requestId = reply->property("request_id").toInt();
+    ApiError error = parseReply(reply);
+
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200) {
+        emit botAdminRequestRejected(requestId, telegramId);
+    } else {
+        emit botAdminRequestRejectFailed(error, telegramId);
+    }
     reply->deleteLater();
 }

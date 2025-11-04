@@ -36,6 +36,13 @@ void Bot::setupConnections()
     connect(&m_apiClient, &ApiClient::botUserStatusReceived, this, &Bot::onUserStatusReceived);
     connect(&m_apiClient, &ApiClient::botUserStatusCheckFailed, this, &Bot::onUserStatusCheckFailed);
 
+    // З'єднання для отримання списку клієнтів
+    connect(&m_apiClient, &ApiClient::botClientsFetched, this, &Bot::onBotClientsReceived);
+    connect(&m_apiClient, &ApiClient::botClientsFetchFailed, this, &Bot::onBotClientsFailed);
+
+    connect(&m_apiClient, &ApiClient::botAdminRequestsFetched, this, &Bot::onAdminRequestsReceived);
+    connect(&m_apiClient, &ApiClient::botAdminRequestsFetchFailed, this, &Bot::onAdminRequestsFailed);
+
     logInfo() << "Signal-slot connections established.";
 }
 
@@ -70,15 +77,20 @@ void Bot::setupCommandHandlers()
 // --- ГОЛОВНІ СЛОТИ (МАРШРУТИЗАТОРИ) ---
 
 /**
- * @brief Отримує оновлення, НІЧОГО не аналізує, відправляє на перевірку статусу.
+ * @brief (ОНОВЛЕНО) Обробляє всі оновлення від Telegram.
+ * Тепер також перехоплює 'callback_query' (натискання кнопок).
  */
 void Bot::onUpdatesReceived(const QJsonArray& updates)
 {
     for (const QJsonValue& updateVal : updates) {
         QJsonObject update = updateVal.toObject();
+
+
         if (update.contains("message")) {
             QJsonObject message = update["message"].toObject();
-            // Просто відправляємо будь-яке повідомлення на перевірку
+
+            // Перевіряємо статус користувача ПЕРЕД обробкою команди
+            // (ми не хочемо, щоб "PENDING" користувачі викликали команди)
             m_apiClient.checkBotUserStatus(message);
         }
     }
@@ -208,14 +220,20 @@ void Bot::handleMyTasks(const QJsonObject& message)
     m_telegramClient->sendMessage(chatId, "Функція 'Мої задачі' наразі в розробці.");
 }
 
+//
+/**
+ * @brief (ОНОВЛЕНО) Обробляє команду "👑 Адмін: Запити".
+ */
 void Bot::handleAdminRequests(const QJsonObject& message)
 {
     qint64 chatId = message["from"].toObject()["id"].toVariant().toLongLong();
-    logInfo() << "Admin called 'Admin Requests'.";
-    m_telegramClient->sendMessage(chatId, "Зараз я завантажу список запитів...");
+    logInfo() << "Admin" << chatId << "called 'Admin: Requests'.";
 
-    // TODO: Викликати m_apiClient.fetchBotRequests()
-    // (Ми зробимо це на наступному кроці)
+    // 1. Повідомляємо адміну, що ми почали
+    m_telegramClient->sendChatAction(chatId, "typing");
+
+    // 2. Викликаємо новий метод ApiClient
+    m_apiClient.fetchBotRequestsForAdmin(chatId);
 }
 
 void Bot::handleUnknownCommand(const QJsonObject& message)
@@ -280,9 +298,108 @@ void Bot::sendAdminMenu(const QJsonObject& message)
     m_telegramClient->sendMessage(chatId, "Меню адміністратора:", keyboard);
 }
 
+/**
+ * @brief (ОНОВЛЕНО) Обробляє команду "👥 Клієнти".
+ * Запитує список клієнтів у ApiClient.
+ */
 void Bot::handleClientsCommand(const QJsonObject& message)
 {
     qint64 chatId = message["from"].toObject()["id"].toVariant().toLongLong();
-    logInfo() << "User called 'Clients'.";
-    m_telegramClient->sendMessage(chatId, "Функція 'Клієнти' наразі в розробці.");
+    logInfo() << "User" << chatId << "called 'Clients'.";
+
+    // 1. Повідомляємо користувачу, що ми почали
+    m_telegramClient->sendChatAction(chatId, "typing");
+
+    // 2. Викликаємо ApiClient.
+    // Ми передаємо chatId, щоб ApiClient додав його в заголовок X-Telegram-ID
+    m_apiClient.fetchBotClients(chatId);
 }
+
+//
+
+/**
+ * @brief (НОВИЙ СЛОТ) Успішно отримано список клієнтів від сервера.
+ */
+void Bot::onBotClientsReceived(const QJsonArray& clients, qint64 telegramId)
+{
+    logInfo() << "Successfully fetched" << clients.count() << "clients for user" << telegramId;
+
+    if (clients.isEmpty()) {
+        m_telegramClient->sendMessage(telegramId, "Список клієнтів порожній.");
+        return;
+    }
+
+    // 1. Форматуємо гарний список
+    QStringList clientList;
+    clientList.append("<b>Ваші доступні клієнти:</b>\n"); // Заголовок
+
+    for (const QJsonValue& val : clients) {
+        QJsonObject client = val.toObject();
+        QString name = client["client_name"].toString();
+
+        // Додаємо 🔸 для краси
+        clientList.append(QString("🔸 %1").arg(name));
+    }
+
+    // 2. Відправляємо єдиним повідомленням
+    m_telegramClient->sendMessage(telegramId, clientList.join("\n"));
+}
+
+/**
+ * @brief (НОВИЙ СЛОТ) Не вдалося отримати список клієнтів.
+ */
+void Bot::onBotClientsFailed(const ApiError& error, qint64 telegramId)
+{
+    logCritical() << "Failed to fetch clients for user" << telegramId << ":" << error.errorString;
+    m_telegramClient->sendMessage(telegramId,
+                                  "Помилка завантаження клієнтів: " + error.errorString);
+}
+
+
+//
+/**
+ * @brief (ВІДКОЧЕНО) Успішно отримано список запитів (тільки текст).
+ */
+void Bot::onAdminRequestsReceived(const QJsonArray& requests, qint64 telegramId)
+{
+    logInfo() << "Successfully fetched" << requests.count() << "pending requests for admin" << telegramId;
+
+    if (requests.isEmpty()) {
+        m_telegramClient->sendMessage(telegramId, "Нових запитів на реєстрацію немає.");
+        return;
+    }
+
+    QStringList requestList;
+    requestList.append(QString("<b>Нові запити на реєстрацію (%1):</b>\n")
+                           .arg(requests.count()));
+
+    for (const QJsonValue& val : requests) {
+        QJsonObject req = val.toObject();
+
+        // Читаємо "request_id" (виправлено)
+        int requestId = req["request_id"].toInt();
+        QString login = req["login"].toString(); // (telegram username)
+        QString fio = req["fio"].toString();     // (telegram FIO)
+
+        requestList.append(QString("👤 <b>%1</b> (%2) [ID: %3]")
+                               .arg(fio, login, QString::number(requestId)));
+    }
+
+    // Додаємо примітку, що керування відбувається в Gandalf
+    requestList.append("\n\n<i>Для схвалення або відхилення, будь ласка, "
+                       "використовуйте десктопний додаток (Gandalf).</i>");
+
+    m_telegramClient->sendMessage(telegramId, requestList.join("\n"));
+}
+
+/**
+ * @brief (НОВИЙ СЛОТ) Не вдалося отримати список запитів.
+ */
+void Bot::onAdminRequestsFailed(const ApiError& error, qint64 telegramId)
+{
+    logCritical() << "Failed to fetch admin requests for" << telegramId << ":" << error.errorString;
+    m_telegramClient->sendMessage(telegramId,
+                                  "Помилка завантаження запитів: " + error.errorString);
+}
+
+

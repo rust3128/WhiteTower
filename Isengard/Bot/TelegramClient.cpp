@@ -127,3 +127,26 @@ void TelegramClient::sendMessage(qint64 chatId, const QString &text, const QJson
     // Встановлюємо зв'язок, щоб reply видалив себе сам після завершення
     connect(reply, &QNetworkReply::finished, reply, &QNetworkReply::deleteLater);
 }
+
+//
+
+/**
+ * @brief (НОВИЙ) Надсилає статус (напр., "typing") в чат.
+ * @param chatId ID чату.
+ * @param action Статус ("typing", "upload_photo" тощо).
+ */
+void TelegramClient::sendChatAction(qint64 chatId, const QString &action)
+{
+    QUrl url("https://api.telegram.org/bot" + m_token + "/sendChatAction");
+
+    QJsonObject jsonBody;
+    jsonBody["chat_id"] = chatId;
+    jsonBody["action"] = action;
+
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    // Це "fire-and-forget" запит, нам не потрібна відповідь
+    QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(jsonBody).toJson());
+    connect(reply, &QNetworkReply::finished, reply, &QNetworkReply::deleteLater);
+}

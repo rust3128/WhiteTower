@@ -793,12 +793,35 @@ QHttpServerResponse WebServer::handleLinkBotRequest(const QHttpServerRequest &re
     }
 }
 
+//
 /**
- * @brief Обробляє запит від бота для перевірки статусу користувача (POST /api/bot/me)
- * Цей маршрут НЕ вимагає аутентифікації, оскільки він сам є частиною процесу.
+ * @brief (ОНОВЛЕНО) Обробляє запит від бота для перевірки статусу (POST /api/bot/me)
+ * Тепер цей маршрут вимагає наявності валідного X-Bot-Token.
  */
 QHttpServerResponse WebServer::handleBotStatusRequest(const QHttpServerRequest &request)
 {
+    // --- ДОДАНО ПЕРЕВІРКУ БЕЗПЕКИ ---
+    QByteArray botTokenHeader;
+    for (const auto &headerPair : request.headers()) {
+        if (headerPair.first.compare("X-Bot-Token", Qt::CaseInsensitive) == 0) {
+            botTokenHeader = headerPair.second;
+            break;
+        }
+    }
+
+    // m_botApiKey ми зберегли в конструкторі WebServer
+    if (botTokenHeader.isEmpty() || botTokenHeader != m_botApiKey.toUtf8()) {
+        logWarning() << "Bot status request failed: Invalid or missing X-Bot-Token.";
+
+        // --- ВИПРАВЛЕНО ТУТ ---
+        // Використовуємо явний конструктор, як у вашому коді
+        return createJsonResponse(QJsonObject{{"error", "Unauthorized"}},
+                                  QHttpServerResponse::StatusCode::Unauthorized);
+    }
+    // --- КІНЕЦЬ ПЕРЕВІРКИ БЕЗПЕКИ ---
+
+
+    // +++ ВАШ ІСНУЮЧИЙ КОД (БЕЗ ЗМІН) +++
     logRequest(request);
 
     // 1. Парсимо тіло запиту
@@ -819,4 +842,5 @@ QHttpServerResponse WebServer::handleBotStatusRequest(const QHttpServerRequest &
 
     // 3. Повертаємо результат
     return createJsonResponse(status, QHttpServerResponse::StatusCode::Ok);
+    // +++ КІНЕЦЬ ВАШОГО КОДУ +++
 }

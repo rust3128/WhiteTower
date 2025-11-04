@@ -20,6 +20,8 @@ public:
     void sendMessage(qint64 chatId, const QString& text);
     void sendMessage(qint64 chatId, const QString& text, const QJsonObject& replyMarkup);
 
+    void sendChatAction(qint64 chatId, const QString& action = "typing");
+
 signals:
     void updatesReceived(const QJsonArray& updates);
     void errorOccurred(const QString& error);

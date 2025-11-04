@@ -25,7 +25,8 @@ class ApiClient : public QObject
     Q_OBJECT
 public:
     static ApiClient& instance();
-
+    // --- НОВИЙ СЕТТЕР ДЛЯ БОТА ---
+    void setBotApiKey(const QString& key);
     // Методи для виклику API
     void login(const QString& username);
     void fetchAllUsers();
@@ -53,6 +54,14 @@ public:
     void approveBotRequest(int requestId, const QString& login);
     void linkBotRequest(int requestId, int userId);
     void checkBotUserStatus(const QJsonObject& message);
+
+    // --- НОВИЙ МЕТОД ДЛЯ ISENGARD ---
+    void fetchBotClients(qint64 telegramId);
+
+    void fetchBotRequestsForAdmin(qint64 telegramId);
+    void approveBotRequestForAdmin(qint64 adminTelegramId, int requestId, const QString& login);
+    void rejectBotRequestForAdmin(qint64 adminTelegramId, int requestId, const QString& login);
+
 
 signals:
     // Сигнали для логіну
@@ -131,6 +140,18 @@ signals:
     void botUserStatusReceived(const QJsonObject& status, const QJsonObject& message);
     void botUserStatusCheckFailed(const ApiError& error);
 
+    // --- НОВІ СИГНАЛИ ДЛЯ ISENGARD ---
+    void botClientsFetched(const QJsonArray& clients, qint64 telegramId);
+    void botClientsFetchFailed(const ApiError& error, qint64 telegramId);
+
+    void botAdminRequestsFetched(const QJsonArray& requests, qint64 telegramId);
+    void botAdminRequestsFetchFailed(const ApiError& error, qint64 telegramId);
+
+    void botAdminRequestApproved(int requestId, qint64 adminTelegramId);
+    void botAdminRequestApproveFailed(const ApiError& error, qint64 adminTelegramId);
+    void botAdminRequestRejected(int requestId, qint64 adminTelegramId);
+    void botAdminRequestRejectFailed(const ApiError& error, qint64 adminTelegramId);
+
 private slots:
     void onLoginReplyFinished();
     void onUsersReplyFinished();
@@ -155,17 +176,28 @@ private slots:
     void onBotRequestApproveReplyFinished();
     void onBotRequestLinkReplyFinished();
     void onBotUserStatusReplyFinished();
+    // --- НОВИЙ СЛОТ ДЛЯ ISENGARD ---
+    void onBotClientsReplyFinished();
+    void onBotAdminRequestsReplyFinished();
+
+    void onBotAdminApproveReplyFinished();
+    void onBotAdminRejectReplyFinished();
 private:
     ApiClient(QObject* parent = nullptr);
     ~ApiClient() = default;
     ApiClient(const ApiClient&) = delete;
     ApiClient& operator=(const ApiClient&) = delete;
 
+    // --- НОВІ ПРИВАТНІ МЕТОДИ ---
+    QNetworkRequest createBotRequest(const QUrl &url, qint64 telegramId);
+    QNetworkRequest createBotRequest(const QUrl &url);
+
     QNetworkRequest createAuthenticatedRequest(const QUrl &url);
 
     QNetworkAccessManager* m_networkManager;
     QString m_serverUrl;
     QString m_authToken;
+    QString m_botApiKey;
 };
 
 #endif // APICLIENT_H

@@ -28,6 +28,13 @@ private slots:
     void onUserStatusReceived(const QJsonObject& status, const QJsonObject& message);
     void onUserStatusCheckFailed(const ApiError& error);
 
+    // --- СЛОТИ ДЛЯ КЛІЄНТІВ ---
+    void onBotClientsReceived(const QJsonArray& clients, qint64 telegramId);
+    void onBotClientsFailed(const ApiError& error, qint64 telegramId);
+
+    void onAdminRequestsReceived(const QJsonArray& requests, qint64 telegramId);
+    void onAdminRequestsFailed(const ApiError& error, qint64 telegramId);
+
 private:
     // Тип-вказівник на метод-обробник
     using CommandHandler = void (Bot::*)(const QJsonObject& message);
@@ -52,6 +59,8 @@ private:
     // --- Методи для меню (ЗМІНЕНО ПІДПИС) ---
     void sendUserMenu(const QJsonObject& message);    // <-- ЗМІНЕНО
     void sendAdminMenu(const QJsonObject& message);   // <-- ЗМІНЕНО
+
+    void handleCallbackQuery(const QJsonObject& callbackQuery);
 
 private:
     QMap<QString, CommandHandler> m_userCommandHandlers;

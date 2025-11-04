@@ -1243,38 +1243,40 @@ QJsonObject DbManager::getBotUserStatus(qint64 telegramId)
     return {{"status", "BLOCKED"}};
 }
 
+//
+
 /**
- * @brief Знаходить активного USER_ID, прив'язаного до вказаного telegram_id.
- * @param telegramId ID користувача в Telegram.
- * @return USER_ID у разі успіху, або -1, якщо не знайдено або користувач неактивний.
+ * @brief (ВИПРАВЛЕНО 3.0) Знаходить ID активного користувача за його Telegram ID.
+ * Використовує JOIN для зв'язку USERS та BOT_PENDING_REQUESTS.
  */
 int DbManager::findUserIdByTelegramId(qint64 telegramId)
 {
-    if (!isConnected()) {
-        logCritical() << "Cannot find user by telegram_id: no DB connection";
-        return -1;
-    }
+    if (!isConnected() || telegramId == 0) return -1;
 
     QSqlQuery query(m_db);
+
+    // --- ОСНОВНА ЗМІНА: ПРАВИЛЬНИЙ ЗАПИТ ДО СХЕМИ ---
     // Ми шукаємо активного користувача (IS_ACTIVE = 1),
     // який прив'язаний до запиту з цим telegram_id
+    query.prepare(
+        "SELECT u.USER_ID "
+        "FROM USERS u "
+        "JOIN BOT_PENDING_REQUESTS b ON u.BOT_REQUEST_ID = b.REQUEST_ID "
+        "WHERE b.TELEGRAM_ID = ? AND u.IS_ACTIVE = 1"
+        );
+    // Використовуємо addBindValue() для позиційного параметра
+    query.addBindValue(telegramId);
+    // --- КІНЕЦЬ ЗМІН ---
 
-    // --- ВАЖЛИВА ЗМІНА ---
-    // У вашій поточній структурі (згідно з registerBotUser) telegram_id
-    // зберігається безпосередньо в таблиці USERS.
-    query.prepare("SELECT USER_ID FROM USERS "
-                  "WHERE TELEGRAM_ID = :telegram_id AND IS_ACTIVE = 1");
-
-    query.bindValue(":telegram_id", telegramId);
-
-    if (!query.exec()) {
-        logCritical() << "Failed to query user by telegram_id:" << query.lastError().text();
-        return -1;
+    if (query.exec() && query.next()) {
+        return query.value(0).toInt(); // Повертаємо USER_ID
     }
 
-    if (query.next()) {
-        return query.value(0).toInt(); // Знайдено USER_ID
+    if (query.lastError().isValid()) {
+        logCritical() << "Telegram ID validation (JOIN) query failed:"
+                      << query.lastError().driverText();
     }
 
-    return -1; // Не знайдено
+    // Якщо не знайдено (або користувач неактивний), повертаємо -1
+    return -1;
 }
