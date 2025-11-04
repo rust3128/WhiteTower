@@ -1147,3 +1147,134 @@ bool DbManager::linkBotRequest(int requestId, int existingUserId)
     qInfo() << "Successfully linked bot request ID" << requestId << "to existing user ID" << existingUserId;
     return true;
 }
+
+/**
+ * @brief Виконує повну перевірку статусу користувача бота за його Telegram ID.
+ * @param telegramId Унікальний Telegram ID користувача.
+ * @return QJsonObject, що описує статус:
+ * - {"status": "NEW"} - Користувач невідомий.
+ * - {"status": "PENDING"} - Запит на розгляді.
+ * - {"status": "BLOCKED"} - Запит відхилено або користувача заблоковано.
+ * - {"status": "ACTIVE_USER", "fio": "..."} - Активний користувач.
+ * - {"status": "ACTIVE_ADMIN", "fio": "..."} - Активний адміністратор.
+ */
+QJsonObject DbManager::getBotUserStatus(qint64 telegramId)
+{
+    if (!isConnected()) {
+        logCritical() << "Cannot get bot user status: no DB connection";
+        return {{"status", "ERROR"}, {"message", "Database connection failed"}};
+    }
+
+    QSqlQuery statusQuery(m_db);
+    // Крок 1: Шукаємо користувача в таблиці запитів
+    statusQuery.prepare("SELECT REQUEST_ID, STATUS FROM BOT_PENDING_REQUESTS WHERE TELEGRAM_ID = :id");
+    statusQuery.bindValue(":id", telegramId);
+
+    if (!statusQuery.exec()) {
+        logCritical() << "Failed to check bot pending requests:" << statusQuery.lastError().text();
+        return {{"status", "ERROR"}, {"message", "Database query failed"}};
+    }
+
+    // --- Стан 1: "Новий" ---
+    if (!statusQuery.next()) {
+        // Користувача немає в таблиці запитів
+        return {{"status", "NEW"}};
+    }
+
+    // --- Користувач знайдений, аналізуємо його статус ---
+    int requestId = statusQuery.value(0).toInt();
+    QString requestStatus = statusQuery.value(1).toString();
+
+    // --- Стан 2: "Очікуючий" ---
+    if (requestStatus == "PENDING") {
+        return {{"status", "PENDING"}};
+    }
+
+    // --- Стан 3: "Заблокований" (на рівні запиту) ---
+    if (requestStatus == "REJECTED") {
+        return {{"status", "BLOCKED"}};
+    }
+
+    // --- Стан 4/5: "Активний" (APPROVED або LINKED) ---
+    if (requestStatus == "APPROVED" || requestStatus == "LINKED") {
+
+        // Тепер нам потрібно знайти, до якого USER_ID прив'язаний цей запит
+        QSqlQuery userQuery(m_db);
+        userQuery.prepare("SELECT USER_ID FROM USERS WHERE BOT_REQUEST_ID = :request_id");
+        userQuery.bindValue(":request_id", requestId);
+
+        if (!userQuery.exec() || !userQuery.next()) {
+            // Це аномалія: запит схвалено, але не прив'язано до користувача
+            logCritical() << "Data inconsistency: Bot request" << requestId << "is approved/linked but not attached to any user.";
+            return {{"status", "BLOCKED"}}; // Блокуємо, оскільки це помилка конфігурації
+        }
+
+        int userId = userQuery.value(0).toInt();
+
+        // У нас є ID користувача, завантажуємо повний профіль, щоб перевірити IS_ACTIVE та ролі
+        // Використовуємо наш існуючий надійний метод loadUser
+        User* user = loadUser(userId);
+
+        if (!user) {
+            logCritical() << "Failed to load user profile for USER_ID" << userId;
+            return {{"status", "BLOCKED"}}; // Не вдалося завантажити профіль
+        }
+
+        if (!user->isActive()) {
+            delete user;
+            return {{"status", "BLOCKED"}}; // Користувач заблокований в Gandalf
+        }
+
+        // Визначаємо рівень доступу
+        QJsonObject response;
+        response["fio"] = user->fio();
+
+        if (user->hasRole("Адміністратор")) {
+            response["status"] = "ACTIVE_ADMIN";
+        } else {
+            response["status"] = "ACTIVE_USER";
+        }
+
+        delete user;
+        return response;
+    }
+
+    // На випадок, якщо з'явиться невідомий статус
+    return {{"status", "BLOCKED"}};
+}
+
+/**
+ * @brief Знаходить активного USER_ID, прив'язаного до вказаного telegram_id.
+ * @param telegramId ID користувача в Telegram.
+ * @return USER_ID у разі успіху, або -1, якщо не знайдено або користувач неактивний.
+ */
+int DbManager::findUserIdByTelegramId(qint64 telegramId)
+{
+    if (!isConnected()) {
+        logCritical() << "Cannot find user by telegram_id: no DB connection";
+        return -1;
+    }
+
+    QSqlQuery query(m_db);
+    // Ми шукаємо активного користувача (IS_ACTIVE = 1),
+    // який прив'язаний до запиту з цим telegram_id
+
+    // --- ВАЖЛИВА ЗМІНА ---
+    // У вашій поточній структурі (згідно з registerBotUser) telegram_id
+    // зберігається безпосередньо в таблиці USERS.
+    query.prepare("SELECT USER_ID FROM USERS "
+                  "WHERE TELEGRAM_ID = :telegram_id AND IS_ACTIVE = 1");
+
+    query.bindValue(":telegram_id", telegramId);
+
+    if (!query.exec()) {
+        logCritical() << "Failed to query user by telegram_id:" << query.lastError().text();
+        return -1;
+    }
+
+    if (query.next()) {
+        return query.value(0).toInt(); // Знайдено USER_ID
+    }
+
+    return -1; // Не знайдено
+}

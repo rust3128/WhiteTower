@@ -52,6 +52,7 @@ public:
     void rejectBotRequest(int requestId);
     void approveBotRequest(int requestId, const QString& login);
     void linkBotRequest(int requestId, int userId);
+    void checkBotUserStatus(const QJsonObject& message);
 
 signals:
     // Сигнали для логіну
@@ -112,8 +113,8 @@ signals:
     void regionsListFetched(const QStringList& regions);
     void regionsListFetchFailed(const ApiError& error);
 
-    void botUserRegistered(const QJsonObject& result);
-    void botUserRegistrationFailed(const ApiError& error);
+    void botUserRegistered(const QJsonObject& result, qint64 telegramId);
+    void botUserRegistrationFailed(const ApiError& error, qint64 telegramId);
 
     void botRequestsFetched(const QJsonArray& requests);
     void botRequestsFetchFailed(const ApiError& error);
@@ -126,6 +127,9 @@ signals:
 
     void botRequestLinked(int requestId);
     void botRequestLinkFailed(const ApiError& error);
+
+    void botUserStatusReceived(const QJsonObject& status, const QJsonObject& message);
+    void botUserStatusCheckFailed(const ApiError& error);
 
 private slots:
     void onLoginReplyFinished();
@@ -150,6 +154,7 @@ private slots:
     void onBotRequestRejectReplyFinished();
     void onBotRequestApproveReplyFinished();
     void onBotRequestLinkReplyFinished();
+    void onBotUserStatusReplyFinished();
 private:
     ApiClient(QObject* parent = nullptr);
     ~ApiClient() = default;

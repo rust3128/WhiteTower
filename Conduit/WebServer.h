@@ -11,7 +11,7 @@ class WebServer : public QObject
 {
     Q_OBJECT
 public:
-    explicit WebServer(quint16 port, QObject *parent = nullptr);
+    explicit WebServer(quint16 port, const QString& botApiKey, QObject *parent = nullptr);
     bool start();
 
 private:
@@ -73,9 +73,12 @@ private:
     QHttpServerResponse handleApproveBotRequest(const QHttpServerRequest& request);
     // POST /api/bot/link
     QHttpServerResponse handleLinkBotRequest(const QHttpServerRequest& request);
+    // GET /api/bot/requests
+    QHttpServerResponse handleBotStatusRequest(const QHttpServerRequest& request);
 private:
     QHttpServer* m_httpServer;
     quint16 m_port;
+    QString m_botApiKey;
 };
 
 #endif // WEBSERVER_H

@@ -3,6 +3,7 @@
 #include "Oracle/DbManager.h"
 #include "version.h"
 #include "Oracle/SessionManager.h"
+#include "Oracle/ConfigManager.h"
 #include <QHttpServer>
 #include <QHttpServerRequest>
 #include <QJsonObject>
@@ -14,8 +15,10 @@
 #include <QHttpServerResponse>
 #include <QUrlQuery>
 
-WebServer::WebServer(quint16 port, QObject *parent)
-    : QObject{parent}, m_port(port)
+WebServer::WebServer(quint16 port, const QString& botApiKey, QObject *parent)
+    : QObject{parent},
+    m_port(port),
+    m_botApiKey(botApiKey) // <-- Зберігаємо ключ
 {
     m_httpServer = new QHttpServer(this);
     setupRoutes();
@@ -107,6 +110,10 @@ void WebServer::setupRoutes()
 
     m_httpServer->route("/api/bot/link", QHttpServerRequest::Method::Post, [this](const QHttpServerRequest& request) {
         return handleLinkBotRequest(request);
+    });
+
+    m_httpServer->route("/api/bot/me", QHttpServerRequest::Method::Post, [this](const QHttpServerRequest& request) {
+        return handleBotStatusRequest(request);
     });
 }
 
@@ -305,27 +312,103 @@ QHttpServerResponse WebServer::handleUpdateUserRequest(const QString &userId, co
     }
 }
 
+// User* WebServer::authenticateRequest(const QHttpServerRequest &request)
+// {
+//     const auto &headers = request.headers();
+//     QByteArray authHeader;
+//     for (const auto &headerPair : headers) {
+//         if (headerPair.first.compare("Authorization", Qt::CaseInsensitive) == 0) {
+//             authHeader = headerPair.second;
+//             break;
+//         }
+//     }
+//     if (!authHeader.startsWith("Bearer ")) {
+//         return nullptr;
+//     }
+//     QByteArray token = authHeader.mid(7);
+//     QByteArray tokenHash = QCryptographicHash::hash(token, QCryptographicHash::Sha256).toHex();
+//     int userId = DbManager::instance().findUserIdByToken(tokenHash);
+//     if (userId > 0) {
+//         return DbManager::instance().loadUser(userId);
+//     }
+//     return nullptr;
+// }
+
+/**
+ * @brief Перевіряє запит на аутентифікацію. (ВЕРСІЯ 3)
+ * Розуміє два методи:
+ * 1. Gandalf (GUI): Заголовок "Authorization: Bearer <session_token>"
+ * 2. Isengard (Bot): Заголовки "X-Bot-Token: <secret_key>" + "X-Telegram-ID: <user_id>"
+ * @return Об'єкт User* у разі успіху (вимагає delete), або nullptr.
+ */
 User* WebServer::authenticateRequest(const QHttpServerRequest &request)
 {
+    // --- ВИПРАВЛЕНО: Шукаємо всі заголовки за один прохід ---
     const auto &headers = request.headers();
     QByteArray authHeader;
+    QByteArray botTokenHeader;
+    QByteArray telegramIdHeader;
+
     for (const auto &headerPair : headers) {
         if (headerPair.first.compare("Authorization", Qt::CaseInsensitive) == 0) {
             authHeader = headerPair.second;
-            break;
+        } else if (headerPair.first.compare("X-Bot-Token", Qt::CaseInsensitive) == 0) {
+            botTokenHeader = headerPair.second;
+        } else if (headerPair.first.compare("X-Telegram-ID", Qt::CaseInsensitive) == 0) {
+            telegramIdHeader = headerPair.second;
         }
     }
-    if (!authHeader.startsWith("Bearer ")) {
-        return nullptr;
+
+    // --- Спроба №1: Аутентифікація Gandalf (токен сесії) ---
+    if (authHeader.startsWith("Bearer ")) {
+        QByteArray token = authHeader.mid(7);
+        QByteArray tokenHash = QCryptographicHash::hash(token, QCryptographicHash::Sha256).toHex();
+        int userId = DbManager::instance().findUserIdByToken(tokenHash);
+
+        if (userId > 0) {
+            User* user = DbManager::instance().loadUser(userId);
+            if (user && user->isActive()) {
+                return user; // Успіх (Gandalf)
+            }
+            if (user) delete user;
+        }
     }
-    QByteArray token = authHeader.mid(7);
-    QByteArray tokenHash = QCryptographicHash::hash(token, QCryptographicHash::Sha256).toHex();
-    int userId = DbManager::instance().findUserIdByToken(tokenHash);
-    if (userId > 0) {
-        return DbManager::instance().loadUser(userId);
+
+    // --- Спроба №2: Аутентифікація Isengard (токен бота) ---
+    if (!botTokenHeader.isEmpty() && !telegramIdHeader.isEmpty()) {
+
+        // 1. Перевіряємо секретний ключ бота (ВИПРАВЛЕНО: беремо з m_botApiKey)
+        if (m_botApiKey.isEmpty() || m_botApiKey == "YOUR_DEFAULT_BOT_KEY_HERE") {
+            logCritical() << "Bot API Key is not set on the server! Cannot authenticate bot.";
+            return nullptr;
+        }
+
+        if (botTokenHeader == m_botApiKey.toUtf8()) {
+            // 2. Токен бота вірний. Шукаємо користувача за telegram_id
+            qint64 telegramId = telegramIdHeader.toLongLong();
+            if (telegramId == 0) {
+                logWarning() << "Bot authentication failed: Invalid X-Telegram-ID header.";
+                return nullptr;
+            }
+
+            int userId = DbManager::instance().findUserIdByTelegramId(telegramId);
+
+            if (userId > 0) {
+                User* user = DbManager::instance().loadUser(userId);
+                if (user && user->isActive()) {
+                    return user; // Успіх (Isengard)
+                }
+                if (user) delete user;
+            }
+        } else {
+            logWarning() << "Bot authentication failed: Invalid X-Bot-Token.";
+        }
     }
+
+    // --- Провал ---
     return nullptr;
 }
+
 
 QHttpServerResponse WebServer::handleGetClientsRequest(const QHttpServerRequest &request)
 {
@@ -708,4 +791,32 @@ QHttpServerResponse WebServer::handleLinkBotRequest(const QHttpServerRequest &re
         // Помилка
         return createJsonResponse(QJsonObject{{"error", "Failed to link request."}}, QHttpServerResponse::StatusCode::InternalServerError);
     }
+}
+
+/**
+ * @brief Обробляє запит від бота для перевірки статусу користувача (POST /api/bot/me)
+ * Цей маршрут НЕ вимагає аутентифікації, оскільки він сам є частиною процесу.
+ */
+QHttpServerResponse WebServer::handleBotStatusRequest(const QHttpServerRequest &request)
+{
+    logRequest(request);
+
+    // 1. Парсимо тіло запиту
+    QJsonDocument doc = QJsonDocument::fromJson(request.body());
+    if (!doc.isObject() || !doc.object().contains("telegram_id")) {
+        return createJsonResponse(QJsonObject{{"error", "Invalid JSON or missing 'telegram_id' field"}},
+                                  QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    qint64 telegramId = doc.object()["telegram_id"].toVariant().toLongLong();
+    if (telegramId <= 0) {
+        return createJsonResponse(QJsonObject{{"error", "Invalid 'telegram_id'"}},
+                                  QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    // 2. Викликаємо наш новий "розумний" метод
+    QJsonObject status = DbManager::instance().getBotUserStatus(telegramId);
+
+    // 3. Повертаємо результат
+    return createJsonResponse(status, QHttpServerResponse::StatusCode::Ok);
 }

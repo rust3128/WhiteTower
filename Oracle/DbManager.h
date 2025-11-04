@@ -5,6 +5,7 @@
 #include <QString>
 #include <QJsonObject>
 #include <QDateTime>
+#include <QJsonArray>
 
 
 class ConfigManager;
@@ -44,6 +45,8 @@ public:
     bool rejectBotRequest(int requestId);
     bool approveBotRequest(int requestId, const QString& login);
     bool linkBotRequest(int requestId, int existingUserId);
+    QJsonObject getBotUserStatus(qint64 telegramId);
+    int findUserIdByTelegramId(qint64 telegramId);
 
 private:
     DbManager(); // Конструктор тепер приватний

@@ -18,6 +18,7 @@ ConfigManager::ConfigManager()
     , m_dbPort(3050) // Стандартний порт Firebird
     , m_dbUser("SYSDBA")
     , m_dbPassword("masterkey")
+    , m_botApiKey("YOUR_DEFAULT_BOT_KEY_HERE")
 {
 }
 
@@ -57,6 +58,7 @@ bool ConfigManager::load()
     QString encryptedPass = dbObj.value("password").toString();
     m_dbPassword = CriptPass::instance().decriptPass(encryptedPass);
 
+    m_botApiKey = rootObj.value("bot_api_key").toString(m_botApiKey);
     return true;
 }
 
@@ -87,6 +89,8 @@ bool ConfigManager::save()
 
     QJsonObject rootObj;
     rootObj["database"] = dbObj;
+
+    rootObj["bot_api_key"] = m_botApiKey;
 
     QJsonDocument doc(rootObj);
     configFile.write(doc.toJson(QJsonDocument::Indented));
@@ -128,6 +132,11 @@ void ConfigManager::createInteractively()
     line = input.readLine();
     if (!line.trimmed().isEmpty()) m_dbPassword = line;
 
+    output << "Bot API Key (for server-to-bot auth) [" << m_botApiKey << "]: ";
+    output.flush();
+    line = input.readLine();
+    if (!line.trimmed().isEmpty()) m_botApiKey = line.trimmed();
+
     if (save()) {
         output << "Configuration saved successfully to " << getConfigFilePath() << Qt::endl;
     } else {
@@ -144,6 +153,7 @@ void ConfigManager::printToConsole() const
     output << "  Port: " << m_dbPort << Qt::endl;
     output << "  User: " << m_dbUser << Qt::endl;
     output << "  Password: " << "********" << Qt::endl; // Не виводимо пароль у консоль
+    output << "  Bot API Key: " << "********" << Qt::endl;
     output << "---------------------------" << Qt::endl;
 }
 
@@ -152,9 +162,11 @@ QString ConfigManager::getDbPath() const { return m_dbPath; }
 int ConfigManager::getDbPort() const { return m_dbPort; }
 QString ConfigManager::getDbUser() const { return m_dbUser; }
 QString ConfigManager::getDbPassword() const { return m_dbPassword; }
+QString ConfigManager::getBotApiKey() const { return m_botApiKey; }
 
 QString ConfigManager::getConfigFilePath() const
 {
     // Завжди шукаємо теку Config поруч з .exe файлом
     return QCoreApplication::applicationDirPath() + "/Config/config.json";
 }
+

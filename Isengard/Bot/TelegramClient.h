@@ -17,6 +17,9 @@ public:
     void startPolling();
     void stopPolling();
 
+    void sendMessage(qint64 chatId, const QString& text);
+    void sendMessage(qint64 chatId, const QString& text, const QJsonObject& replyMarkup);
+
 signals:
     void updatesReceived(const QJsonArray& updates);
     void errorOccurred(const QString& error);

@@ -111,7 +111,19 @@ int main(int argc, char *argv[])
     // Отримуємо порт з налаштувань бази даних, з резервним значенням 8080
     quint16 port = params.getParam(appName, "ServerPort", 8080).toUInt();
 
-    WebServer webServer(port);
+    // --- ПОЧАТОК ЗМІН ---
+    // 1. Отримуємо ключ, який ConfigManager тепер вміє читати
+    QString botKey = configManager.getBotApiKey();
+    if (botKey.isEmpty() || botKey == "YOUR_DEFAULT_BOT_KEY_HERE" || botKey.length() < 32) {
+        logWarning() << "Bot API Key is not configured or is too weak. Bot authentication will fail.";
+        // Ми не зупиняємо сервер, оскільки Gandalf має працювати,
+        // але виводимо попередження.
+    }
+
+    // 2. Передаємо ключ у новий конструктор WebServer
+    WebServer webServer(port, botKey);
+    // --- КІНЕЦЬ ЗМІН ---
+
     if (!webServer.start()) {
         logCritical() << "Не вдалося ініціалізувати та запустити веб-сервер. Завершення роботи.";
         return 1; // Вийти з помилкою

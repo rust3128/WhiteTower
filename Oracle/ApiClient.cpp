@@ -759,9 +759,13 @@ void ApiClient::registerBotUser(const QJsonObject& userData)
 {
     QNetworkRequest request(QUrl(m_serverUrl + "/api/bot/register"));
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-    // Цей запит не потребує аутентифікації
 
     QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(userData).toJson());
+
+    // --- ДОДАНО: "Прикріплюємо" ID до запиту ---
+    reply->setProperty("telegramId", userData["telegram_id"].toVariant().toLongLong());
+    // ------------------------------------------
+
     connect(reply, &QNetworkReply::finished, this, &ApiClient::onBotRegisterReplyFinished);
 }
 
@@ -770,11 +774,17 @@ void ApiClient::onBotRegisterReplyFinished()
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
     if (!reply) return;
 
+    // --- ДОДАНО: Дістаємо "прикріплений" ID ---
+    qint64 telegramId = reply->property("telegramId").toLongLong();
+    // ---------------------------------------
+
     ApiError error = parseReply(reply);
     if (reply->error() == QNetworkReply::NoError) {
-        emit botUserRegistered(QJsonDocument::fromJson(error.responseBody).object());
+        // --- ЗМІНЕНО: Передаємо ID в сигнал ---
+        emit botUserRegistered(QJsonDocument::fromJson(error.responseBody).object(), telegramId);
     } else {
-        emit botUserRegistrationFailed(error);
+        // --- ЗМІНЕНО: Передаємо ID в сигнал ---
+        emit botUserRegistrationFailed(error, telegramId);
     }
     reply->deleteLater();
 }
@@ -940,6 +950,53 @@ void ApiClient::onBotRequestLinkReplyFinished()
     {
         // Помилка (або мережева, або від сервера)
         emit botRequestLinkFailed(error);
+    }
+
+    reply->deleteLater();
+}
+
+
+void ApiClient::checkBotUserStatus(const QJsonObject& message)
+{
+    QNetworkRequest request(QUrl(m_serverUrl + "/api/bot/me"));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    QJsonObject jsonBody;
+    // Беремо ID з об'єкта "from" всередині "message"
+    jsonBody["telegram_id"] = message["from"].toObject()["id"].toVariant().toLongLong();
+
+    QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(jsonBody).toJson());
+
+    // --- ЗМІНЕНО: "Прикріплюємо" все повідомлення ---
+    reply->setProperty("messageData", message);
+
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onBotUserStatusReplyFinished);
+}
+
+void ApiClient::onBotUserStatusReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    // --- ЗМІНЕНО: Дістаємо "прикріплене" повідомлення ---
+    QJsonObject message = reply->property("messageData").toJsonObject();
+
+    ApiError error = parseReply(reply);
+
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200)
+    {
+        QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
+        if (doc.isObject()) {
+            // "Прокидуємо" і статус, і оригінальне повідомлення
+            emit botUserStatusReceived(doc.object(), message);
+        } else {
+            error.errorString = "Invalid response from server: expected a JSON object.";
+            emit botUserStatusCheckFailed(error);
+        }
+    }
+    else
+    {
+        emit botUserStatusCheckFailed(error);
     }
 
     reply->deleteLater();

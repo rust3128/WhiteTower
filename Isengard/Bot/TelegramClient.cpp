@@ -68,3 +68,62 @@ void TelegramClient::onUpdatesReplyFinished()
     }
     reply->deleteLater();
 }
+
+
+/**
+ * @brief Надсилає текстове повідомлення користувачу.
+ * @param chatId ID чату (зазвичай це ID користувача).
+ * @param text Текст повідомлення.
+ */
+void TelegramClient::sendMessage(qint64 chatId, const QString &text)
+{
+    QUrl url("https://api.telegram.org/bot" + m_token + "/sendMessage");
+
+    // Створюємо тіло запиту
+    QJsonObject jsonBody;
+    jsonBody["chat_id"] = chatId;
+    jsonBody["text"] = text;
+    jsonBody["parse_mode"] = "HTML";
+
+    // Готуємо запит
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    // Відправляємо POST і відразу "забуваємо" про нього.
+    // Нам не потрібно обробляти відповідь на відправлене повідомлення,
+    // тому ми не підключаємо жодних слотів.
+    QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(jsonBody).toJson());
+
+    // Встановлюємо зв'язок, щоб reply видалив себе сам після завершення
+    connect(reply, &QNetworkReply::finished, reply, &QNetworkReply::deleteLater);
+}
+
+// ... (в кінець файлу)
+
+/**
+ * @brief Надсилає текстове повідомлення з кастомною клавіатурою.
+ * @param chatId ID чату (користувача).
+ * @param text Текст повідомлення.
+ * @param replyMarkup JSON-об'єкт клавіатури (напр., ReplyKeyboardMarkup).
+ */
+void TelegramClient::sendMessage(qint64 chatId, const QString &text, const QJsonObject &replyMarkup)
+{
+    QUrl url("https://api.telegram.org/bot" + m_token + "/sendMessage");
+
+    // Створюємо тіло запиту
+    QJsonObject jsonBody;
+    jsonBody["chat_id"] = chatId;
+    jsonBody["text"] = text;
+    jsonBody["reply_markup"] = replyMarkup;
+    jsonBody["parse_mode"] = "HTML";
+
+    // Готуємо запит
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    // Відправляємо POST
+    QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(jsonBody).toJson());
+
+    // Встановлюємо зв'язок, щоб reply видалив себе сам після завершення
+    connect(reply, &QNetworkReply::finished, reply, &QNetworkReply::deleteLater);
+}

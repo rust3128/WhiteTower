@@ -26,6 +26,7 @@ public:
     int getDbPort() const;
     QString getDbUser() const;
     QString getDbPassword() const;
+    QString getBotApiKey() const;
 
 private:
     // Повертає повний шлях до файлу конфігурації.
@@ -37,6 +38,7 @@ private:
     int m_dbPort;
     QString m_dbUser;
     QString m_dbPassword;
+    QString m_botApiKey;
 };
 
 #endif // CONFIGMANAGER_H
