@@ -43,6 +43,9 @@ void Bot::setupConnections()
     connect(&m_apiClient, &ApiClient::botAdminRequestsFetched, this, &Bot::onAdminRequestsReceived);
     connect(&m_apiClient, &ApiClient::botAdminRequestsFetchFailed, this, &Bot::onAdminRequestsFailed);
 
+    connect(&m_apiClient, &ApiClient::botActiveUsersFetched, this, &Bot::onActiveUsersReceived);
+    connect(&m_apiClient, &ApiClient::botActiveUsersFetchFailed, this, &Bot::onActiveUsersFailed);
+
     logInfo() << "Signal-slot connections established.";
 }
 
@@ -69,7 +72,7 @@ void Bot::setupCommandHandlers()
     m_adminCommandHandlers["❓ Допомога"] = &Bot::handleAdminHelp; // Перевизначаємо довідку
     m_adminCommandHandlers["/help"] = &Bot::handleAdminHelp;
     m_adminCommandHandlers["👑 Адмін: Запити"] = &Bot::handleAdminRequests;
-    m_adminCommandHandlers["👑 Адмін: Користувачі"] = &Bot::handleAdminRequests; // Поки заглушка
+    m_adminCommandHandlers["👑 Адмін: Користувачі"] = &Bot::handleAdminUsers; // Поки заглушка
 
     logInfo() << "Command handlers registered for user and admin roles.";
 }
@@ -403,3 +406,61 @@ void Bot::onAdminRequestsFailed(const ApiError& error, qint64 telegramId)
 }
 
 
+//
+
+// --- Адмін: Користувачі ---
+
+/**
+ * @brief (НОВИЙ) Обробляє команду "👑 Адмін: Користувачі".
+ */
+void Bot::handleAdminUsers(const QJsonObject& message)
+{
+    qint64 chatId = message["from"].toObject()["id"].toVariant().toLongLong();
+    logInfo() << "Admin" << chatId << "called 'Admin: Users'.";
+
+    // Використовуємо "typing" action
+    m_telegramClient->sendChatAction(chatId, "typing");
+
+    // Викликаємо новий метод ApiClient
+    m_apiClient.fetchBotActiveUsers(chatId);
+}
+
+/**
+ * @brief (НОВИЙ СЛОТ) Успішно отримано список активних користувачів.
+ */
+void Bot::onActiveUsersReceived(const QJsonArray& users, qint64 telegramId)
+{
+    logInfo() << "Successfully fetched" << users.count() << "active users for admin" << telegramId;
+
+    if (users.isEmpty()) {
+        m_telegramClient->sendMessage(telegramId, "Не знайдено жодного активного користувача бота.");
+        return;
+    }
+
+    QStringList userList;
+    userList.append(QString("<b>Активні користувачі бота (%1):</b>\n")
+                        .arg(users.count()));
+
+    for (const QJsonValue& val : users) {
+        QJsonObject user = val.toObject();
+
+        int userId = user["user_id"].toInt();
+        QString login = user["login"].toString(); // (корпоративний логін)
+        QString fio = user["fio"].toString();     // (ПІБ)
+
+        userList.append(QString("👤 <b>%1</b> (%2) [ID: %3]")
+                            .arg(fio, login, QString::number(userId)));
+    }
+
+    m_telegramClient->sendMessage(telegramId, userList.join("\n"));
+}
+
+/**
+ * @brief (НОВИЙ СЛОТ) Не вдалося отримати список активних користувачів.
+ */
+void Bot::onActiveUsersFailed(const ApiError& error, qint64 telegramId)
+{
+    logCritical() << "Failed to fetch active users for" << telegramId << ":" << error.errorString;
+    m_telegramClient->sendMessage(telegramId,
+                                  "Помилка завантаження списку користувачів: " + error.errorString);
+}

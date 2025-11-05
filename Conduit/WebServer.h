@@ -75,6 +75,8 @@ private:
     QHttpServerResponse handleLinkBotRequest(const QHttpServerRequest& request);
     // GET /api/bot/requests
     QHttpServerResponse handleBotStatusRequest(const QHttpServerRequest& request);
+    // GET /api/bot/users
+    QHttpServerResponse handleGetBotUsersRequest(const QHttpServerRequest& request);
 private:
     QHttpServer* m_httpServer;
     quint16 m_port;

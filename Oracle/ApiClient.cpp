@@ -1221,3 +1221,47 @@ void ApiClient::onBotAdminRejectReplyFinished()
     }
     reply->deleteLater();
 }
+
+//
+
+/**
+ * @brief Адмін-бот запитує список активних користувачів бота.
+ */
+void ApiClient::fetchBotActiveUsers(qint64 adminTelegramId)
+{
+    // Викликаємо новий маршрут /api/bot/users
+    QNetworkRequest request = createBotRequest(QUrl(m_serverUrl + "/api/bot/users"), adminTelegramId);
+
+    QNetworkReply* reply = m_networkManager->get(request);
+
+    reply->setProperty("telegram_id", QVariant(adminTelegramId));
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onBotActiveUsersReplyFinished);
+}
+
+/**
+ * @brief Обробляє відповідь від /api/bot/users.
+ */
+void ApiClient::onBotActiveUsersReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    qint64 telegramId = reply->property("telegram_id").toLongLong();
+    ApiError error = parseReply(reply);
+
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200)
+    {
+        QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
+        if (doc.isArray()) {
+            emit botActiveUsersFetched(doc.array(), telegramId);
+        } else {
+            error.errorString = "Invalid response from server: expected a JSON array.";
+            emit botActiveUsersFetchFailed(error, telegramId);
+        }
+    }
+    else
+    {
+        emit botActiveUsersFetchFailed(error, telegramId);
+    }
+    reply->deleteLater();
+}

@@ -35,6 +35,10 @@ private slots:
     void onAdminRequestsReceived(const QJsonArray& requests, qint64 telegramId);
     void onAdminRequestsFailed(const ApiError& error, qint64 telegramId);
 
+    // --- ДОДАЙТЕ ЦІ ДВА РЯДКИ ---
+    void onActiveUsersReceived(const QJsonArray& users, qint64 telegramId);
+    void onActiveUsersFailed(const ApiError& error, qint64 telegramId);
+
 private:
     // Тип-вказівник на метод-обробник
     using CommandHandler = void (Bot::*)(const QJsonObject& message);
@@ -61,6 +65,8 @@ private:
     void sendAdminMenu(const QJsonObject& message);   // <-- ЗМІНЕНО
 
     void handleCallbackQuery(const QJsonObject& callbackQuery);
+
+    void handleAdminUsers(const QJsonObject& message);
 
 private:
     QMap<QString, CommandHandler> m_userCommandHandlers;

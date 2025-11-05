@@ -115,6 +115,11 @@ void WebServer::setupRoutes()
     m_httpServer->route("/api/bot/me", QHttpServerRequest::Method::Post, [this](const QHttpServerRequest& request) {
         return handleBotStatusRequest(request);
     });
+
+    // Маршрут для отримання списку активних користувачів бота (для адмінів)
+    m_httpServer->route("/api/bot/users", QHttpServerRequest::Method::Get, [this](const QHttpServerRequest& request) {
+        return handleGetBotUsersRequest(request);
+    });
 }
 
 void WebServer::logRequest(const QHttpServerRequest &request)
@@ -697,10 +702,6 @@ QHttpServerResponse WebServer::handleRejectBotRequest(const QHttpServerRequest &
         // Помилка (напр., запит не знайдено або помилка БД)
         return createJsonResponse(QJsonObject{{"error", "Failed to reject request."}}, QHttpServerResponse::StatusCode::InternalServerError);
     }
-
-    m_httpServer->route("/api/bot/approve", QHttpServerRequest::Method::Post, [this](const QHttpServerRequest& request) {
-        return handleApproveBotRequest(request);
-    });
 }
 
 /**
@@ -843,4 +844,29 @@ QHttpServerResponse WebServer::handleBotStatusRequest(const QHttpServerRequest &
     // 3. Повертаємо результат
     return createJsonResponse(status, QHttpServerResponse::StatusCode::Ok);
     // +++ КІНЕЦЬ ВАШОГО КОДУ +++
+}
+
+//
+
+/**
+ * @brief (НОВИЙ) Обробляє запит на список активних користувачів бота (GET /api/bot/users).
+ * Вимагає аутентифікації адміна.
+ */
+QHttpServerResponse WebServer::handleGetBotUsersRequest(const QHttpServerRequest &request)
+{
+    logRequest(request);
+
+    // 1. Перевірка, чи є запит від адміністратора
+    User* adminUser = authenticateRequest(request);
+    if (!adminUser || !adminUser->hasRole("Адміністратор")) {
+        if (adminUser) delete adminUser;
+        return createJsonResponse(QJsonObject{{"error", "Forbidden"}}, QHttpServerResponse::StatusCode::Forbidden);
+    }
+    delete adminUser; // Більше не потрібен
+
+    // 2. Отримуємо дані з БД
+    QJsonArray users = DbManager::instance().getActiveBotUsers();
+
+    // 3. Повертаємо результат
+    return createJsonResponse(users, QHttpServerResponse::StatusCode::Ok);
 }

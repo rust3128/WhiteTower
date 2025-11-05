@@ -42,6 +42,7 @@ public:
     QStringList getUniqueRegionsList();
     QJsonObject registerBotUser(const QJsonObject& userData);
     QJsonArray getPendingBotRequests();
+    QJsonArray getActiveBotUsers();
     bool rejectBotRequest(int requestId);
     bool approveBotRequest(int requestId, const QString& login);
     bool linkBotRequest(int requestId, int existingUserId);

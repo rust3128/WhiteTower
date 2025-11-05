@@ -1280,3 +1280,50 @@ int DbManager::findUserIdByTelegramId(qint64 telegramId)
     // Якщо не знайдено (або користувач неактивний), повертаємо -1
     return -1;
 }
+
+//
+
+/**
+ * @brief (НОВИЙ) Повертає список активних користувачів, які прив'язані до бота.
+ * @return QJsonArray масив об'єктів (user_id, login, fio).
+ */
+QJsonArray DbManager::getActiveBotUsers()
+{
+    QJsonArray usersArray;
+    if (!isConnected()) return usersArray;
+
+    QSqlQuery query(m_db);
+
+    // Шукаємо користувачів, які активні (IS_ACTIVE = 1)
+    // і мають прив'язку до запиту бота (BOT_REQUEST_ID > 0)
+    // Також приєднуємо таблицю запитів, щоб отримати Telegram ПІБ
+    query.prepare(
+        "SELECT u.USER_ID, u.USER_LOGIN, u.USER_FIO, b.TELEGRAM_FIO "
+        "FROM USERS u "
+        "JOIN BOT_PENDING_REQUESTS b ON u.BOT_REQUEST_ID = b.REQUEST_ID "
+        "WHERE u.IS_ACTIVE = 1 "
+        "ORDER BY u.USER_FIO"
+        );
+
+    if (!query.exec()) {
+        logCritical() << "Failed to fetch active bot users:" << query.lastError().driverText();
+        return usersArray;
+    }
+
+    while (query.next()) {
+        QJsonObject userObject;
+        userObject["user_id"] = query.value("USER_ID").toInt();
+        userObject["login"] = query.value("USER_LOGIN").toString();
+        // Пріоритет - корпоративне ПІБ, якщо ні - телеграм ПІБ
+        QString fio = query.value("USER_FIO").toString();
+        if (fio.isEmpty()) {
+            fio = query.value("TELEGRAM_FIO").toString();
+        }
+        userObject["fio"] = fio;
+
+        usersArray.append(userObject);
+    }
+
+    logInfo() << "Fetched" << usersArray.count() << "active bot users.";
+    return usersArray;
+}
