@@ -77,6 +77,10 @@ private:
     QHttpServerResponse handleBotStatusRequest(const QHttpServerRequest& request);
     // GET /api/bot/users
     QHttpServerResponse handleGetBotUsersRequest(const QHttpServerRequest& request);
+    // GET /api/bot/clients/<clientId>/stations
+    QHttpServerResponse handleGetClientStations(const QString& clientId, const QHttpServerRequest& request);
+    // GET /api/bot/clients/<clientId>/station/<terminalNo>
+    QHttpServerResponse handleGetStationDetails(const QString& clientId, const QString& terminalNo, const QHttpServerRequest& request);
 private:
     QHttpServer* m_httpServer;
     quint16 m_port;

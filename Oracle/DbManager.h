@@ -43,6 +43,10 @@ public:
     QJsonObject registerBotUser(const QJsonObject& userData);
     QJsonArray getPendingBotRequests();
     QJsonArray getActiveBotUsers();
+
+    QJsonArray getStationsForClient(int userId, int clientId);
+    QJsonObject getStationDetails(int userId, int clientId, const QString& terminalNo);
+
     bool rejectBotRequest(int requestId);
     bool approveBotRequest(int requestId, const QString& login);
     bool linkBotRequest(int requestId, int existingUserId);

@@ -39,6 +39,10 @@ private slots:
     void onActiveUsersReceived(const QJsonArray& users, qint64 telegramId);
     void onActiveUsersFailed(const ApiError& error, qint64 telegramId);
 
+    void onStationsReceived(const QJsonArray& stations, qint64 telegramId, int clientId);
+    void onStationsFailed(const ApiError& error, qint64 telegramId, int clientId);
+    void onStationDetailsReceived(const QJsonObject& station, qint64 telegramId, int clientId);
+    void onStationDetailsFailed(const ApiError& error, qint64 telegramId, int clientId);
 private:
     // Тип-вказівник на метод-обробник
     using CommandHandler = void (Bot::*)(const QJsonObject& message);
@@ -63,12 +67,17 @@ private:
     // --- Методи для меню (ЗМІНЕНО ПІДПИС) ---
     void sendUserMenu(const QJsonObject& message);    // <-- ЗМІНЕНО
     void sendAdminMenu(const QJsonObject& message);   // <-- ЗМІНЕНО
-
-    void handleCallbackQuery(const QJsonObject& callbackQuery);
-
     void handleAdminUsers(const QJsonObject& message);
 
+    void handleCallbackQuery(const QJsonObject& callbackQuery);
+    void handleStationNumberInput(const QJsonObject& message);
+    void sendPaginatedStations(qint64 telegramId, int clientId, int page, int messageId);
+
 private:
+    enum class UserState { None, WaitingForStationNumber };
+    QMap<qint64, UserState> m_userState; // <telegramId, State>
+    QMap<qint64, int> m_userClientContext; // <telegramId, clientId>
+    QMap<qint64, QJsonArray> m_userStationCache; // <telegramId, Full_Stations_Array>
     QMap<QString, CommandHandler> m_userCommandHandlers;
     QMap<QString, CommandHandler> m_adminCommandHandlers;
     TelegramClient* m_telegramClient;

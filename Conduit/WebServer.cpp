@@ -120,6 +120,20 @@ void WebServer::setupRoutes()
     m_httpServer->route("/api/bot/users", QHttpServerRequest::Method::Get, [this](const QHttpServerRequest& request) {
         return handleGetBotUsersRequest(request);
     });
+
+    // Маршрут для отримання списку АЗС клієнта
+    // /api/bot/clients/<clientId>/stations
+    m_httpServer->route("/api/bot/clients/<arg>/stations", QHttpServerRequest::Method::Get,
+                        [this](const QString& clientId, const QHttpServerRequest& request) {
+                            return handleGetClientStations(clientId, request);
+                        });
+
+    // Маршрут для отримання деталей однієї АЗС
+    // /api/bot/clients/<clientId>/station/<terminalNo>
+    m_httpServer->route("/api/bot/clients/<arg>/station/<arg>", QHttpServerRequest::Method::Get,
+                        [this](const QString& clientId, const QString& terminalNo, const QHttpServerRequest& request) {
+                            return handleGetStationDetails(clientId, terminalNo, request);
+                        });
 }
 
 void WebServer::logRequest(const QHttpServerRequest &request)
@@ -869,4 +883,51 @@ QHttpServerResponse WebServer::handleGetBotUsersRequest(const QHttpServerRequest
 
     // 3. Повертаємо результат
     return createJsonResponse(users, QHttpServerResponse::StatusCode::Ok);
+}
+
+
+//
+
+/**
+ * @brief (НОВИЙ) Обробляє запит на список АЗС (GET /api/bot/clients/<id>/stations).
+ */
+QHttpServerResponse WebServer::handleGetClientStations(const QString &clientId, const QHttpServerRequest &request)
+{
+    logRequest(request);
+
+    // 1. Аутентифікація (ВАЖЛИВО: не адмін, а будь-який активний юзер бота)
+    User* user = authenticateRequest(request);
+    if (!user) { // Немає токена або невалідний
+        return createJsonResponse(QJsonObject{{"error", "Unauthorized"}}, QHttpServerResponse::StatusCode::Unauthorized);
+    }
+
+    // 2. Отримуємо дані з БД (метод сам перевірить права user vs client)
+    QJsonArray stations = DbManager::instance().getStationsForClient(user->id(), clientId.toInt());
+    delete user;
+
+    return createJsonResponse(stations, QHttpServerResponse::StatusCode::Ok);
+}
+
+/**
+ * @brief (НОВИЙ) Обробляє запит на деталі АЗС (GET /api/bot/clients/<id>/station/<termNo>).
+ */
+QHttpServerResponse WebServer::handleGetStationDetails(const QString &clientId, const QString &terminalNo, const QHttpServerRequest &request)
+{
+    logRequest(request);
+
+    // 1. Аутентифікація
+    User* user = authenticateRequest(request);
+    if (!user) {
+        return createJsonResponse(QJsonObject{{"error", "Unauthorized"}}, QHttpServerResponse::StatusCode::Unauthorized);
+    }
+
+    // 2. Отримуємо дані з БД
+    QJsonObject details = DbManager::instance().getStationDetails(user->id(), clientId.toInt(), terminalNo);
+    delete user;
+
+    if (details.contains("error")) {
+        return createJsonResponse(details, QHttpServerResponse::StatusCode::NotFound);
+    }
+
+    return createJsonResponse(details, QHttpServerResponse::StatusCode::Ok);
 }

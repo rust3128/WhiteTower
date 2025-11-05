@@ -150,3 +150,78 @@ void TelegramClient::sendChatAction(qint64 chatId, const QString &action)
     QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(jsonBody).toJson());
     connect(reply, &QNetworkReply::finished, reply, &QNetworkReply::deleteLater);
 }
+
+
+//
+
+/**
+ * @brief (НОВИЙ/ВІДНОВЛЕНИЙ) Надсилає повідомлення з INLINE-клавіатурою.
+ */
+void TelegramClient::sendMessageWithInlineKeyboard(qint64 chatId, const QString &text, const QJsonObject &inlineMarkup)
+{
+    QUrl url("https://api.telegram.org/bot" + m_token + "/sendMessage");
+
+    QJsonObject jsonBody;
+    jsonBody["chat_id"] = chatId;
+    jsonBody["text"] = text;
+    jsonBody["reply_markup"] = inlineMarkup; // <
+    jsonBody["parse_mode"] = "HTML";
+
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    // "fire-and-forget"
+    QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(jsonBody).toJson());
+    connect(reply, &QNetworkReply::finished, reply, &QNetworkReply::deleteLater);
+}
+
+/**
+ * @brief (НОВИЙ/ВІДНОВЛЕНИЙ) Надсилає відповідь на натискання inline-кнопки.
+ * Це необхідно, щоб у клієнта Telegram зник значок завантаження ("годинник").
+ */
+void TelegramClient::answerCallbackQuery(const QString &callbackQueryId, const QString &text)
+{
+    QUrl url("https://api.telegram.org/bot" + m_token + "/answerCallbackQuery");
+
+    QJsonObject jsonBody;
+    jsonBody["callback_query_id"] = callbackQueryId;
+    if (!text.isEmpty()) {
+        jsonBody["text"] = text;
+    }
+
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    // "fire-and-forget"
+    QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(jsonBody).toJson());
+    connect(reply, &QNetworkReply::finished, reply, &QNetworkReply::deleteLater);
+}
+
+/**
+ * @brief (НОВИЙ) Редагує існуюче текстове повідомлення (змінює текст та/або кнопки).
+ * Це ключовий метод для "безшовної" навігації по меню.
+ * @param chatId ID чату.
+ * @param messageId ID повідомлення, яке треба редагувати.
+ * @param text Новий текст.
+ * @param inlineMarkup Новий JSON кнопок.
+ */
+void TelegramClient::editMessageText(qint64 chatId, int messageId, const QString &text, const QJsonObject &inlineMarkup)
+{
+    QUrl url("https://api.telegram.org/bot" + m_token + "/editMessageText");
+
+    QJsonObject jsonBody;
+    jsonBody["chat_id"] = chatId;
+    jsonBody["message_id"] = messageId;
+    jsonBody["text"] = text;
+    jsonBody["reply_markup"] = inlineMarkup;
+    jsonBody["parse_mode"] = "HTML";
+
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(jsonBody).toJson());
+
+    // Ми не будемо обробляти помилки редагування (напр., якщо повідомлення застаріле),
+    // просто видалимо відповідь.
+    connect(reply, &QNetworkReply::finished, reply, &QNetworkReply::deleteLater);
+}

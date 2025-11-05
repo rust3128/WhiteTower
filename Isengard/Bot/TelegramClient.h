@@ -22,6 +22,21 @@ public:
 
     void sendChatAction(qint64 chatId, const QString& action = "typing");
 
+    /**
+     * @brief Надсилає повідомлення з кнопками ПІД ним (inline keyboard).
+     */
+    void sendMessageWithInlineKeyboard(qint64 chatId, const QString& text, const QJsonObject& inlineMarkup);
+
+    /**
+     * @brief "Відповідає" на натискання кнопки, щоб зняти "годинник".
+     */
+    void answerCallbackQuery(const QString& callbackQueryId, const QString& text = "");
+
+    /**
+     * @brief (НОВИЙ) Редагує текст та кнопки існуючого повідомлення.
+     */
+    void editMessageText(qint64 chatId, int messageId, const QString& text, const QJsonObject& inlineMarkup);
+
 signals:
     void updatesReceived(const QJsonArray& updates);
     void errorOccurred(const QString& error);

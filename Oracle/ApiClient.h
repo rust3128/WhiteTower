@@ -63,6 +63,9 @@ public:
     void rejectBotRequestForAdmin(qint64 adminTelegramId, int requestId, const QString& login);
     void fetchBotActiveUsers(qint64 adminTelegramId);
 
+    void fetchStationsForClient(qint64 telegramId, int clientId);
+    void fetchStationDetails(qint64 telegramId, int clientId, const QString& terminalNo);
+
 signals:
     // Сигнали для логіну
     void loginSuccess(User* user);
@@ -155,6 +158,13 @@ signals:
     void botActiveUsersFetched(const QJsonArray& users, qint64 telegramId);
     void botActiveUsersFetchFailed(const ApiError& error, qint64 telegramId);
 
+    void stationsFetched(const QJsonArray& stations, qint64 telegramId, int clientId);
+    void stationsFetchFailed(const ApiError& error, qint64 telegramId, int clientId);
+    void stationDetailsFetched(const QJsonObject& station, qint64 telegramId, int clientId);
+    void stationDetailsFetchFailed(const ApiError& error, qint64 telegramId, int clientId);
+
+private slots:
+
 private slots:
     void onLoginReplyFinished();
     void onUsersReplyFinished();
@@ -187,6 +197,9 @@ private slots:
     void onBotAdminRejectReplyFinished();
 
     void onBotActiveUsersReplyFinished();
+
+    void onStationsReplyFinished();
+    void onStationDetailsReplyFinished();
 private:
     ApiClient(QObject* parent = nullptr);
     ~ApiClient() = default;

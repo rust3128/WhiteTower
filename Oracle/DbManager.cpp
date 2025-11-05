@@ -1327,3 +1327,92 @@ QJsonArray DbManager::getActiveBotUsers()
     logInfo() << "Fetched" << usersArray.count() << "active bot users.";
     return usersArray;
 }
+
+
+//
+
+/**
+ * @brief (НОВИЙ/ВИПРАВЛЕНИЙ) Повертає список АЗС (OBJECTS) для клієнта.
+ * Використовує коректні імена таблиць.
+ */
+QJsonArray DbManager::getStationsForClient(int userId, int clientId)
+{
+    QJsonArray stationsArray;
+    if (!isConnected()) return stationsArray;
+
+    QSqlQuery query(m_db);
+
+    // (Примітка: ми все ще перевіряємо userId, щоб переконатися,
+    // що цей користувач аутентифікований, але сам SQL-запит
+    // може не потребувати userId, якщо логіка прав інша.
+    // Для початку ми просто перевіряємо, що АЗС належать клієнту.)
+
+    // ВИПРАВЛЕНИЙ ЗАПИТ
+    query.prepare(
+        "SELECT o.TERMINAL_ID, o.NAME, o.IS_ACTIVE, o.IS_WORK "
+        "FROM OBJECTS o "
+        "WHERE o.CLIENT_ID = :client_id "
+        "ORDER BY o.TERMINAL_ID"
+        );
+    // query.bindValue(":user_id", userId); // Цей рядок, ймовірно, не потрібен
+    query.bindValue(":client_id", clientId);
+
+    if (!query.exec()) {
+        logCritical() << "Failed to fetch stations (OBJECTS) for client" << clientId
+                      << "for user" << userId << ":" << query.lastError().driverText();
+        return stationsArray;
+    }
+
+    while (query.next()) {
+        QJsonObject station;
+        // Використовуємо імена полів з вашої таблиці OBJECTS
+        station["terminal_no"] = query.value("TERMINAL_ID").toString(); // Або toInt()
+        station["name"] = query.value("NAME").toString();
+        station["is_active"] = query.value("IS_ACTIVE").toBool();
+        station["is_working"] = query.value("IS_WORK").toBool();
+        stationsArray.append(station);
+    }
+
+    return stationsArray;
+}
+
+//
+
+/**
+ * @brief (НОВИЙ/ВИПРАВЛЕНИЙ) Повертає деталі однієї АЗС (OBJECT) за її номером.
+ */
+QJsonObject DbManager::getStationDetails(int userId, int clientId, const QString& terminalNo)
+{
+    if (!isConnected()) return {{"error", "Database not connected"}};
+
+    QSqlQuery query(m_db);
+
+    // ВИПРАВЛЕНИЙ ЗАПИТ
+    query.prepare(
+        "SELECT o.OBJECT_ID, o.TERMINAL_ID, o.NAME, o.IS_ACTIVE, o.IS_WORK " // (o.LAST_DATA - я прибрав, бо не бачу її у вашій схемі)
+        "FROM OBJECTS o "
+        "WHERE o.CLIENT_ID = :client_id AND o.TERMINAL_ID = :terminal_no"
+        );
+    // query.bindValue(":user_id", userId); // Також, ймовірно, не потрібен
+    query.bindValue(":client_id", clientId);
+    query.bindValue(":terminal_no", terminalNo.toInt()); // TERMINAL_ID - це INTEGER
+
+    if (!query.exec()) {
+        logCritical() << "Failed to fetch station details:" << query.lastError().driverText();
+        return {{"error", "Query failed"}};
+    }
+
+    if (query.next()) {
+        QJsonObject station;
+        station["station_id"] = query.value("OBJECT_ID").toInt();
+        station["terminal_no"] = query.value("TERMINAL_ID").toString();
+        station["name"] = query.value("NAME").toString();
+        station["is_active"] = query.value("IS_ACTIVE").toBool();
+        station["is_working"] = query.value("IS_WORK").toBool();
+        // station["last_data"] = ... (якщо є)
+        return station;
+    }
+
+    // Якщо query.next() не спрацював
+    return {{"error", "Station not found or access denied"}};
+}

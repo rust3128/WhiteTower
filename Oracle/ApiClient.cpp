@@ -1265,3 +1265,96 @@ void ApiClient::onBotActiveUsersReplyFinished()
     }
     reply->deleteLater();
 }
+
+//
+
+/**
+ * @brief (НОВИЙ) Запитує список АЗС для клієнта.
+ */
+void ApiClient::fetchStationsForClient(qint64 telegramId, int clientId)
+{
+    QString endpoint = QString("/api/bot/clients/%1/stations").arg(clientId);
+    QNetworkRequest request = createBotRequest(QUrl(m_serverUrl + endpoint), telegramId);
+
+    QNetworkReply* reply = m_networkManager->get(request);
+
+    // Зберігаємо контекст для обробки відповіді
+    reply->setProperty("telegram_id", QVariant(telegramId));
+    reply->setProperty("client_id", QVariant(clientId));
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onStationsReplyFinished);
+}
+
+/**
+ * @brief (НОВИЙ СЛОТ) Обробляє відповідь від /api/bot/clients/<id>/stations.
+ */
+void ApiClient::onStationsReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    qint64 telegramId = reply->property("telegram_id").toLongLong();
+    int clientId = reply->property("client_id").toInt();
+    ApiError error = parseReply(reply);
+
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200)
+    {
+        QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
+        if (doc.isArray()) {
+            emit stationsFetched(doc.array(), telegramId, clientId);
+        } else {
+            error.errorString = "Invalid response: expected a JSON array.";
+            emit stationsFetchFailed(error, telegramId, clientId);
+        }
+    }
+    else
+    {
+        emit stationsFetchFailed(error, telegramId, clientId);
+    }
+    reply->deleteLater();
+}
+
+/**
+ * @brief (НОВИЙ) Запитує деталі однієї АЗС.
+ */
+void ApiClient::fetchStationDetails(qint64 telegramId, int clientId, const QString &terminalNo)
+{
+    QString endpoint = QString("/api/bot/clients/%1/station/%2").arg(clientId).arg(terminalNo);
+    QNetworkRequest request = createBotRequest(QUrl(m_serverUrl + endpoint), telegramId);
+
+    QNetworkReply* reply = m_networkManager->get(request);
+
+    reply->setProperty("telegram_id", QVariant(telegramId));
+    reply->setProperty("client_id", QVariant(clientId));
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onStationDetailsReplyFinished);
+}
+
+/**
+ * @brief (НОВИЙ СЛОТ) Обробляє відповідь від /api/bot/clients/<id>/station/<termNo>.
+ */
+void ApiClient::onStationDetailsReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    qint64 telegramId = reply->property("telegram_id").toLongLong();
+    int clientId = reply->property("client_id").toInt();
+    ApiError error = parseReply(reply);
+
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200)
+    {
+        QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
+        if (doc.isObject()) {
+            emit stationDetailsFetched(doc.object(), telegramId, clientId);
+        } else {
+            error.errorString = "Invalid response: expected a JSON object.";
+            emit stationDetailsFetchFailed(error, telegramId, clientId);
+        }
+    }
+    else
+    {
+        // Якщо сервер повернув 404 (ми так налаштували WebServer),
+        // це потрапить сюди, і error.responseBody міститиме {"error":"Station not found..."}
+        emit stationDetailsFetchFailed(error, telegramId, clientId);
+    }
+    reply->deleteLater();
+}
