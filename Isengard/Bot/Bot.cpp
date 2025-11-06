@@ -737,16 +737,16 @@ void Bot::sendPaginatedStations(qint64 telegramId, int clientId, int page, int m
     QString messageTitle = QString("<b>Доступні АЗС (Сторінка %1 / %2):</b>")
                                .arg(page).arg(totalPages);
     QStringList tableRows;
-    const int termWidth = 6;
-    const int nameWidth = 32;
+    const int termWidth = 5;
+    const int nameWidth = 24;
     const int statusWidth = 3;
 
-    tableRows.append(QString("%1 | %2 | %3 | %4")
+    tableRows.append(QString("%1|%2 |%3|%4")
                          .arg("ID", -termWidth)
                          .arg("Назва АЗС", -nameWidth)
                          .arg("Акт.", -statusWidth)
                          .arg("Роб.", -statusWidth));
-    tableRows.append(QString(53, '-')); // Ваша виправлена довжина
+    tableRows.append(QString(45, '-')); // Ваша виправлена довжина
 
     for (const QJsonValue& val : pageStations) {
         QJsonObject s = val.toObject();
@@ -758,7 +758,7 @@ void Bot::sendPaginatedStations(qint64 telegramId, int clientId, int page, int m
         QString active = s["is_active"].toBool() ? " ✅" : " ❌";
         QString working = s["is_working"].toBool() ? " ✅" : " ❌";
 
-        tableRows.append(QString("%1 | %2 | %3 | %4")
+        tableRows.append(QString("%1|%2 |%3|%4")
                              .arg(termNo, -termWidth)
                              .arg(name, -nameWidth)
                              .arg(active, -statusWidth)
