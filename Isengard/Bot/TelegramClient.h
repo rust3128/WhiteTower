@@ -37,6 +37,8 @@ public:
      */
     void editMessageText(qint64 chatId, int messageId, const QString& text, const QJsonObject& inlineMarkup);
 
+    void sendLocation(qint64 chatId, double latitude, double longitude);
+
 signals:
     void updatesReceived(const QJsonArray& updates);
     void errorOccurred(const QString& error);

@@ -46,9 +46,10 @@ private slots:
 private:
     // Тип-вказівник на метод-обробник
     using CommandHandler = void (Bot::*)(const QJsonObject& message);
-
+    using CallbackHandler = void (Bot::*)(const QJsonObject& query, const QStringList& parts);
     // --- Методи налаштування ---
-    void setupCommandHandlers(); // <-- ПЕРЕМІЩЕНО
+    void setupCommandHandlers();
+    void setupCallbackHandlers();
     void setupConnections();
 
     // --- Методи-маршрутизатори ---
@@ -71,6 +72,23 @@ private:
 
     void handleCallbackQuery(const QJsonObject& callbackQuery);
     void handleStationNumberInput(const QJsonObject& message);
+
+    // Обробники для "clients:"
+    void handleCallbackClientsMain(const QJsonObject& query, const QStringList& parts);
+    // Обробники для "client:"
+    void handleCallbackClientSelect(const QJsonObject& query, const QStringList& parts);
+    // Обробники для "stations:"
+    void handleCallbackStationsList(const QJsonObject& query, const QStringList& parts);
+    void handleCallbackStationsEnter(const QJsonObject& query, const QStringList& parts);
+    void handleCallbackStationsPage(const QJsonObject& query, const QStringList& parts);
+    void handleCallbackStationsClose(const QJsonObject& query, const QStringList& parts);
+    // Обробники для "station:"
+    void handleCallbackStationStub(const QJsonObject& query, const QStringList& parts);
+    void handleCallbackStationMap(const QJsonObject& query, const QStringList& parts);
+    // Загальний обробник
+    void handleCallbackUnknown(const QJsonObject& query, const QStringList& parts);
+    // --- (КІНЕЦЬ НОВОГО БЛОКУ) ---
+
     void sendPaginatedStations(qint64 telegramId, int clientId, int page, int messageId);
 
 private:
@@ -78,6 +96,13 @@ private:
     QMap<qint64, UserState> m_userState; // <telegramId, State>
     QMap<qint64, int> m_userClientContext; // <telegramId, clientId>
     QMap<qint64, QJsonArray> m_userStationCache; // <telegramId, Full_Stations_Array>
+    QMap<qint64, QJsonArray> m_userClientCache; // <telegramId, Full_Clients_Array>
+    // Мапи (карти) обробників
+    QMap<QString, CallbackHandler> m_clientsHandlers; // "clients:main"
+    QMap<QString, CallbackHandler> m_clientHandlers;  // "client:select"
+    QMap<QString, CallbackHandler> m_stationsHandlers; // "stations:list", "stations:page", etc.
+    QMap<QString, CallbackHandler> m_stationHandlers;  // "station:map", "station:stub"
+
     QMap<QString, CommandHandler> m_userCommandHandlers;
     QMap<QString, CommandHandler> m_adminCommandHandlers;
     TelegramClient* m_telegramClient;

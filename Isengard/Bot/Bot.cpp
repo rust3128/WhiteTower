@@ -13,7 +13,8 @@ Bot::Bot(const QString& botToken, QObject *parent)
 {
     m_telegramClient = new TelegramClient(botToken, this);
 
-    setupCommandHandlers(); // <-- ТЕПЕР МИ ВИКЛИКАЄМО НАЛАШТУВАННЯ МАП
+    setupCommandHandlers();
+    setupCallbackHandlers();
     setupConnections();
 }
 
@@ -81,6 +82,32 @@ void Bot::setupCommandHandlers()
     m_adminCommandHandlers["👑 Адмін: Користувачі"] = &Bot::handleAdminUsers; // Поки заглушка
 
     logInfo() << "Command handlers registered for user and admin roles.";
+}
+
+//
+
+/**
+ * @brief (НОВИЙ) Налаштовує мапи (карти) обробників для inline-кнопок.
+ */
+void Bot::setupCallbackHandlers()
+{
+    // Префікс "clients:" (дії зі списком клієнтів)
+    m_clientsHandlers["main"] = &Bot::handleCallbackClientsMain;
+
+    // Префікс "client:" (дії для конкретного клієнта)
+    m_clientHandlers["select"] = &Bot::handleCallbackClientSelect;
+
+    // Префікс "stations:" (дії зі списком АЗС)
+    m_stationsHandlers["list"]  = &Bot::handleCallbackStationsList;
+    m_stationsHandlers["enter"] = &Bot::handleCallbackStationsEnter;
+    m_stationsHandlers["page"]  = &Bot::handleCallbackStationsPage;
+    m_stationsHandlers["close"] = &Bot::handleCallbackStationsClose;
+
+    // Префікс "station:" (дії на картці АЗС)
+    m_stationHandlers["stub"] = &Bot::handleCallbackStationStub;
+    m_stationHandlers["map"]  = &Bot::handleCallbackStationMap;
+
+    logInfo() << "Callback query handlers registered.";
 }
 
 //
@@ -346,6 +373,8 @@ void Bot::onBotClientsReceived(const QJsonArray& clients, qint64 telegramId)
 {
     logInfo() << "Successfully fetched" << clients.count() << "clients for user" << telegramId;
 
+    m_userClientCache[telegramId] = clients; // Зберігаємо список у кеш
+
     if (clients.isEmpty()) {
         m_telegramClient->sendMessage(telegramId, "Список клієнтів порожній.");
         return;
@@ -498,104 +527,48 @@ void Bot::onActiveUsersFailed(const ApiError& error, qint64 telegramId)
 
 
 //
-
 /**
- * @brief (НОВИЙ "МОЗОК") Обробляє всі натискання inline-кнопок.
+ * @brief (ОНОВЛЕНО/РЕФАКТОРИНГ) Головний "мозок" (маршрутизатор).
+ * Тепер використовує QMap'и для виклику правильного обробника.
  */
 void Bot::handleCallbackQuery(const QJsonObject& callbackQuery)
 {
     QString data = callbackQuery["data"].toString();
-    QJsonObject message = callbackQuery["message"].toObject();
-    qint64 chatId = message["chat"].toObject()["id"].toVariant().toLongLong();
-    int messageId = message["message_id"].toInt();
-    QString callbackQueryId = callbackQuery["id"].toString();
+    QStringList parts = data.split(":"); // "prefix:action:arg1:arg2"
 
-    logInfo() << "Callback query received from" << chatId << "with data:" << data;
-
-    // 1. --- Навігація по меню Клієнта ---
-    if (data.startsWith("client:select:")) {
-        int clientId = data.split(":").last().toInt();
-
-        // Створюємо нове меню (Список АЗС / Ввести номер)
-        QJsonObject keyboard;
-        QJsonArray rows;
-        QJsonArray row1;
-        row1.append(QJsonObject{
-            {"text", "📋 Список АЗС"},
-            {"callback_data", QString("stations:list:%1").arg(clientId)}
-        });
-        row1.append(QJsonObject{
-            {"text", "⌨️ Ввести номер АЗС"},
-            {"callback_data", QString("stations:enter:%1").arg(clientId)}
-        });
-        rows.append(row1);
-        QJsonArray row2;
-        row2.append(QJsonObject{
-            {"text", "⬅️ Назад (до клієнтів)"},
-            {"callback_data", "clients:main"}
-        });
-        rows.append(row2);
-        keyboard["inline_keyboard"] = rows;
-
-        // Редагуємо повідомлення "на місці"
-        m_telegramClient->editMessageText(chatId, messageId, "<b>Оберіть дію:</b>", keyboard);
-        m_telegramClient->answerCallbackQuery(callbackQueryId); // Знімаємо "годинник"
-
-    }
-    // 2. --- Повернення до списку клієнтів ---
-    else if (data == "clients:main") {
-        // Ми не можемо просто викликати onBotClientsReceived,
-        // бо нам потрібен messageId для редагування.
-        // Простіше попросити користувача викликати команду знову.
-        m_telegramClient->sendMessage(chatId, "Будь ласка, натисніть /start або 👥 Клієнти, щоб оновити список.");
-        m_telegramClient->answerCallbackQuery(callbackQueryId);
-    }
-    // 3. --- Запит на "Ввести номер АЗС" ---
-    else if (data.startsWith("stations:enter:")) {
-        int clientId = data.split(":").last().toInt();
-
-        // Встановлюємо стан
-        m_userState[chatId] = UserState::WaitingForStationNumber;
-        m_userClientContext[chatId] = clientId; // Зберігаємо контекст
-
-        logInfo() << "User" << chatId << "is now WaitingForStationNumber for client" << clientId;
-        m_telegramClient->answerCallbackQuery(callbackQueryId, "Введіть номер терміналу");
-        m_telegramClient->sendMessage(chatId, "<b>Введіть номер терміналу (АЗС):</b>");
-    }
-    // 4. --- Запит на "Список АЗС" ---
-    else if (data.startsWith("stations:list:")) {
-        int clientId = data.split(":").last().toInt();
-        m_telegramClient->answerCallbackQuery(callbackQueryId, "Завантажую список...");
-        m_apiClient.fetchStationsForClient(chatId, clientId);
-    }
-    // 5. --- (Майбутнє) Обробка кнопок меню АЗС ---
-    else if (data.startsWith("station:")) {
-        // (напр., "station:reboot:555:101")
-        m_telegramClient->answerCallbackQuery(callbackQueryId, "Функція в розробці...");
-    }
-    else if (data.startsWith("stations:page:")) {
-        // data = "stations:page:<clientId>:<page>"
-        QStringList parts = data.split(":");
-        int clientId = parts[2].toInt();
-        int page = parts[3].toInt();
-
-        // Редагуємо повідомлення, показуючи нову сторінку
-        sendPaginatedStations(chatId, clientId, page, messageId);
-        m_telegramClient->answerCallbackQuery(callbackQueryId); // Просто знімаємо "годинник"
+    if (parts.isEmpty()) {
+        logWarning() << "Received callback query with empty data.";
+        m_telegramClient->answerCallbackQuery(callbackQuery["id"].toString());
+        return;
     }
 
-    // 6. --- (НОВЕ) Закриття списку АЗС ---
-    else if (data == "stations:close") {
-        // Просто видаляємо повідомлення зі списком
-        // (Або можемо його відредагувати на "Список закрито")
-        // m_telegramClient->deleteMessage(chatId, messageId); // Потребує нового методу в TelegramClient
-        m_telegramClient->editMessageText(chatId, messageId, "<i>Список АЗС закрито.</i>", QJsonObject());
-        m_userStationCache.remove(chatId); // Чистимо кеш
-        m_telegramClient->answerCallbackQuery(callbackQueryId);
+    QString prefix = parts.at(0); // "clients", "client", "stations", "station"
+    QString action = (parts.count() > 1) ? parts.at(1) : ""; // "main", "select", "list", "map"
+
+    // Оголошуємо змінну для обробника
+    CallbackHandler handler = nullptr;
+
+    // 1. Шукаємо обробник у відповідній мапі
+    if (prefix == "clients") {
+        handler = m_clientsHandlers.value(action, &Bot::handleCallbackUnknown);
+    } else if (prefix == "client") {
+        handler = m_clientHandlers.value(action, &Bot::handleCallbackUnknown);
+    } else if (prefix == "stations") {
+        handler = m_stationsHandlers.value(action, &Bot::handleCallbackUnknown);
+    } else if (prefix == "station") {
+        handler = m_stationHandlers.value(action, &Bot::handleCallbackUnknown);
+    } else {
+        // Якщо префікс невідомий (напр., "noop")
+        handler = &Bot::handleCallbackUnknown;
     }
-    // Інші кнопки
-    else {
-        m_telegramClient->answerCallbackQuery(callbackQueryId);
+
+    // 2. Викликаємо знайдений обробник
+    if (handler) {
+        (this->*handler)(callbackQuery, parts);
+    } else {
+        // Цей 'else' не мав би спрацювати, але для безпеки
+        logWarning() << "No handler found for callback data:" << data;
+        m_telegramClient->answerCallbackQuery(callbackQuery["id"].toString());
     }
 }
 
@@ -654,32 +627,84 @@ void Bot::onStationsFailed(const ApiError& error, qint64 telegramId, int clientI
     m_telegramClient->sendMessage(telegramId, "❌ Помилка завантаження списку АЗС.");
 }
 
+//
+
+/**
+ * @brief (ОНОВЛЕНО) Отримано деталі АЗС.
+ * Форматує повідомлення з назвою клієнта, адресою та телефоном.
+ */
 void Bot::onStationDetailsReceived(const QJsonObject& station, qint64 telegramId, int clientId)
 {
     logInfo() << "Fetched details for station:" << station["terminal_no"].toString();
 
-    // Формуємо повідомлення (як на скріншоті)
-    QString text = QString("<b>АЗС: %1</b> (ID: %2)\n"
-                           "Клієнт ID: %3\n"
-                           "Статус: %4, %5")
-                       .arg(station["name"].toString())
-                       .arg(station["terminal_no"].toString())
-                       .arg(QString::number(clientId))
-                       .arg(station["is_active"].toBool() ? "Активна" : "Неактивна")
-                       .arg(station["is_working"].toBool() ? "В роботі" : "Не в роботі");
+    // --- 1. Отримуємо назву клієнта з нашого нового кешу ---
+    QString clientName = "<i>N/A</i>";
+    if (m_userClientCache.contains(telegramId)) {
+        for (const QJsonValue& val : m_userClientCache.value(telegramId)) {
+            if (val.toObject()["client_id"].toInt() == clientId) {
+                clientName = val.toObject()["client_name"].toString();
+                break;
+            }
+        }
+    }
+    // --- КІНЕЦЬ ---
 
-    // Формуємо кнопки (як на скріншоті)
+    // --- 2. Отримуємо всі дані про АЗС з JSON ---
+    QString stationName = station["name"].toString();
+    QString termNo = station["terminal_no"].toString();
+    QString address = station["address"].toString();
+    QString phone = station["phone"].toString();
+//    int stationId = station["station_id"].toInt();
+    double latitude = station["latitude"].toDouble(0.0);
+    double longitude = station["longitude"].toDouble(0.0);
+
+    if (address.isEmpty()) address = "<i>N/A</i>";
+    if (phone.isEmpty()) phone = "<i>N/A</i>";
+
+    // --- 3. Формуємо текст (з оновленим заголовком) ---
+    QStringList textLines;
+
+    // --- ОНОВЛЕНО ТУТ ---
+    textLines.append(QString("<b>🏪 %1 %2</b>").arg(clientName, stationName));
+    // --- КІНЕЦЬ ОНОВЛЕННЯ ---
+
+    textLines.append(QString("<b>⛽ Термінал:</b> %1").arg(termNo));
+    textLines.append(QString("<b>📍 Адреса:</b> %1").arg(address));
+    textLines.append(QString("<b>📞 Телефон:</b> %1").arg(phone));
+
+    QString statusActive = station["is_active"].toBool() ? "Активна" : "Неактивна";
+    QString statusWork = station["is_working"].toBool() ? "В роботі" : "Не в роботі";
+    textLines.append(QString("<b>ℹ️ Статус:</b> %1, %2").arg(statusActive, statusWork));
+
+    QString text = textLines.join("\n");
+
+    // --- 4. Формуємо нові кнопки (ОНОВЛЕНИЙ МАКЕТ) ---
     QJsonObject keyboard;
     QJsonArray rows;
-    QJsonArray row1;
-    // Ми "зашиваємо" всю інфу в кнопку: "station:<action>:<clientId>:<termNo>"
-    QString baseData = QString("station:%1:%2").arg(clientId).arg(station["terminal_no"].toString());
 
-    row1.append(QJsonObject{{"text", "ℹ️ Інфо"}, {"callback_data", baseData.arg("info")}});
-    row1.append(QJsonObject{{"text", "🔄 Перезавантажити"}, {"callback_data", baseData.arg("reboot")}});
+    // --- Ряд 1: Заглушки (3 кнопки в ряд) ---
+    QJsonArray row1;
+    row1.append(QJsonObject{{"text", "РРО"}, {"callback_data", "station:stub"}});
+    row1.append(QJsonObject{{"text", "ПРК"}, {"callback_data", "station:stub"}});
+    row1.append(QJsonObject{{"text", "Резервуари"}, {"callback_data", "station:stub"}});
     rows.append(row1);
 
-    // ... (додайте інші кнопки за потреби) ...
+    // --- Ряд 2: Мапа ---
+    QJsonArray row2;
+    QString mapCallbackData;
+
+    if (latitude != 0.0 && longitude != 0.0) {
+        mapCallbackData = QString("station:map:%1:%2").arg(latitude).arg(longitude);
+    } else {
+        mapCallbackData = "station:map:null";
+    }
+    row2.append(QJsonObject{{"text", "🗺️ Показати на мапі"}, {"callback_data", mapCallbackData}});
+    rows.append(row2);
+
+    // --- Ряд 3: Назад ---
+    QJsonArray row3;
+    row3.append(QJsonObject{{"text", "⬅️ Назад"}, {"callback_data", QString("client:select:%1").arg(clientId)}});
+    rows.append(row3);
 
     keyboard["inline_keyboard"] = rows;
     m_telegramClient->sendMessageWithInlineKeyboard(telegramId, text, keyboard);
@@ -813,3 +838,163 @@ void Bot::sendPaginatedStations(qint64 telegramId, int clientId, int page, int m
         m_telegramClient->editMessageText(telegramId, messageId, messageBody, keyboard);
     }
 }
+
+
+//
+
+// --- (НОВІ ОБРОБНИКИ ДЛЯ INLINE-КНОПОК) ---
+
+/**
+ * @brief (НОВИЙ) Обробник для "clients:main" (Назад до списку клієнтів)
+ */
+void Bot::handleCallbackClientsMain(const QJsonObject& query, const QStringList& parts)
+{
+    qint64 chatId = query["message"].toObject()["chat"].toObject()["id"].toVariant().toLongLong();
+    QString callbackQueryId = query["id"].toString();
+
+    m_telegramClient->sendMessage(chatId, "Будь ласка, натисніть /start або 👥 Клієнти, щоб оновити список.");
+    m_telegramClient->answerCallbackQuery(callbackQueryId);
+}
+
+/**
+ * @brief (НОВИЙ) Обробник для "client:select:<clientId>" (Меню АЗС)
+ */
+void Bot::handleCallbackClientSelect(const QJsonObject& query, const QStringList& parts)
+{
+    qint64 chatId = query["message"].toObject()["chat"].toObject()["id"].toVariant().toLongLong();
+    int messageId = query["message"].toObject()["message_id"].toInt();
+    QString callbackQueryId = query["id"].toString();
+
+    if (parts.count() < 3) return; // Захист
+    int clientId = parts.at(2).toInt(); // "client:select:10"
+
+    QJsonObject keyboard;
+    QJsonArray rows;
+    QJsonArray row1;
+    row1.append(QJsonObject{
+        {"text", "📋 Список АЗС"},
+        {"callback_data", QString("stations:list:%1").arg(clientId)}
+    });
+    row1.append(QJsonObject{
+        {"text", "⌨️ Ввести номер АЗС"},
+        {"callback_data", QString("stations:enter:%1").arg(clientId)}
+    });
+    rows.append(row1);
+    QJsonArray row2;
+    row2.append(QJsonObject{
+        {"text", "⬅️ Назад (до клієнтів)"},
+        {"callback_data", "clients:main"}
+    });
+    rows.append(row2);
+    keyboard["inline_keyboard"] = rows;
+
+    m_telegramClient->editMessageText(chatId, messageId, "<b>Оберіть дію:</b>", keyboard);
+    m_telegramClient->answerCallbackQuery(callbackQueryId);
+}
+
+/**
+ * @brief (НОВИЙ) Обробник для "stations:list:<clientId>"
+ */
+void Bot::handleCallbackStationsList(const QJsonObject& query, const QStringList& parts)
+{
+    qint64 chatId = query["message"].toObject()["chat"].toObject()["id"].toVariant().toLongLong();
+    QString callbackQueryId = query["id"].toString();
+
+    if (parts.count() < 3) return; // Захист
+    int clientId = parts.at(2).toInt(); // "stations:list:10"
+
+    m_telegramClient->answerCallbackQuery(callbackQueryId, "Завантажую список...");
+    m_apiClient.fetchStationsForClient(chatId, clientId);
+}
+
+/**
+ * @brief (НОВИЙ) Обробник для "stations:enter:<clientId>"
+ */
+void Bot::handleCallbackStationsEnter(const QJsonObject& query, const QStringList& parts)
+{
+    qint64 chatId = query["message"].toObject()["chat"].toObject()["id"].toVariant().toLongLong();
+    QString callbackQueryId = query["id"].toString();
+
+    if (parts.count() < 3) return; // Захист
+    int clientId = parts.at(2).toInt(); // "stations:enter:10"
+
+    m_userState[chatId] = UserState::WaitingForStationNumber;
+    m_userClientContext[chatId] = clientId;
+
+    logInfo() << "User" << chatId << "is now WaitingForStationNumber for client" << clientId;
+    m_telegramClient->answerCallbackQuery(callbackQueryId, "Введіть номер терміналу");
+    m_telegramClient->sendMessage(chatId, "<b>Введіть номер терміналу (АЗС):</b>");
+}
+
+/**
+ * @brief (НОВИЙ) Обробник для "stations:page:<clientId>:<page>"
+ */
+void Bot::handleCallbackStationsPage(const QJsonObject& query, const QStringList& parts)
+{
+    qint64 chatId = query["message"].toObject()["chat"].toObject()["id"].toVariant().toLongLong();
+    int messageId = query["message"].toObject()["message_id"].toInt();
+    QString callbackQueryId = query["id"].toString();
+
+    if (parts.count() < 4) return; // Захист
+    int clientId = parts.at(2).toInt();
+    int page = parts.at(3).toInt();
+
+    sendPaginatedStations(chatId, clientId, page, messageId);
+    m_telegramClient->answerCallbackQuery(callbackQueryId);
+}
+
+/**
+ * @brief (НОВИЙ) Обробник для "stations:close"
+ */
+void Bot::handleCallbackStationsClose(const QJsonObject& query, const QStringList& parts)
+{
+    qint64 chatId = query["message"].toObject()["chat"].toObject()["id"].toVariant().toLongLong();
+    int messageId = query["message"].toObject()["message_id"].toInt();
+    QString callbackQueryId = query["id"].toString();
+
+    m_telegramClient->editMessageText(chatId, messageId, "<i>Список АЗС закрито.</i>", QJsonObject());
+    m_userStationCache.remove(chatId); // Чистимо кеш
+    m_telegramClient->answerCallbackQuery(callbackQueryId);
+}
+
+/**
+ * @brief (НОВИЙ) Обробник для "station:stub"
+ */
+void Bot::handleCallbackStationStub(const QJsonObject& query, const QStringList& parts)
+{
+    QString callbackQueryId = query["id"].toString();
+    m_telegramClient->answerCallbackQuery(callbackQueryId, "Функція в розробці...");
+}
+
+/**
+ * @brief (НОВИЙ) Обробник для "station:map:<lat>:<lon>" або "station:map:null"
+ */
+void Bot::handleCallbackStationMap(const QJsonObject& query, const QStringList& parts)
+{
+    qint64 chatId = query["message"].toObject()["chat"].toObject()["id"].toVariant().toLongLong();
+    QString callbackQueryId = query["id"].toString();
+
+    if (parts.count() < 3) return; // Захист
+
+    // parts = ["station", "map", ...]
+    if (parts.at(2) == "null") {
+        m_telegramClient->answerCallbackQuery(callbackQueryId, "❌ Координати для цієї АЗС відсутні.");
+    } else if (parts.count() == 4) {
+        double lat = parts.at(2).toDouble();
+        double lon = parts.at(3).toDouble();
+        m_telegramClient->sendLocation(chatId, lat, lon);
+        m_telegramClient->answerCallbackQuery(callbackQueryId);
+    }
+}
+
+/**
+ * @brief (НОВИЙ) Обробник для невідомих колбеків
+ */
+void Bot::handleCallbackUnknown(const QJsonObject& query, const QStringList& parts)
+{
+    QString callbackQueryId = query["id"].toString();
+    logWarning() << "Received unknown callback query:" << parts.join(":");
+    m_telegramClient->answerCallbackQuery(callbackQueryId);
+}
+
+// --- (КІНЕЦЬ НОВИХ ОБРОБНИКІВ) ---

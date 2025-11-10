@@ -1379,7 +1379,8 @@ QJsonArray DbManager::getStationsForClient(int userId, int clientId)
 //
 
 /**
- * @brief (НОВИЙ/ВИПРАВЛЕНИЙ) Повертає деталі однієї АЗС (OBJECT) за її номером.
+ * @brief (ОНОВЛЕНО) Повертає деталі однієї АЗС (OBJECT).
+ * Тепер також витягує LATITUDE і LONGITUDE.
  */
 QJsonObject DbManager::getStationDetails(int userId, int clientId, const QString& terminalNo)
 {
@@ -1387,15 +1388,15 @@ QJsonObject DbManager::getStationDetails(int userId, int clientId, const QString
 
     QSqlQuery query(m_db);
 
-    // ВИПРАВЛЕНИЙ ЗАПИТ
+    // --- ОНОВЛЕНО ТУТ: Додано o.LATITUDE, o.LONGITUDE ---
     query.prepare(
-        "SELECT o.OBJECT_ID, o.TERMINAL_ID, o.NAME, o.IS_ACTIVE, o.IS_WORK " // (o.LAST_DATA - я прибрав, бо не бачу її у вашій схемі)
+        "SELECT o.OBJECT_ID, o.TERMINAL_ID, o.NAME, o.IS_ACTIVE, o.IS_WORK, "
+        "o.ADDRESS, o.PHONE, o.LATITUDE, o.LONGITUDE "
         "FROM OBJECTS o "
         "WHERE o.CLIENT_ID = :client_id AND o.TERMINAL_ID = :terminal_no"
         );
-    // query.bindValue(":user_id", userId); // Також, ймовірно, не потрібен
     query.bindValue(":client_id", clientId);
-    query.bindValue(":terminal_no", terminalNo.toInt()); // TERMINAL_ID - це INTEGER
+    query.bindValue(":terminal_no", terminalNo.toInt());
 
     if (!query.exec()) {
         logCritical() << "Failed to fetch station details:" << query.lastError().driverText();
@@ -1409,10 +1410,16 @@ QJsonObject DbManager::getStationDetails(int userId, int clientId, const QString
         station["name"] = query.value("NAME").toString();
         station["is_active"] = query.value("IS_ACTIVE").toBool();
         station["is_working"] = query.value("IS_WORK").toBool();
-        // station["last_data"] = ... (якщо є)
+        station["address"] = query.value("ADDRESS").toString();
+        station["phone"] = query.value("PHONE").toString();
+
+        // --- ДОДАНО ЦІ ДВА РЯДКИ ---
+        station["latitude"] = query.value("LATITUDE").toDouble();
+        station["longitude"] = query.value("LONGITUDE").toDouble();
+        // --- КІНЕЦЬ ---
+
         return station;
     }
 
-    // Якщо query.next() не спрацював
     return {{"error", "Station not found or access denied"}};
 }

@@ -225,3 +225,25 @@ void TelegramClient::editMessageText(qint64 chatId, int messageId, const QString
     // просто видалимо відповідь.
     connect(reply, &QNetworkReply::finished, reply, &QNetworkReply::deleteLater);
 }
+
+//
+
+/**
+ * @brief (НОВИЙ) Надсилає геолокацію (крапку на мапі).
+ */
+void TelegramClient::sendLocation(qint64 chatId, double latitude, double longitude)
+{
+    QUrl url("https://api.telegram.org/bot" + m_token + "/sendLocation");
+
+    QJsonObject jsonBody;
+    jsonBody["chat_id"] = chatId;
+    jsonBody["latitude"] = latitude;
+    jsonBody["longitude"] = longitude;
+
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    // "fire-and-forget"
+    QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(jsonBody).toJson());
+    connect(reply, &QNetworkReply::finished, reply, &QNetworkReply::deleteLater);
+}

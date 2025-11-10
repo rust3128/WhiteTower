@@ -53,6 +53,8 @@ public:
     QJsonObject getBotUserStatus(qint64 telegramId);
     int findUserIdByTelegramId(qint64 telegramId);
 
+
+
 private:
     DbManager(); // Конструктор тепер приватний
     ~DbManager();
