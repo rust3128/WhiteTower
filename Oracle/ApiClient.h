@@ -65,7 +65,7 @@ public:
 
     void fetchStationsForClient(qint64 telegramId, int clientId);
     void fetchStationDetails(qint64 telegramId, int clientId, const QString& terminalNo);
-
+    void fetchExportTasks();
 signals:
     // Сигнали для логіну
     void loginSuccess(User* user);
@@ -163,6 +163,9 @@ signals:
     void stationDetailsFetched(const QJsonObject& station, qint64 telegramId, int clientId);
     void stationDetailsFetchFailed(const ApiError& error, qint64 telegramId, int clientId);
 
+    void exportTasksFetched(const QJsonArray& tasks);
+    void exportTasksFetchFailed(const ApiError& error);
+
 private slots:
 
 private slots:
@@ -200,6 +203,8 @@ private slots:
 
     void onStationsReplyFinished();
     void onStationDetailsReplyFinished();
+
+    void onExportTasksReplyFinished();
 private:
     ApiClient(QObject* parent = nullptr);
     ~ApiClient() = default;

@@ -53,7 +53,7 @@ public:
     QJsonObject getBotUserStatus(qint64 telegramId);
     int findUserIdByTelegramId(qint64 telegramId);
 
-
+    QList<QVariantMap> loadAllExportTasks();
 
 private:
     DbManager(); // Конструктор тепер приватний

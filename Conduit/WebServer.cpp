@@ -134,6 +134,10 @@ void WebServer::setupRoutes()
                         [this](const QString& clientId, const QString& terminalNo, const QHttpServerRequest& request) {
                             return handleGetStationDetails(clientId, terminalNo, request);
                         });
+
+    m_httpServer->route("/api/export-tasks", QHttpServerRequest::Method::Get, [this](const QHttpServerRequest &request) {
+        return handleGetExportTasksRequest(request);
+    });
 }
 
 void WebServer::logRequest(const QHttpServerRequest &request)
@@ -930,4 +934,43 @@ QHttpServerResponse WebServer::handleGetStationDetails(const QString &clientId, 
     }
 
     return createJsonResponse(details, QHttpServerResponse::StatusCode::Ok);
+}
+
+
+//
+/**
+ * @brief Обробляє запит GET /api/export-tasks
+ * Повертає список всіх *активних* шаблонів завдань для Експортера.
+ * Вимагає прав адміністратора.
+ */
+QHttpServerResponse WebServer::handleGetExportTasksRequest(const QHttpServerRequest &request)
+{
+    logRequest(request);
+
+    // 1. Аутентифікація та Авторизація
+    User* user = authenticateRequest(request);
+    if (!user) {
+        // Явно вказуємо тип QJsonObject
+        return createJsonResponse(QJsonObject{{"error", "Unauthorized"}}, QHttpServerResponse::StatusCode::Unauthorized);
+    }
+
+    // ТІЛЬКИ Адміністратори можуть отримувати список завдань
+    if (!user->hasRole("Адміністратор")) {
+        delete user;
+        // Явно вказуємо тип QJsonObject
+        return createJsonResponse(QJsonObject{{"error", "Forbidden"}}, QHttpServerResponse::StatusCode::Forbidden);
+    }
+    delete user; // Більше не потрібен
+
+    // 2. Отримуємо дані
+    QList<QVariantMap> tasks = DbManager::instance().loadAllExportTasks();
+
+    QJsonArray tasksArray;
+    for (const QVariantMap& taskMap : tasks) {
+        tasksArray.append(QJsonObject::fromVariantMap(taskMap));
+    }
+
+
+    // 4. Відправляємо відповідь
+    return createJsonResponse(tasksArray, QHttpServerResponse::StatusCode::Ok);
 }

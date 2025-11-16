@@ -1,12 +1,23 @@
 #include "clientslistdialog.h"
 #include "ui_clientslistdialog.h"
 #include "Oracle/ApiClient.h"
-//#include "Oracle/criptpass.h"
+#include "Oracle/criptpass.h"
+
+#include "Oracle/SessionManager.h" // Для перевірки ролі
+#include "Oracle/User.h"           // Для об'єкта User
+#include <QAction>                 // Для кнопки "Око"
+#include <QIcon>                   // Для іконок
+#include <QStyle>                  // Для стандартних іконок
 #include "Oracle/Logger.h"
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QListWidgetItem>
 #include <QJsonDocument>
+#include <QFile>
+#include <QFileDialog>
+#include <QProcess>
+#include <QTemporaryDir>
+#include <QCoreApplication>
 
 ClientsListDialog::ClientsListDialog(QWidget *parent)
     : QDialog(parent)
@@ -18,6 +29,7 @@ ClientsListDialog::ClientsListDialog(QWidget *parent)
     createConnections();
     loadInitialData(); // Запускаємо завантаження даних
     createUI();
+    m_pendingIpGenMethodId = -1; // (ДОДАНО) Ініціалізуємо наш буфер
 }
 
 ClientsListDialog::~ClientsListDialog()
@@ -28,14 +40,77 @@ ClientsListDialog::~ClientsListDialog()
 void ClientsListDialog::createUI()
 {
     ui->comboBoxSyncMetod->addItems({"DIRECT", "PALANTIR", "FILE"});
-    ui->groupBox_2->setVisible(false);
+    ui->groupBoxClientSettings->setVisible(false);
+    // Ховаємо групи
+    ui->groupBoxFileSettings->setVisible(false);
+    ui->groupBoxSyncAPI->setVisible(false);
+    ui->pushButtonGenerateExporter->setVisible(false);
+
+    // "Безпечна Синхронізація": вимикаємо кнопку
+    ui->pushButtonSync->setEnabled(false);
+    m_isDirty = true;
+
+    // --- (ДОДАНО) НАЛАШТУВАННЯ ВИДИМОСТІ ПАРОЛІВ ---
+
+    // 1. Встановлюємо "зірочки" для всіх полів за замовчуванням
+    ui->lineEditPass->setEchoMode(QLineEdit::Password);
+    ui->lineEditAZSFbPass->setEchoMode(QLineEdit::Password);
+    ui->lineEditApiKeyPalantir->setEchoMode(QLineEdit::Password);
+
+    // 2. Перевіряємо, чи поточний користувач - адмін
+    const User* currentUser = SessionManager::instance().currentUser();
+    bool isAdmin = (currentUser && currentUser->isAdmin());
+
+    // 3. Якщо не адмін, просто виходимо. Поля залишаться з "зірочками".
+    if (!isAdmin) {
+        logDebug() << "User is not admin. Password visibility actions will not be created.";
+        return;
+    }
+
+    logDebug() << "User is admin. Creating password visibility actions.";
+
+    // 4. Якщо АДМІН, створюємо кнопки "Око"
+
+    // --- Допоміжна лямбда-функція ---
+    auto createVisibilityAction = [this](QLineEdit* lineEdit, const QIcon& visibleIcon, const QIcon& hiddenIcon) -> QAction* {
+        QAction* action = new QAction(hiddenIcon, "Show", this);
+        action->setCheckable(true);
+
+        connect(action, &QAction::toggled, this, [=](bool checked) {
+            if (checked) {
+                lineEdit->setEchoMode(QLineEdit::Normal);
+                action->setIcon(visibleIcon);
+            } else {
+                lineEdit->setEchoMode(QLineEdit::Password);
+                action->setIcon(hiddenIcon);
+            }
+        });
+
+        lineEdit->addAction(action, QLineEdit::TrailingPosition);
+        return action;
+    };
+    // --- Кінець лямбда-функції ---
+
+    // 5. Завантажуємо іконки. (Якщо їх немає, будуть стандартні)
+    QIcon eyeOpenIcon(":/res/Images/eye-open.png");
+    QIcon eyeClosedIcon(":/res/Images/eye-closed.png");
+
+    if (eyeOpenIcon.isNull())
+        eyeOpenIcon = style()->standardIcon(QStyle::SP_DialogYesButton);
+    if (eyeClosedIcon.isNull())
+        eyeClosedIcon = style()->standardIcon(QStyle::SP_DialogNoButton);
+
+
+    // 6. Створюємо кнопки для КОЖНОГО поля
+    m_passVisAction = createVisibilityAction(ui->lineEditPass, eyeOpenIcon, eyeClosedIcon);
+    m_azsPassVisAction = createVisibilityAction(ui->lineEditAZSFbPass, eyeOpenIcon, eyeClosedIcon);
+    m_apiKeyVisAction = createVisibilityAction(ui->lineEditApiKeyPalantir, eyeOpenIcon, eyeClosedIcon);
 }
 
 
 // Метод для налаштування всіх з'єднань (сигналів та слотів)
 void ClientsListDialog::createConnections()
 {
-    // Макрос-помічник для уникнення дублювання коду
     auto showErrorBox = [this](const QString& title, const ApiError& error) {
         logCritical() << title << "Details:" << error.errorString << "| URL:" << error.requestUrl << "| HTTP Status:" << error.httpStatusCode;
         QMessageBox msgBox(this);
@@ -64,6 +139,9 @@ void ClientsListDialog::createConnections()
 
     connect(&ApiClient::instance(), &ApiClient::clientUpdateSuccess, this, [this](){
         QMessageBox::information(this, "Успіх", "Дані клієнта успішно оновлено.");
+        // (Після успішного збереження ми *дозволяємо* синхронізацію)
+        m_isDirty = false;
+        ui->pushButtonSync->setEnabled(true);
         loadInitialData();
     });
     connect(&ApiClient::instance(), &ApiClient::clientUpdateFailed, this, [=](const ApiError& error){
@@ -79,7 +157,6 @@ void ClientsListDialog::createConnections()
         QMessageBox::information(this, "Перевірка з'єднання", message);
     });
     connect(&ApiClient::instance(), &ApiClient::connectionTestFailed, this, [=](const ApiError& error){
-        // Для цієї помилки використовуємо старий формат, бо вона повертає простий рядок
         QMessageBox::warning(this, "Перевірка з'єднання", "Помилка:\n" + error.errorString);
     });
 
@@ -87,51 +164,100 @@ void ClientsListDialog::createConnections()
 
     ui->pushButtonSync->setCheckable(true);
     connect(ui->pushButtonSync, &QPushButton::toggled, this, &ClientsListDialog::onSyncButtonToggled);
+    connect(ui->newClientButton, &QPushButton::clicked, this, &ClientsListDialog::onNewClientClicked);
 
-    // З'єднуємо сигнали для отримання статусу
     connect(&ApiClient::instance(), &ApiClient::syncRequestAcknowledged, this, &ClientsListDialog::onSyncRequestAcknowledged);
     connect(&ApiClient::instance(), &ApiClient::syncStatusFetched, this, &ClientsListDialog::onSyncStatusReceived);
     connect(m_syncStatusTimer, &QTimer::timeout, this, &ClientsListDialog::checkSyncStatus);
 
-    // Обробка помилок (опціонально, але рекомендовано)
     connect(&ApiClient::instance(), &ApiClient::syncStatusFetchFailed, this, [this](int clientId, const ApiError& error){
         if (clientId == m_syncingClientId) {
             m_syncStatusTimer->stop();
-            ui->pushButtonSync->setChecked(false); // "Відтискаємо" кнопку
+            ui->pushButtonSync->setChecked(false);
             ui->pushButtonSync->setText("Синхронізувати");
             ui->pushButtonSync->setEnabled(true);
             QMessageBox::warning(this, "Помилка", "Не вдалося отримати статус синхронізації:\n" + error.errorString);
         }
     });
+
+    connect(&ApiClient::instance(), &ApiClient::exportTasksFetched, this, &ClientsListDialog::onExportTasksFetched);
+    connect(&ApiClient::instance(), &ApiClient::exportTasksFetchFailed, this, &ClientsListDialog::onExportTasksFetchFailed);
+
+    // "Безпечна Синхронізація"
+    // (Переконайтеся, що назви полів тут відповідають вашому .ui)
+    connect(ui->lineEditClientName, &QLineEdit::textChanged, this, &ClientsListDialog::onFieldChanged);
+    connect(ui->checkBoxIsActive, &QCheckBox::stateChanged, this, &ClientsListDialog::onFieldChanged);
+    connect(ui->comboBoxSyncMetod, &QComboBox::currentIndexChanged, this, &ClientsListDialog::onFieldChanged);
+    connect(ui->lineEditMinTermID, &QLineEdit::textChanged, this, &ClientsListDialog::onFieldChanged);
+    connect(ui->lineEditMaxTermID, &QLineEdit::textChanged, this, &ClientsListDialog::onFieldChanged);
+    connect(ui->lineEditAZSFbPass, &QLineEdit::textChanged, this, &ClientsListDialog::onFieldChanged);
+    connect(ui->lineEditServerName, &QLineEdit::textChanged, this, &ClientsListDialog::onFieldChanged);
+    connect(ui->spinBoxPort, &QSpinBox::valueChanged, this, &ClientsListDialog::onFieldChanged);
+    connect(ui->lineEditDBFileName, &QLineEdit::textChanged, this, &ClientsListDialog::onFieldChanged);
+    connect(ui->lineEditUser, &QLineEdit::textChanged, this, &ClientsListDialog::onFieldChanged);
+    connect(ui->lineEditPass, &QLineEdit::textChanged, this, &ClientsListDialog::onFieldChanged);
+    connect(ui->lineEditImportPathFile, &QLineEdit::textChanged, this, &ClientsListDialog::onFieldChanged);
+    connect(ui->lineEditApiKeyPalantir, &QLineEdit::textChanged, this, &ClientsListDialog::onFieldChanged);
+    connect(ui->comboBoxTemplateHostname, &QComboBox::currentIndexChanged, this, &ClientsListDialog::onFieldChanged);
 }
 
 
-// Метод для початкового завантаження даних
 void ClientsListDialog::loadInitialData()
 {
-    // Запускаємо запит на отримання списку клієнтів
     ApiClient::instance().fetchAllClients();
-
     ApiClient::instance().fetchAllIpGenMethods();
 }
 
-// Слот, який виконається, коли дані про всіх клієнтів прийдуть з сервера
+// (ЗАМІНІТЬ ВСЮ ФУНКЦІЮ)
 void ClientsListDialog::onClientsReceived(const QJsonArray &clients)
 {
+    // 1. (ВИПРАВЛЕННЯ) Отримуємо ID *ДО* того, як 'clear()' його скине
+    int previouslySelectedId = -1;
+    if (ui->clientsListWidget->currentItem()) {
+        // Найкращий спосіб - взяти ID з поточного елемента
+        previouslySelectedId = ui->clientsListWidget->currentItem()->data(Qt::UserRole).toInt();
+    } else if (m_currentClientId != -1) {
+        // Якщо раптом елемента немає, беремо з нашого буфера
+        previouslySelectedId = m_currentClientId;
+    }
+
+    // 2. (КЛЮЧОВЕ ВИПРАВЛЕННЯ) Блокуємо сигнали, щоб 'clear()'
+    //    не викликав 'onClientSelected(nullptr)'
+    ui->clientsListWidget->blockSignals(true);
+
     ui->clientsListWidget->clear();
+    QListWidgetItem* itemToSelect = nullptr;
 
     for (const QJsonValue &value : clients) {
-        QJsonObject clientObj = value.toObject();
-        QString clientName = clientObj["client_name"].toString();
-        int clientId = clientObj["client_id"].toInt();
+        QJsonObject client = value.toObject();
+        int clientId = client["client_id"].toInt();
+        QString clientName = client["client_name"].toString();
 
         QListWidgetItem *item = new QListWidgetItem(clientName);
         item->setData(Qt::UserRole, clientId);
         ui->clientsListWidget->addItem(item);
-    }
-}
 
-// Слот, що спрацьовує при натисканні "Новий клієнт"
+        if (clientId == previouslySelectedId) {
+            itemToSelect = item;
+        }
+    }
+
+    // 3. (ВИПРАВЛЕННЯ) Розблоковуємо сигнали
+    ui->clientsListWidget->blockSignals(false);
+
+    // 4. Встановлюємо виділення.
+    if (itemToSelect) {
+        // Цей виклик тепер коректно викличе onClientSelected(itemToSelect)
+        // і завантажить дані
+        ui->clientsListWidget->setCurrentItem(itemToSelect);
+    } else if (m_currentClientId != -1) {
+        // Якщо ми не знайшли елемент (напр., його перейменували),
+        // але ID той самий, просто завантажуємо дані для цього ID
+        // (Це рідкісний випадок, але про всяк випадок)
+        ApiClient::instance().fetchClientById(m_currentClientId);
+    }
+    // (Якщо нічого не було вибрано, форма залишиться порожньою, що коректно)
+}
 void ClientsListDialog::onNewClientClicked()
 {
     bool ok;
@@ -139,111 +265,193 @@ void ClientsListDialog::onNewClientClicked()
                                                "Введіть назву нового клієнта:", QLineEdit::Normal,
                                                "", &ok);
     if (ok && !clientName.trimmed().isEmpty()) {
-        // === ВИПРАВЛЕНО ТУТ ===
-        // Створюємо мінімальний JSON-об'єкт, який очікує сервер
         QJsonObject newClientData;
         newClientData["client_name"] = clientName.trimmed();
-
-        // Тепер викликаємо метод, передаючи QJsonObject
         ApiClient::instance().createClient(newClientData);
     }
-    // Цей рядок тут більше не потрібен, бо ми не переходимо в режим редагування
-    // m_currentClientId = -1;
 }
 
-// Слот, що спрацьовує, коли сервер підтвердив створення клієнта
 void ClientsListDialog::onClientCreated(const QJsonObject &newClient)
 {
     QString clientName = newClient["client_name"].toString();
     int clientId = newClient["client_id"].toInt();
-
-    // Додаємо щойно створеного клієнта в наш список
     QListWidgetItem *item = new QListWidgetItem(clientName);
     item->setData(Qt::UserRole, clientId);
     ui->clientsListWidget->addItem(item);
-
-    // Робимо його поточним (виділеним)
     ui->clientsListWidget->setCurrentItem(item);
-
     QMessageBox::information(this, "Успіх", QString("Клієнт '%1' успішно створений.").arg(clientName));
 }
 
+// -----------------------------------------------------------------
+// !!! ВИПРАВЛЕННЯ "ТРЕШУ" !!!
+// (Цей метод агресивно очищує форму)
+// -----------------------------------------------------------------
 void ClientsListDialog::onClientSelected(QListWidgetItem *current)
 {
-    ui->groupBox_2->setVisible(current != nullptr);
+    ui->groupBoxClientSettings->setVisible(current != nullptr);
     if (!current) {
-        // Тут можна очистити форму справа
         m_currentClientId = -1;
         return;
     }
-    m_currentClientId = current->data(Qt::UserRole).toInt(); // Зберігаємо ID обраного клієнта
-    ui->pushButtonSync->setEnabled(current != nullptr);
+
+    logDebug() << "Client selected. Clearing all fields first to prevent 'trash' state...";
+
+    // --- ПРИМУСОВЕ ОЧИЩЕННЯ ФОРМИ ---
+    ui->checkBoxIsActive->setChecked(false);
+    ui->lineEditClientName->clear();
+    ui->lineEditMinTermID->clear();
+    ui->lineEditMaxTermID->clear();
+
+    ui->lineEditServerName->clear();
+    ui->spinBoxPort->setValue(3050);
+    ui->lineEditDBFileName->clear();
+    ui->lineEditUser->clear();
+    ui->lineEditPass->clear();
+    ui->lineEditAZSFbPass->clear();
+
+    ui->lineEditImportPathFile->clear();
+
+    ui->lineEditApiKeyPalantir->clear();
+    ui->comboBoxTemplateHostname->setCurrentIndex(-1);
+    ui->comboBoxSyncMetod->setCurrentIndex(0);
+
+    // (ДОДАНО) Скидаємо наш буфер "гонки"
+    m_pendingIpGenMethodId = -1;
+
+    // "Безпечна синхронізація"
+    ui->pushButtonSync->setEnabled(false);
+    m_isDirty = true;
+    // --- (КІНЕЦЬ ОЧИЩЕННЯ) ---
+
+    // --- Запит нових даних ---
+    m_currentClientId = current->data(Qt::UserRole).toInt();
+    logDebug() << "Requesting details for client ID:" << m_currentClientId;
     ApiClient::instance().fetchClientById(m_currentClientId);
 }
 
+// Файл: clientslistdialog.cpp
+
 void ClientsListDialog::onClientDetailsReceived(const QJsonObject &client)
 {
-    // === ЗАГАЛЬНА ВКЛАДКА ===
-    ui->labelTitle->setText(client["client_name"].toString()); // Оновлюємо великий заголовок
-    ui->lineEditClientName->setText(client["client_name"].toString());
+    logDebug() << "Received client details. Populating form...";
+    m_currentClientData = client;
+    ui->labelTitle->setText(client["client_name"].toString());
+
+    // --- Заповнюємо "Загальні" ---
     ui->checkBoxIsActive->setChecked(client["is_active"].toBool());
-
-    // Встановлюємо значення для випадаючих списків
-    ui->comboBoxSyncMetod->setCurrentText(client["sync_method"].toString());
-
-    // Для ip_gen_method_id ми шукаємо елемент за ID, який ми зберегли раніше
-    int ipGenMethodId = client["ip_gen_method_id"].toInt();
-    int index = ui->comboBoxTemplateHostname->findData(ipGenMethodId);
-    if (index != -1) { // -1, якщо не знайдено
-        ui->comboBoxTemplateHostname->setCurrentIndex(index);
-    }
-
-    // Заповнюємо інші поля з таблиці CLIENTS
+    ui->lineEditClientName->setText(client["client_name"].toString());
     ui->lineEditMinTermID->setText(QString::number(client["term_id_min"].toInt()));
     ui->lineEditMaxTermID->setText(QString::number(client["term_id_max"].toInt()));
-    ui->lineEditAZSFbPass->setText(client["gas_station_db_password"].toString());
 
-    // === ВКЛАДКА "СИНХРОНІЗАЦІЯ" ===
-    QString syncMethod = client["sync_method"].toString();
+    // --- Заповнюємо "DIRECT" (Джерело даних) ---
+    QJsonObject dbConfig = client["config_direct"].toObject();
+    ui->lineEditServerName->setText(dbConfig["db_host"].toString());
+    ui->spinBoxPort->setValue(dbConfig["db_port"].toInt(3050));
+    ui->lineEditDBFileName->setText(dbConfig["db_path"].toString());
+    ui->lineEditUser->setText(dbConfig["db_user"].toString());
 
-    if (syncMethod == "DIRECT" && client.contains("config_direct")) {
-        QJsonObject directConfig = client["config_direct"].toObject();
-        ui->lineEditServerName->setText(directConfig["db_host"].toString());
-        ui->spinBoxPort->setValue(directConfig["db_port"].toInt());
-        ui->lineEditDBFileName->setText(directConfig["db_path"].toString());
-        ui->lineEditUser->setText(directConfig["db_user"].toString());
-        ui->lineEditPass->setText(directConfig["db_password"].toString());
+    // !!! ВИПРАВЛЕНО: ДЕШИФРУВАННЯ ПАРОЛЯ БД !!!
+    QString encryptedDbPass = dbConfig["db_password"].toString();
+    if (!encryptedDbPass.isEmpty()) {
+        ui->lineEditPass->setText(CriptPass::instance().decriptPass(encryptedDbPass));
+    } else {
+        ui->lineEditPass->clear();
     }
-    else if (syncMethod == "PALANTIR" && client.contains("config_palantir")) {
-        // Логіка для Palantir (буде реалізована, коли ми додамо її в DbManager)
-        // QJsonObject palantirConfig = client["config_palantir"].toObject();
-        // ui->lineEditApiKeyPalantir->setText(palantirConfig["api_key"].toString());
+
+    // !!! ВИПРАВЛЕНО: ДЕШИФРУВАННЯ ПАРОЛЯ АЗС !!!
+    QString encryptedAzsPass = client["gas_station_db_password"].toString();
+    if (!encryptedAzsPass.isEmpty()) {
+        ui->lineEditAZSFbPass->setText(CriptPass::instance().decriptPass(encryptedAzsPass));
+    } else {
+        ui->lineEditAZSFbPass->clear();
     }
-    else if (syncMethod == "FILE" && client.contains("config_file")) {
-        // Логіка для File
-        // QJsonObject fileConfig = client["config_file"].toObject();
-        // ui->lineEditPathroFile->setText(fileConfig["import_path"].toString());
+
+    // --- Заповнюємо "FILE" ---
+    QJsonObject fileConfig = client["config_file"].toObject();
+    ui->lineEditImportPathFile->setText(fileConfig["import_path"].toString());
+
+    // --- Заповнюємо "PALANTIR" ---
+    QJsonObject palantirConfig = client["config_palantir"].toObject();
+
+    // !!! ВИПРАВЛЕНО: ДЕШИФРУВАННЯ API КЛЮЧА !!!
+    QString encryptedApiKey = palantirConfig["api_key"].toString();
+    if (!encryptedApiKey.isEmpty()) {
+        ui->lineEditApiKeyPalantir->setText(CriptPass::instance().decriptPass(encryptedApiKey));
+    } else {
+        ui->lineEditApiKeyPalantir->clear();
     }
+
+    // --- ВИРІШЕННЯ "ГОНКИ" ---
+    // 1. Зберігаємо ID з КОРЕНЕВОГО об'єкта
+    m_pendingIpGenMethodId = client["ip_gen_method_id"].toInt(-1);
+
+    // 2. Намагаємося встановити по ID
+    //    findData шукає ID (який ми зберегли у 'data' ролі)
+    int index = ui->comboBoxTemplateHostname->findData(m_pendingIpGenMethodId);
+    ui->comboBoxTemplateHostname->setCurrentIndex(index);
+    // --- КІНЕЦЬ ВИРІШЕННЯ "ГОНКИ" ---
+
+    // --- Встановлюємо метод ---
+    ui->comboBoxSyncMetod->setCurrentText(client["sync_method"].toString());
+    on_comboBoxSyncMetod_currentIndexChanged(ui->comboBoxSyncMetod->currentIndex());
+
+    // "Безпечна синхронізація"
+    m_isDirty = false;
+    ui->pushButtonSync->setEnabled(true);
 }
 
+// -----------------------------------------------------------------
+// !!! (НОВЕ) ВИПРАВЛЕННЯ "ГОНКИ" (Частина 2) !!!
+// (Тепер працює з ID)
+// -----------------------------------------------------------------
 void ClientsListDialog::onIpGenMethodsReceived(const QJsonArray &methods)
 {
+    logDebug() << "Received" << methods.count() << "IP gen methods. Populating combo box...";
+
     ui->comboBoxTemplateHostname->clear();
-    ui->comboBoxTemplateHostname->addItem("Не визначено", 0);
     for (const QJsonValue &value : methods) {
-        QJsonObject methodObj = value.toObject();
-        QString name = methodObj["method_name"].toString();
-        int id = methodObj["method_id"].toInt();
-        // Додаємо і назву (яку бачить юзер), і ID (який ми будемо зберігати)
-        ui->comboBoxTemplateHostname->addItem(name, id);
+        QJsonObject method = value.toObject();
+        ui->comboBoxTemplateHostname->addItem(method["method_name"].toString(),
+                                              method["method_id"].toInt()); // Зберігаємо ID в 'data'
     }
+
+    // --- (НОВЕ) ВИРІШЕННЯ "ГОНКИ" (Частина 2) ---
+    // Якщо onClientDetailsReceived спрацював ПЕРШИМ,
+    // ми беремо збережений ID і встановлюємо його ЗАРАЗ.
+    if (m_pendingIpGenMethodId != -1) {
+        logDebug() << "Applying pending ip_gen_method_id:" << m_pendingIpGenMethodId;
+        int index = ui->comboBoxTemplateHostname->findData(m_pendingIpGenMethodId);
+        ui->comboBoxTemplateHostname->setCurrentIndex(index);
+        m_pendingIpGenMethodId = -1; // Очищуємо буфер
+    }
+    // --- КІНЕЦЬ НОВОГО ВИРІШЕННЯ ---
 }
 
+// (ЗАМІНІТЬ НА ЦЕЙ КОД)
 void ClientsListDialog::on_comboBoxSyncMetod_currentIndexChanged(int index)
 {
-    ui->stackedWidgetSync->setCurrentIndex(index);
-}
+    QString method = ui->comboBoxSyncMetod->currentText();
 
+    // --- (ДОДАНО) Визначаємо, яка група активна ---
+    bool isDirect = (method == "DIRECT");
+    bool isPalantir = (method == "PALANTIR");
+    bool isFile = (method == "FILE");
+
+    // --- (ОНОВЛЕНО) Керуємо всіма трьома групами ---
+
+    // 1. Група "DIRECT" (groupBoxSyncDB)
+    //    (Потрібна для 'DIRECT' та 'FILE')
+    ui->groupBoxDatabase->setVisible(isDirect || isFile);
+
+    // 2. Група "PALANTIR" (groupBoxSyncAPI)
+    //    (Потрібна тільки для 'PALANTIR')
+    ui->groupBoxSyncAPI->setVisible(isPalantir);
+
+    // 3. Група "FILE" (groupBoxFileSettings)
+    //    (Потрібна тільки для 'FILE')
+    ui->groupBoxFileSettings->setVisible(isFile);
+    ui->pushButtonGenerateExporter->setVisible(isFile); // Кнопка пов'язана з FILE
+}
 
 void ClientsListDialog::on_pushButtonCheckConnections_clicked()
 {
@@ -252,7 +460,7 @@ void ClientsListDialog::on_pushButtonCheckConnections_clicked()
     config["db_port"] = ui->spinBoxPort->value();
     config["db_path"] = ui->lineEditDBFileName->text();
     config["db_user"] = ui->lineEditUser->text();
-    config["db_password"] = ui->lineEditPass->text(); // Шифруємо пароль перед відправкою
+    config["db_password"] = ui->lineEditPass->text();
 
     ApiClient::instance().testDbConnection(config);
 }
@@ -260,56 +468,80 @@ void ClientsListDialog::on_pushButtonCheckConnections_clicked()
 QJsonObject ClientsListDialog::formToJson() const
 {
     QJsonObject root;
-    // Знаходимо всі віджети, у яких є властивість "jsonKey"
-    const auto widgets = this->findChildren<QWidget*>();
+    QString method = ui->comboBoxSyncMetod->currentText();
 
-    for (QWidget* w : widgets) {
-        // Перевіряємо, чи є у віджета наша властивість
-        QString key = w->property("jsonKey").toString();
-        if (key.isEmpty()) {
-            continue;
-        }
+    // 1. Завжди збираємо ЗАГАЛЬНІ налаштування
+    root["client_name"] = ui->lineEditClientName->text();
+    root["is_active"] = ui->checkBoxIsActive->isChecked();
+    root["term_id_min"] = ui->lineEditMinTermID->text().toInt();
+    root["term_id_max"] = ui->lineEditMaxTermID->text().toInt();
+    root["sync_method"] = method;
 
-        QVariant value;
-        // Отримуємо значення в залежності від типу віджета
-        if (auto widget = qobject_cast<QLineEdit*>(w)) {
-            value = widget->text();
-        } else if (auto widget = qobject_cast<QCheckBox*>(w)) {
-            value = widget->isChecked();
-        } else if (auto widget = qobject_cast<QComboBox*>(w)) {
-            // Для comboBox'ів ми зберігаємо або текст, або пов'язані дані (ID)
-            QVariant data = widget->currentData();
-            value = data.isValid() ? data : widget->currentText();
-        } else if (auto widget = qobject_cast<QSpinBox*>(w)) {
-            value = widget->value();
-        }
-
-        // Обробка вкладених об'єктів (напр., "config_direct.db_host")
-        if (key.contains('.')) {
-            QStringList parts = key.split('.');
-            QJsonObject parent = root[parts[0]].toObject();
-            parent[parts[1]] = QJsonValue::fromVariant(value);
-            root[parts[0]] = parent;
-        } else {
-            root[key] = QJsonValue::fromVariant(value);
-        }
+    // (Пароль АЗС - "загальний")
+    QString azsPass = ui->lineEditAZSFbPass->text();
+    if (!azsPass.isEmpty()) {
+        // ✅ ШИФРУВАННЯ ПЕРЕД ВІДПРАВКОЮ
+        root["gas_station_db_password"] = CriptPass::instance().criptPass(azsPass);
     }
+
+    // (Шаблон IP - "загальний")
+    QVariant ipGenData = ui->comboBoxTemplateHostname->currentData();
+    if (ipGenData.isValid()) {
+        root["ip_gen_method_id"] = ipGenData.toInt();
+    }
+
+    // 2. Збираємо специфічні налаштування ЗАЛЕЖНО ВІД МЕТОДУ
+
+    // --- Налаштування DIRECT ---
+    if (method == "DIRECT" || method == "FILE") {
+        QJsonObject configDirect;
+        configDirect["db_host"] = ui->lineEditServerName->text();
+        configDirect["db_port"] = ui->spinBoxPort->value();
+        configDirect["db_path"] = ui->lineEditDBFileName->text();
+        configDirect["db_user"] = ui->lineEditUser->text();
+
+        // (Пароль БД)
+        QString dbPass = ui->lineEditPass->text();
+        if (!dbPass.isEmpty()) {
+            // ✅ ШИФРУВАННЯ ПЕРЕД ВІДПРАВКОЮ
+            configDirect["db_password"] = CriptPass::instance().criptPass(dbPass);
+        }
+        root["config_direct"] = configDirect;
+    }
+
+    // --- Налаштування PALANTIR ---
+    if (method == "PALANTIR") {
+        QJsonObject configPalantir;
+
+        // (API Key)
+        QString apiKey = ui->lineEditApiKeyPalantir->text();
+        if (!apiKey.isEmpty()) {
+            // ✅ ШИФРУВАННЯ ПЕРЕД ВІДПРАВКОЮ
+            configPalantir["api_key"] = CriptPass::instance().criptPass(apiKey);
+        }
+        root["config_palantir"] = configPalantir;
+    }
+
+    // --- Налаштування FILE ---
+    // (Не містить паролів, залишаємо без змін)
+    if (method == "FILE") {
+        QJsonObject configFile;
+        configFile["import_path"] = ui->lineEditImportPathFile->text();
+        root["config_file"] = configFile;
+    }
+
     return root;
 }
 
 void ClientsListDialog::on_buttonBox_accepted()
 {
     logDebug() << "Save button clicked. Current Client ID is:" << m_currentClientId;
+    if (m_currentClientId == -1) return;
+
     QJsonObject clientData = formToJson();
 
-    if (m_currentClientId != -1) {
-        // --- РЕЖИМ ОНОВЛЕННЯ ---
-        ApiClient::instance().updateClient(m_currentClientId, clientData);
-    } else {
-        // --- РЕЖИМ СТВОРЕННЯ ---
-        ApiClient::instance().createClient(clientData);
-    }
-    ui->groupBox_2->setVisible(false);
+    ApiClient::instance().updateClient(m_currentClientId, clientData);
+    ui->groupBoxClientSettings->setVisible(false);
 }
 
 
@@ -322,62 +554,35 @@ void ClientsListDialog::onSyncButtonClicked()
 {
     if (m_currentClientId != -1) {
         logDebug() << "Sync button clicked for client ID:" << m_currentClientId;
-        ui->pushButtonSync->setEnabled(false); // Вимикаємо кнопку, щоб уникнути подвійних кліків
+        ui->pushButtonSync->setEnabled(false);
         ui->pushButtonSync->setText("Синхронізація...");
 
         ApiClient::instance().syncClientObjects(m_currentClientId);
     }
 }
-
-// void ClientsListDialog::onSyncRequestAcknowledged(int clientId, bool success, const ApiError& details)
-// {
-//     if (clientId != m_currentClientId) {
-//         return;
-//     }
-
-//     ui->pushButtonSync->setEnabled(true);
-//     ui->pushButtonSync->setText("Синхронізувати об'єкти");
-
-//     if (success) {
-//         QMessageBox::information(this,
-//                                  "Завдання прийнято",
-//                                  QString("Сервер почав синхронізацію для клієнта (ID: %1).\n%2")
-//                                      .arg(clientId).arg(details.errorString)); // Використовуємо поле зі структури
-//     } else {
-//         // Тепер ми можемо показати більш детальну помилку!
-//         QMessageBox msgBox(this);
-//         msgBox.setIcon(QMessageBox::Warning);
-//         msgBox.setText(QString("Не вдалося запустити синхронізацію для клієнта (ID: %1).").arg(clientId));
-//         msgBox.setInformativeText(details.errorString);
-//         msgBox.setDetailedText(QString("URL: %1\nHTTP Status: %2").arg(details.requestUrl).arg(details.httpStatusCode));
-//         msgBox.exec();
-//     }
-// }
 
 
 void ClientsListDialog::onSyncButtonToggled(bool checked)
 {
     if (checked) {
-        // Кнопку натиснули - запускаємо синхронізацію
         if (m_currentClientId == -1) {
-            ui->pushButtonSync->setChecked(false); // Відтискаємо, якщо клієнт не обраний
+            ui->pushButtonSync->setChecked(false);
             return;
         }
         ui->pushButtonSync->setText("Синхронізація...");
-        ui->pushButtonSync->setEnabled(false); // Блокуємо, поки не отримаємо відповідь
+        ui->pushButtonSync->setEnabled(false);
         ApiClient::instance().syncClientObjects(m_currentClientId);
     } else {
-        // Кнопку "відтиснули" програмно, коли все завершено - нічого не робимо
+        // (Логіка для зупинки?)
     }
 }
 
-// Цей слот реагує на початкову відповідь сервера (202 Accepted)
 void ClientsListDialog::onSyncRequestAcknowledged(int clientId, bool success, const ApiError& details)
 {
     if (success) {
         m_syncingClientId = clientId;
-        ui->pushButtonSync->setEnabled(true); // Розблоковуємо, щоб показати процес
-        m_syncStatusTimer->start(2000); // Запускаємо опитування кожні 2 секунди
+        ui->pushButtonSync->setEnabled(true);
+        m_syncStatusTimer->start(2000);
     } else {
         QMessageBox::critical(this, "Помилка запуску", details.errorString);
         ui->pushButtonSync->setChecked(false);
@@ -386,7 +591,6 @@ void ClientsListDialog::onSyncRequestAcknowledged(int clientId, bool success, co
     }
 }
 
-// Цей слот викликається таймером
 void ClientsListDialog::checkSyncStatus()
 {
     if (m_syncingClientId != -1) {
@@ -394,16 +598,15 @@ void ClientsListDialog::checkSyncStatus()
     }
 }
 
-// Цей слот обробляє отриманий статус
 void ClientsListDialog::onSyncStatusReceived(int clientId, const QJsonObject& status)
 {
-    if (clientId != m_syncingClientId) return; // Ігноруємо, якщо це не наш клієнт
+    if (clientId != m_syncingClientId) return;
 
     QString currentStatus = status["status"].toString();
     if (currentStatus == "SUCCESS") {
         m_syncStatusTimer->stop();
         m_syncingClientId = -1;
-        ui->pushButtonSync->setChecked(false); // "Відтискаємо" кнопку
+        ui->pushButtonSync->setChecked(false);
         ui->pushButtonSync->setText("Синхронізувати");
         QMessageBox::information(this, "Успіх", "Синхронізація успішно завершена.\n" + status["message"].toString());
     } else if (currentStatus == "FAILED") {
@@ -413,5 +616,183 @@ void ClientsListDialog::onSyncStatusReceived(int clientId, const QJsonObject& st
         ui->pushButtonSync->setText("Синхронізувати");
         QMessageBox::critical(this, "Помилка", "Синхронізація не вдалася:\n" + status["message"].toString());
     }
-    // Якщо статус "PENDING" або інший, просто чекаємо наступного спрацювання таймера
+}
+
+
+// --- "ФАБРИКА КОНФІГУРАЦІЙ" ---
+
+void ClientsListDialog::on_pushButtonGenerateExporter_clicked()
+{
+    if (!m_exportTasks.isEmpty()) {
+        generateExporterPackage(m_exportTasks);
+    } else {
+        logInfo() << "Fetching export tasks from server...";
+        ui->pushButtonGenerateExporter->setEnabled(false);
+        ui->pushButtonGenerateExporter->setText("Завантаження шаблонів...");
+        ApiClient::instance().fetchExportTasks();
+    }
+}
+
+void ClientsListDialog::onExportTasksFetched(const QJsonArray& tasks)
+{
+    logInfo() << "Successfully fetched" << tasks.count() << "export tasks.";
+    m_exportTasks = tasks;
+    ui->pushButtonGenerateExporter->setEnabled(true);
+    ui->pushButtonGenerateExporter->setText("💾 Згенерувати пакет Експортера");
+    generateExporterPackage(m_exportTasks);
+}
+
+void ClientsListDialog::onExportTasksFetchFailed(const ApiError& error)
+{
+    logCritical() << "Failed to fetch export tasks:" << error.errorString;
+    QMessageBox::critical(this, "Помилка завантаження",
+                          "Не вдалося завантажити шаблони завдань з сервера.\n" + error.errorString);
+    ui->pushButtonGenerateExporter->setEnabled(true);
+    ui->pushButtonGenerateExporter->setText("💾 Згенерувати пакет Експортера");
+}
+
+QJsonObject ClientsListDialog::gatherClientDataForConfig()
+{
+    QJsonObject dbConfig;
+    dbConfig["host"] = ui->lineEditServerName->text();
+    dbConfig["port"] = ui->spinBoxPort->value();
+    dbConfig["path"] = ui->lineEditDBFileName->text();
+    dbConfig["user"] = ui->lineEditUser->text();
+
+    if (dbConfig["host"].toString().isEmpty() || dbConfig["path"].toString().isEmpty() || ui->lineEditPass->text().isEmpty()) {
+        logWarning() << "DB config (host, path or password) is empty. Reading from UI fields.";
+        return QJsonObject();
+    }
+
+    dbConfig["password"] = CriptPass::instance().criptPass(ui->lineEditPass->text());
+
+    QJsonObject params;
+    params["minTermId"] = ui->lineEditMinTermID->text().toInt();
+    params["maxTermId"] = ui->lineEditMaxTermID->text().toInt();
+
+    QJsonObject config;
+    config["source_db"] = dbConfig;
+    config["params"] = params;
+    config["embed_client_id"] = m_currentClientId;
+
+    // (ДОДАНО) Використовуємо поле ExportPath
+    QString outputDir;
+    if (outputDir.isEmpty()) {
+        outputDir = "."; // Поточна папка, якщо нічого не вказано
+    }
+    // Формуємо ім'я .zip
+    QString zipName = QString("%1_import_package.zip").arg(m_currentClientId);
+    config["output_package_path"] = outputDir + "/" + zipName;
+
+
+    return config;
+}
+
+void ClientsListDialog::generateExporterPackage(const QJsonArray& tasks)
+{
+    // ... (початок методу: вибір папки збереження 'saveDir') ...
+    QString saveDir = QFileDialog::getExistingDirectory(this, "Виберіть папку для збереження пакета Експортера");
+    if (saveDir.isEmpty()) {
+        return;
+    }
+
+    // --- 1. Створюємо ТИМЧАСОВУ ПАПКУ для підготовки ---
+    QTemporaryDir tempDir;
+    if (!tempDir.isValid()) {
+        QMessageBox::critical(this, "Помилка", "Не вдалося створити тимчасову папку.");
+        return;
+    }
+
+    // Отримуємо конфігураційний об'єкт з зашифрованим паролем
+    QJsonObject config = gatherClientDataForConfig();
+    int clientId = config["embed_client_id"].toInt();
+
+    // Імена файлів
+    QString finalZipName = QString("%1_import_package.zip").arg(clientId);
+    QString configFilename = QString("%1_config.json").arg(clientId); // Нове ім'я конфіга
+    QStringList filesToZip; // Список файлів, які підуть в архів
+
+    QJsonArray tasksArray;
+
+    // 2. Генеруємо файли .json та .sql у тимчасовій папці
+    for (const QJsonValue& value : tasks) {
+        QJsonObject task = value.toObject();
+        QString queryFilename = QString("query_%1.sql").arg(task["task_name"].toString().toLower());
+
+        // 2a. Зберігаємо .sql файл
+        QFile sqlFile(tempDir.path() + "/" + queryFilename);
+        if (sqlFile.open(QIODevice::WriteOnly)) {
+            QString sqlTemplate = task["sql_template"].toString();
+            sqlFile.write(sqlTemplate.toUtf8());
+            sqlFile.close();
+            filesToZip.append(queryFilename); // Додаємо до списку для архівації
+        } else {
+            QMessageBox::critical(this, "Помилка", "Не вдалося записати файл: " + sqlFile.fileName());
+            return;
+        }
+
+        // 2b. Додаємо завдання в конфіг
+        QJsonObject taskConfigEntry;
+        taskConfigEntry["task_name"] = task["task_name"];
+        taskConfigEntry["query_file"] = queryFilename;
+        taskConfigEntry["output_file"] = queryFilename.replace(".sql", ".json");
+        taskConfigEntry["embed_client_id"] = config["embed_client_id"];
+        taskConfigEntry["params"] = config["params"];
+        tasksArray.append(taskConfigEntry);
+    }
+    config["tasks"] = tasksArray;
+
+    // 3. Зберігаємо фінальний конфіг .json
+    QFile configFile(tempDir.path() + "/" + configFilename);
+    if (configFile.open(QIODevice::WriteOnly)) {
+        configFile.write(QJsonDocument(config).toJson(QJsonDocument::Indented));
+        configFile.close();
+        filesToZip.append(configFilename); // Додаємо до списку для архівації
+    } else {
+        QMessageBox::critical(this, "Помилка", "Не вдалося записати конфігураційний файл.");
+        return;
+    }
+
+    // 4. !!! АРХІВАЦІЯ ТІЛЬКИ ПОТРІБНИХ ФАЙЛІВ (7z) !!!
+    QProcess zipper;
+    zipper.setWorkingDirectory(tempDir.path()); // Працюємо всередині тимчасової папки
+
+    QStringList args;
+    args << "a"           // Команда "add"
+         << "-tzip"       // Тип архіву - zip
+         << finalZipName; // Ім'я архіву
+
+    args.append(filesToZip); // Додаємо тільки .json та .sql файли
+
+    logDebug() << "Running 7-Zip command in" << tempDir.path() << ":" << "7z" << args.join(" ");
+    zipper.start("7z", args);
+
+    if (!zipper.waitForFinished(60000) || zipper.exitCode() != 0) {
+        QString error = zipper.exitCode() != 0 ? zipper.readAllStandardError() : "Таймаут або невдалий запуск.";
+        logCritical() << "7-Zip failed:" << error;
+        QMessageBox::critical(this, "Помилка 7-Zip", "Не вдалося створити архів.\\n" + error);
+        return;
+    }
+
+    // 5. Переміщуємо готовий ZIP-файл у вибрану користувачем папку
+    QString sourceZipPath = tempDir.path() + "/" + finalZipName;
+    QString finalDestinationPath = saveDir + "/" + finalZipName;
+
+    if (QFile::exists(finalDestinationPath)) {
+        QFile::remove(finalDestinationPath);
+    }
+
+    if (!QFile::rename(sourceZipPath, finalDestinationPath)) {
+        QMessageBox::critical(this, "Помилка", "Не вдалося перемістити архів у: " + finalDestinationPath);
+        return;
+    }
+
+    QMessageBox::information(this, "Успіх",
+                             QString("Пакет Експортера успішно створено:\\n%1").arg(finalDestinationPath));
+}
+
+void ClientsListDialog::onFieldChanged()
+{
+    m_isDirty = true;
+    ui->pushButtonSync->setEnabled(false); // Вимикаємо синхронізацію, доки не збережено
 }

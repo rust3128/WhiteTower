@@ -1358,3 +1358,51 @@ void ApiClient::onStationDetailsReplyFinished()
     }
     reply->deleteLater();
 }
+
+
+//
+/**
+ * @brief Запитує з сервера список активних завдань для Експортера.
+ */
+void ApiClient::fetchExportTasks()
+{
+    logInfo() << "Fetching export tasks list...";
+    // Створюємо запит з аутентифікацією
+    QNetworkRequest request = createAuthenticatedRequest(QUrl(m_serverUrl + "/api/export-tasks"));
+    QNetworkReply* reply = m_networkManager->get(request);
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onExportTasksReplyFinished);
+}
+
+//
+/**
+ * @brief Обробляє відповідь від сервера зі списком завдань для Експортера.
+ */
+void ApiClient::onExportTasksReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    ApiError error = parseReply(reply); // Використовуємо наш універсальний парсер помилок
+
+    // Перевіряємо, чи все пройшло успішно (HTTP 200 OK)
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200)
+    {
+        QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
+        if (doc.isArray()) {
+            // Успіх: відправляємо сигнал з масивом завдань
+            logInfo() << "Successfully fetched" << doc.array().count() << "export tasks.";
+            emit exportTasksFetched(doc.array());
+        } else {
+            // Помилка: сервер повернув не масив
+            logWarning() << "Failed to fetch export tasks: expected a JSON array.";
+            error.errorString = "Invalid response from server: expected a JSON array of tasks.";
+            emit exportTasksFetchFailed(error);
+        }
+    } else {
+        // Мережева помилка або помилка сервера (4xx, 5xx)
+        logWarning() << "Failed to fetch export tasks:" << error.errorString;
+        emit exportTasksFetchFailed(error);
+    }
+
+    reply->deleteLater();
+}

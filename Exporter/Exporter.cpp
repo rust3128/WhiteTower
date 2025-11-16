@@ -1,4 +1,5 @@
 #include "Exporter.h"
+#include "Oracle/criptpass.h"
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -10,67 +11,195 @@
 #include <QSqlRecord>
 #include <QDateTime>
 #include <QProcess> // Для Zipping
+#include <QDir>
+#include <QCoreApplication>
 
 // Підключаємо логер (якщо він у бібліотеці 'Oracle')
 // #include "Oracle/Logger.h"
 
-Exporter::Exporter(const QString& configPath, QObject *parent)
-    : QObject(parent), m_configPath(configPath)
+Exporter::Exporter(const QString& packagePath, QObject *parent)
+    : QObject(parent), m_packagePath(packagePath)
 {
+    // Встановлюємо робочі директорії
+    QString baseDir = QCoreApplication::applicationDirPath();
+
+    // Робоча папка: де лежить вхідний ZIP-файл. Ми розпакуємо поруч.
+    m_workDir = QFileInfo(m_packagePath).absolutePath();
+
+    // Папка для вихідних даних
+    m_outputDir = baseDir + "/Outbox";
+
+    qInfo() << "Output directory set to:" << m_outputDir;
+}
+
+bool Exporter::unpackArchive()
+{
+    qInfo() << "Unpacking archive to working directory:" << m_workDir;
+
+    // Команда для розпакування: 7z x <archive_path> -o<output_dir>
+    QProcess unzipper;
+    unzipper.setWorkingDirectory(m_workDir); // Важливо: 7z буде створювати файли тут
+
+    QStringList args;
+    args << "x"           // Команда "extract"
+         << m_packagePath // Шлях до ZIP-файлу
+         << QString("-o%1").arg(m_workDir) // Шлях до робочої папки (де лежить ZIP)
+         << "-y";         // Придушити запити "yes/no"
+
+    qInfo() << "Running 7-Zip extraction:" << "7z" << args.join(" ");
+    unzipper.start("7z", args);
+
+    if (!unzipper.waitForFinished(60000)) {
+        qCritical() << "7-Zip extraction timed out.";
+        return false;
+    }
+
+    if (unzipper.exitCode() != 0) {
+        qCritical() << "7-Zip extraction failed. Error output:" << unzipper.readAllStandardError();
+        return false;
+    }
+
+    qInfo() << "Archive unpacked successfully.";
+    return true;
 }
 
 bool Exporter::loadConfig()
 {
-    QFile configFile(m_configPath);
-    if (!configFile.open(QIODevice::ReadOnly)) {
-        qCritical() << "Failed to open config file:" << m_configPath;
+    QFileInfo fileInfo(m_packagePath);
+    // Знаходимо ID клієнта з імені ZIP-файлу
+    QString idString = fileInfo.baseName().split("_").first();
+    QString configFilePath = m_workDir + "/" + idString + "_config.json";
+
+    if (!QFile::exists(configFilePath)) {
+        qCritical() << "Config file not found after unpacking:" << configFilePath;
         return false;
     }
 
+    QFile configFile(configFilePath);
+    if (!configFile.open(QIODevice::ReadOnly)) {
+        qCritical() << "Failed to open config file:" << configFilePath;
+        return false;
+    }
+
+    // ... (решта логіки loadConfig без змін) ...
     QJsonDocument doc = QJsonDocument::fromJson(configFile.readAll());
+    configFile.close(); // Закриваємо файл
+
     if (!doc.isObject()) {
         qCritical() << "Config file is not a valid JSON object.";
         return false;
     }
 
     m_config = doc.object();
-    qInfo() << "Config loaded successfully.";
+    qInfo() << "Config loaded successfully from" << configFilePath;
     return true;
 }
 
 bool Exporter::run()
 {
+    QFileInfo fileInfo(m_packagePath);
+
+    // 1. Розпаковуємо пакет
+    if (!unpackArchive()) {
+        return false;
+    }
+
+    // 2. Змінюємо робочу директорію на ту, куди розпакували,
+    //    щоб runTask міг знайти .sql файли та зберегти .json.
+    QDir::setCurrent(m_workDir);
+    qInfo() << "Working directory set to:" << m_workDir;
+
+    // 3. Завантажуємо конфіг
     if (!loadConfig()) {
         return false;
     }
 
-    QJsonArray tasks = m_config["tasks"].toArray();
-    if (tasks.isEmpty()) {
-        qWarning() << "No tasks found in config file.";
+    // 4. Ініціалізація DB-з'єднання
+    QJsonObject sourceDbConfig = m_config["source_db"].toObject();
+
+    QString encryptedPass = sourceDbConfig["password"].toString();
+    QString decryptedPass = CriptPass::instance().decriptPass(encryptedPass); // Ваше коректне виправлення
+
+    QSqlDatabase db = QSqlDatabase::addDatabase("QIBASE", "exporter_connection");
+    db.setHostName(sourceDbConfig["host"].toString());
+    db.setPort(sourceDbConfig["port"].toInt());
+    db.setDatabaseName(sourceDbConfig["path"].toString());
+    db.setUserName(sourceDbConfig["user"].toString());
+    db.setPassword(decryptedPass);
+
+    if (!db.open()) {
+        qCritical() << "Failed to connect to source DB:" << db.lastError().text();
+        QSqlDatabase::removeDatabase("exporter_connection");
         return false;
     }
+    qInfo() << "Successfully connected to source DB.";
 
-    // 1. Виконуємо всі завдання
-    for (const QJsonValue& taskVal : tasks) {
-        if (!runTask(taskVal.toObject())) {
-            // Якщо одне завдання не вдалося, ми можемо зупинитися
-            // або продовжити (на ваш вибір)
-            qCritical() << "Failed to run task:" << taskVal.toObject()["task_name"].toString();
-            // return false;
+    // 5. Виконання завдань
+    bool allTasksSuccess = true;
+    QJsonArray tasks = m_config["tasks"].toArray();
+
+    // Список m_generatedFiles заповнюється у runTask()
+    for (const QJsonValue& value : tasks) {
+        if (!runTask(value.toObject())) {
+            allTasksSuccess = false;
         }
     }
 
-    // 2. Збираємо ZIP-архів
-    QString archiveName = m_config["output_package_name"].toString("import_package.zip");
-    if (!zipResults(m_generatedFiles, archiveName)) {
-        qCritical() << "Failed to create ZIP package.";
-        return false;
+    // 6. Створення ZIP-архіву у папці Outbox (якщо все пройшло успішно)
+    if (allTasksSuccess) {
+        // Ім'я архіву: 6_import_package.zip
+        QString zipName = fileInfo.fileName();
+        QString resultZipName = QString("RESULT_") + zipName;
+        QString finalZipPath = m_outputDir + "/" + resultZipName;
+
+        // Перевіряємо та створюємо Outbox, якщо вона ще не створена
+        if (!QDir().mkpath(m_outputDir)) {
+            qCritical() << "Failed to create output directory:" << m_outputDir;
+            allTasksSuccess = false;
+        } else {
+            // zipResults буде викликаний у робочій директорії (m_workDir)
+            // Нам потрібно запакувати лише файли-результати (.json)
+            if (!zipResults(m_generatedFiles, finalZipPath)) {
+                allTasksSuccess = false;
+            }
+        }
     }
 
-    qInfo() << "Successfully created package:" << archiveName;
-    return true;
-}
+    // 7. Закриття та очищення БД
+    db.close();
+    QSqlDatabase::removeDatabase("exporter_connection");
 
+    // 8. !!! ФІНАЛЬНЕ ОЧИЩЕННЯ INBOX (ЗАЛИШАЄМО ЛИШЕ ВХІДНИЙ ZIP) !!!
+    if (allTasksSuccess) {
+        QDir workDir(m_workDir);
+
+        // Встановлюємо фільтр для видалення ВСЬОГО, крім ZIP-архівів.
+        // Оскільки в Inbox може бути кілька ZIP-файлів, ми видаляємо тільки розпаковані файли.
+
+        // Список усіх розпакованих файлів (JSON/SQL/Config JSON)
+        workDir.setFilter(QDir::Files | QDir::NoDotAndDotDot);
+        workDir.setNameFilters(QStringList() << "*.json" << "*.sql");
+
+        qInfo() << "Starting cleanup of Inbox (work directory)...";
+
+        for (const QString& fileName : workDir.entryList()) {
+            QString fullPath = workDir.absoluteFilePath(fileName);
+            // Перевіряємо, чи це не вхідний ZIP, хоча фільтр NameFilters цього не охоплює
+            if (fileName.toLower() != fileInfo.fileName().toLower()) {
+                if (QFile::remove(fullPath)) {
+                    qDebug() << "Removed intermediate file:" << fileName;
+                } else {
+                    qWarning() << "Could not remove file:" << fullPath;
+                }
+            }
+        }
+
+        // Фактично, ми видаляємо всі *.json та *.sql, які були розпаковані.
+        // Вхідний ZIP-файл залишається.
+    }
+
+    return allTasksSuccess;
+}
 //
 // ПОВНІСТЮ ЗАМІНІТЬ ЦЕЙ МЕТОД
 
@@ -105,7 +234,8 @@ bool Exporter::runTask(const QJsonObject& taskConfig)
     db.setPort(dbConfig["port"].toInt());
     db.setDatabaseName(dbConfig["path"].toString());
     db.setUserName(dbConfig["user"].toString());
-    db.setPassword(dbConfig["password"].toString());
+    QString decryptedPass = CriptPass::instance().decriptPass(dbConfig["password"].toString());
+    db.setPassword(decryptedPass);
     db.setConnectOptions("ISC_DPB_LC_CTYPE=UTF8");
 
     if (!db.open()) {

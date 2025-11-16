@@ -81,6 +81,9 @@ private:
     QHttpServerResponse handleGetClientStations(const QString& clientId, const QHttpServerRequest& request);
     // GET /api/bot/clients/<clientId>/station/<terminalNo>
     QHttpServerResponse handleGetStationDetails(const QString& clientId, const QString& terminalNo, const QHttpServerRequest& request);
+    // GET /api/export-tasks
+    QHttpServerResponse handleGetExportTasksRequest(const QHttpServerRequest &request);
+
 private:
     QHttpServer* m_httpServer;
     quint16 m_port;

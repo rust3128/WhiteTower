@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QListWidgetItem>
 #include <QTimer>
+#include <QAction>
 
 namespace Ui {
 class ClientsListDialog;
@@ -32,11 +33,11 @@ private slots:
     // Слот для обробки натискання кнопок
     void onNewClientClicked();
 
-     void on_comboBoxSyncMetod_currentIndexChanged(int index);
+    void on_comboBoxSyncMetod_currentIndexChanged(int index);
 
     void on_pushButtonCheckConnections_clicked();
 
-     void on_buttonBox_accepted();
+    void on_buttonBox_accepted();
 
     void on_buttonBox_rejected();
     void onSyncButtonClicked();
@@ -45,17 +46,39 @@ private slots:
     void onSyncStatusReceived(int clientId, const QJsonObject& status);
     void onSyncButtonToggled(bool checked);
 
+    void on_pushButtonGenerateExporter_clicked();
+    void onExportTasksFetched(const QJsonArray& tasks);
+    void onExportTasksFetchFailed(const ApiError& error);
+    void onFieldChanged(); // реагує на будь-яку зміну
+
+
 private:
     // Методи-помічники для налаштування
     void createConnections();
     void createUI();
     void loadInitialData();
     QJsonObject formToJson() const;
+    void generateExporterPackage(const QJsonArray& tasks);
+    QJsonObject gatherClientDataForConfig();
+
 private:
     Ui::ClientsListDialog *ui;
     QTimer* m_syncStatusTimer;
     int m_currentClientId = -1;
     int m_syncingClientId = -1;
+    QJsonArray m_exportTasks;
+    QJsonObject m_currentClientData;
+    bool m_isDirty;
+
+    // --------------------------------------------------
+    // (ВИДАЛЕНО) QString m_pendingHostnameTemplate;
+    // --------------------------------------------------
+
+    // (ДОДАНО) Надійний буфер для ID
+    int m_pendingIpGenMethodId;
+    QAction* m_passVisAction;
+    QAction* m_azsPassVisAction;
+    QAction* m_apiKeyVisAction;
 };
 
 #endif // CLIENTSLISTDIALOG_H

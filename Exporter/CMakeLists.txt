@@ -21,7 +21,7 @@ target_link_libraries(Exporter PRIVATE
     Qt6::Core
     Qt6::Sql
     Qt6::Network
-    # Oracle # <-- Якщо 'Oracle' це бібліотека
+    Oracle # <-- Якщо 'Oracle' це бібліотека
 )
 
 target_include_directories(Exporter PRIVATE
