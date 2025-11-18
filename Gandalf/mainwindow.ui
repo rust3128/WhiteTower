@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>800</width>
-    <height>659</height>
+    <width>772</width>
+    <height>638</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -19,7 +19,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>800</width>
+     <width>772</width>
      <height>21</height>
     </rect>
    </property>
@@ -36,6 +36,7 @@
      <string>Налаштування</string>
     </property>
     <addaction name="action"/>
+    <addaction name="actionExportTasks"/>
    </widget>
    <addaction name="menu"/>
    <addaction name="menuSettings"/>
@@ -75,6 +76,15 @@
    </property>
    <property name="text">
     <string>Список об'єктів</string>
+   </property>
+  </action>
+  <action name="actionExportTasks">
+   <property name="icon">
+    <iconset resource="resource.qrc">
+     <normaloff>:/res/Images/taskslist.png</normaloff>:/res/Images/taskslist.png</iconset>
+   </property>
+   <property name="text">
+    <string>Завдання Експорту</string>
    </property>
   </action>
  </widget>

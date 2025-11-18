@@ -83,6 +83,11 @@ private:
     QHttpServerResponse handleGetStationDetails(const QString& clientId, const QString& terminalNo, const QHttpServerRequest& request);
     // GET /api/export-tasks
     QHttpServerResponse handleGetExportTasksRequest(const QHttpServerRequest &request);
+    // --- Export Tasks Management (Керування завданнями експорту) ---
+    QHttpServerResponse handleGetAllExportTasksRequest(const QHttpServerRequest &request);
+    QHttpServerResponse handleGetExportTaskRequest(const QString &taskId, const QHttpServerRequest &request);
+    QHttpServerResponse handleCreateExportTaskRequest(const QHttpServerRequest &request);
+    QHttpServerResponse handleUpdateExportTaskRequest(const QString &taskId, const QHttpServerRequest &request);
 
 private:
     QHttpServer* m_httpServer;

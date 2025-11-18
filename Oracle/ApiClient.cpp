@@ -1406,3 +1406,143 @@ void ApiClient::onExportTasksReplyFinished()
 
     reply->deleteLater();
 }
+
+/**
+ * @brief Надсилає запит на отримання списку всіх завдань експорту.
+ */
+void ApiClient::fetchAllExportTasks()
+{
+    QNetworkRequest request = createAuthenticatedRequest(QUrl(m_serverUrl + "/api/export-tasks"));
+    QNetworkReply* reply = m_networkManager->get(request);
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onAllExportTasksReplyFinished);
+}
+
+/**
+ * @brief Надсилає запит на отримання деталей конкретного завдання.
+ */
+void ApiClient::fetchExportTaskById(int taskId)
+{
+    QUrl url(m_serverUrl + QString("/api/export-tasks/%1").arg(taskId));
+    QNetworkRequest request = createAuthenticatedRequest(url);
+    QNetworkReply* reply = m_networkManager->get(request);
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onExportTaskDetailsReplyFinished);
+}
+
+/**
+ * @brief Надсилає запит на збереження/оновлення завдання експорту.
+ * Визначає, чи це POST (Створити) або PUT (Оновити), на основі поля 'task_id'.
+ */
+void ApiClient::saveExportTask(const QJsonObject& taskData)
+{
+    // 1. Визначаємо, чи це UPDATE (PUT) чи CREATE (POST)
+    int taskId = taskData.contains("task_id") ? taskData["task_id"].toInt() : -1;
+    bool isUpdate = taskId > 0; // Це оновлення, якщо ми маємо валідний ID (> 0)
+
+    QUrl url;
+    QJsonObject dataToSend = taskData;
+    QNetworkReply* reply = nullptr;
+
+    if (isUpdate) {
+        // UPDATE (PUT): /api/export-tasks/<id>
+        url = QUrl(m_serverUrl + QString("/api/export-tasks/%1").arg(taskId));
+        dataToSend.remove("task_id"); // ID передаємо в URL, не в тілі PUT-запиту
+        logDebug() << "API: Sending PUT request to update Export Task ID" << taskId;
+
+        QNetworkRequest request = createAuthenticatedRequest(url);
+        request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+        reply = m_networkManager->put(request, QJsonDocument(dataToSend).toJson());
+    } else {
+        // CREATE (POST): /api/export-tasks
+        url = QUrl(m_serverUrl + "/api/export-tasks");
+        // dataToSend вже не містить task_id, оскільки його не було додано в діалозі
+        logDebug() << "API: Sending POST request to create new Export Task.";
+
+        QNetworkRequest request = createAuthenticatedRequest(url);
+        request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+        reply = m_networkManager->post(request, QJsonDocument(dataToSend).toJson());
+    }
+
+    // 2. Підключення слота обробки відповіді (загальний для обох типів)
+    if (reply) {
+        connect(reply, &QNetworkReply::finished, this, &ApiClient::onExportTaskSaveReplyFinished);
+    } else {
+        logCritical() << "Failed to start network request (reply is null).";
+    }
+}
+
+
+/**
+ * @brief Обробляє відповідь на запит fetchAllExportTasks.
+ */
+void ApiClient::onAllExportTasksReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    ApiError error = parseReply(reply);
+
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200)
+    {
+        QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
+        if (doc.isArray()) {
+            logInfo() << "Successfully fetched" << doc.array().count() << "export tasks for list view.";
+            emit exportTasksFetched(doc.array());
+        } else {
+            error.errorString = "Invalid response from server: expected a JSON array of tasks.";
+            emit exportTasksFetchFailed(error);
+        }
+    } else {
+        emit exportTasksFetchFailed(error);
+    }
+    reply->deleteLater();
+}
+
+/**
+ * @brief Обробляє відповідь на запит fetchExportTaskById.
+ */
+void ApiClient::onExportTaskDetailsReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    ApiError error = parseReply(reply);
+
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200)
+    {
+        QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
+        if (doc.isObject()) {
+            logDebug() << "Successfully fetched export task details.";
+            emit exportTaskFetched(doc.object());
+        } else {
+            error.errorString = "Invalid response from server: expected a JSON object of task details.";
+            emit exportTaskFetchFailed(error);
+        }
+    } else {
+        emit exportTaskFetchFailed(error);
+    }
+    reply->deleteLater();
+}
+
+/**
+ * @brief Обробляє відповідь на запит saveExportTask (POST/PUT).
+ */
+void ApiClient::onExportTaskSaveReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    ApiError error = parseReply(reply);
+
+    // HTTP 201 Created (POST) або 200 OK (PUT)
+    if (reply->error() == QNetworkReply::NoError && (error.httpStatusCode == 200 || error.httpStatusCode == 201))
+    {
+        QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
+        int savedId = doc.object()["task_id"].toInt();
+
+        logInfo() << "Export Task saved successfully. ID:" << savedId;
+        emit exportTaskSaved(savedId);
+    } else {
+        emit exportTaskSaveFailed(error);
+    }
+    reply->deleteLater();
+}

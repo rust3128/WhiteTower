@@ -135,9 +135,31 @@ void WebServer::setupRoutes()
                             return handleGetStationDetails(clientId, terminalNo, request);
                         });
 
+    // --- Export Tasks Management (Керування завданнями експорту) ---
+
+    // GET /api/export-tasks
+    // Отримати список усіх завдань. Залишаємо лише один GET маршрут для списку.
     m_httpServer->route("/api/export-tasks", QHttpServerRequest::Method::Get, [this](const QHttpServerRequest &request) {
-        return handleGetExportTasksRequest(request);
+        // Видаляємо handleGetExportTasksRequest, оскільки він, ймовірно, дублює handleGetAllExportTasksRequest
+        return handleGetAllExportTasksRequest(request);
     });
+
+    // POST /api/export-tasks (НОВИЙ МАРШРУТ: СТВОРЕННЯ)
+    m_httpServer->route("/api/export-tasks", QHttpServerRequest::Method::Post, [this](const QHttpServerRequest &request) {
+        return handleCreateExportTaskRequest(request); // Метод для створення нового завдання
+    });
+
+    // GET /api/export-tasks/<taskId> (Отримання ДЕТАЛЕЙ одного завдання)
+    m_httpServer->route("/api/export-tasks/<arg>", QHttpServerRequest::Method::Get,
+                        [this](const QString &taskId, const QHttpServerRequest &request) {
+                            return handleGetExportTaskRequest(taskId, request);
+                        });
+
+    // Маршрут для ОНОВЛЕННЯ ОДНОГО завдання (PUT /api/export-tasks/<taskId>)
+    m_httpServer->route("/api/export-tasks/<arg>", QHttpServerRequest::Method::Put,
+                        [this](const QString &taskId, const QHttpServerRequest &request) {
+                            return handleUpdateExportTaskRequest(taskId, request);
+                        });
 }
 
 void WebServer::logRequest(const QHttpServerRequest &request)
@@ -973,4 +995,181 @@ QHttpServerResponse WebServer::handleGetExportTasksRequest(const QHttpServerRequ
 
     // 4. Відправляємо відповідь
     return createJsonResponse(tasksArray, QHttpServerResponse::StatusCode::Ok);
+}
+
+
+QHttpServerResponse WebServer::handleGetAllExportTasksRequest(const QHttpServerRequest &request)
+{
+    logRequest(request);
+    User* user = authenticateRequest(request);
+
+    if (!user) {
+        return createJsonResponse(QJsonObject{{"error", "Unauthorized"}}, QHttpServerResponse::StatusCode::Unauthorized);
+    }
+    if (!user->isAdmin()) {
+        delete user;
+        return createJsonResponse(QJsonObject{{"error", "Forbidden. Requires Administrator role"}}, QHttpServerResponse::StatusCode::Forbidden);
+    }
+    delete user;
+
+    // Отримуємо список завдань з БД
+    QList<QVariantMap> tasks = DbManager::instance().loadAllExportTasks();
+
+    QJsonArray tasksArray;
+    for (const QVariantMap& task : tasks) {
+        tasksArray.append(QJsonObject::fromVariantMap(task));
+    }
+
+    return createJsonResponse(tasksArray, QHttpServerResponse::StatusCode::Ok);
+}
+
+/**
+ * @brief Обробляє GET-запит для отримання деталей одного завдання (включаючи SQL-шаблон).
+ * Маршрут: GET /api/export-tasks/<taskId>
+ * @param taskId ID завдання, яке потрібно завантажити (з URL).
+ * @return QHttpServerResponse з деталями завдання (200 OK) або помилкою (404 Not Found).
+ */
+QHttpServerResponse WebServer::handleGetExportTaskRequest(const QString &taskId, const QHttpServerRequest &request)
+{
+    logRequest(request);
+    User* user = authenticateRequest(request);
+
+    // 1. АУТЕНТИФІКАЦІЯ ТА АВТОРИЗАЦІЯ
+    if (!user) {
+        return createJsonResponse(QJsonObject{{"error", "Unauthorized"}}, QHttpServerResponse::StatusCode::Unauthorized);
+    }
+    if (!user->isAdmin()) {
+        delete user;
+        return createJsonResponse(QJsonObject{{"error", "Forbidden. Requires Administrator role"}}, QHttpServerResponse::StatusCode::Forbidden);
+    }
+    delete user;
+
+    // 2. ВАЛІДАЦІЯ ID
+    int id = taskId.toInt();
+    if (id <= 0) {
+        return createJsonResponse(QJsonObject{{"error", "Invalid TASK_ID specified"}}, QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    // 3. ВИКЛИК ЗАВАНТАЖЕННЯ З БАЗИ ДАНИХ
+    QJsonObject taskDetails = DbManager::instance().loadExportTaskById(id);
+
+    // 4. ФОРМУВАННЯ ВІДПОВІДІ
+    if (taskDetails.isEmpty()) {
+        // Якщо завдання не знайдено або DB Manager повернув помилку
+        qWarning() << "Export Task ID" << id << "not found or DB error.";
+
+        // Перевіряємо, чи є деталі помилки в DbManager (хоча для 404 це зазвичай просто відсутність запису)
+        QString dbError = DbManager::instance().lastError();
+        if (dbError.contains("not found", Qt::CaseInsensitive)) {
+            return createJsonResponse(QJsonObject{{"error", QString("Export Task ID %1 not found.").arg(id)}}, QHttpServerResponse::StatusCode::NotFound);
+        }
+
+        // Якщо це інша помилка, повертаємо 500
+        return createJsonResponse(QJsonObject{{"error", "Failed to fetch task details from DB: " + dbError}}, QHttpServerResponse::StatusCode::InternalServerError);
+
+    } else if (taskDetails.contains("error")) {
+        // Якщо DB Manager повернув об'єкт з внутрішньою помилкою (наприклад, помилка SQL)
+        qCritical() << "DbManager returned an error for task ID" << id << ":" << taskDetails["error"].toString();
+        return createJsonResponse(taskDetails, QHttpServerResponse::StatusCode::InternalServerError);
+    }
+
+    // УСПІХ: Повертаємо деталі завдання
+    logDebug() << "Successfully fetched details for Export Task ID:" << id;
+    return createJsonResponse(taskDetails, QHttpServerResponse::StatusCode::Ok);
+}
+
+/**
+ * @brief Обробляє POST-запит для створення нового завдання на експорт.
+ * Маршрут: POST /api/export-tasks
+ * @return QHttpServerResponse з новим ID (201 Created) або помилкою.
+ */
+QHttpServerResponse WebServer::handleCreateExportTaskRequest(const QHttpServerRequest &request)
+{
+    logRequest(request);
+    User* user = authenticateRequest(request);
+
+    // 1. Аутентифікація та авторизація
+    if (!user) {
+        return createJsonResponse(QJsonObject{{"error", "Unauthorized"}}, QHttpServerResponse::StatusCode::Unauthorized);
+    }
+    // Перевіряємо, чи є користувач адміністратором
+    if (!user->isAdmin()) {
+        delete user;
+        return createJsonResponse(QJsonObject{{"error", "Forbidden. Requires Administrator role"}}, QHttpServerResponse::StatusCode::Forbidden);
+    }
+    delete user;
+
+    // 2. Парсинг тіла запиту (JSON)
+    QJsonDocument doc = QJsonDocument::fromJson(request.body());
+    if (!doc.isObject()) {
+        return createJsonResponse(QJsonObject{{"error", "Invalid JSON body"}}, QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    QJsonObject taskData = doc.object();
+
+    // 3. Валідація полів (мінімальна)
+    if (!taskData.contains("task_name") || !taskData.contains("sql_template") || !taskData.contains("query_filename") || !taskData.contains("is_active")) {
+        return createJsonResponse(QJsonObject{{"error", "Missing required fields for create (task_name, sql_template, query_filename, is_active)"}},
+                                  QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    // 4. Виклик створення в БД
+    // Очікуємо newId > 0, оскільки це створення
+    int newId = DbManager::instance().createExportTask(taskData);
+
+    // 5. Формування відповіді
+    if (newId > 0) {
+        // УСПІХ: Повертаємо новий ID (HTTP 201 Created)
+        logInfo() << "Successfully created new Export Task with ID:" << newId;
+        return createJsonResponse({{"status", "success"}, {"task_id", newId}}, QHttpServerResponse::StatusCode::Created);
+    } else {
+        // Помилка DB Manager
+        qCritical() << "Failed to create Export Task. Details:" << DbManager::instance().lastError();
+        return createJsonResponse(QJsonObject{{"error", "Failed to create task in database. Details: " + DbManager::instance().lastError()}},
+                                  QHttpServerResponse::StatusCode::InternalServerError);
+    }
+}
+
+QHttpServerResponse WebServer::handleUpdateExportTaskRequest(const QString &taskId, const QHttpServerRequest &request)
+{
+    logRequest(request);
+    User* user = authenticateRequest(request);
+
+    // 1. АВТОРИЗАЦІЯ
+    if (!user || !user->isAdmin()) {
+        delete user;
+        return createJsonResponse(QJsonObject{{"error", "Forbidden. Requires Administrator role"}}, QHttpServerResponse::StatusCode::Forbidden);
+    }
+    delete user;
+
+    // 2. ВАЛІДАЦІЯ ID
+    int id = taskId.toInt();
+    if (id <= 0) {
+        return createJsonResponse(QJsonObject{{"error", "Invalid TASK_ID for update (must be > 0)"}}, QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    // 3. ПАРСИНГ ТІЛА ЗАПИТУ
+    QJsonDocument doc = QJsonDocument::fromJson(request.body());
+    if (!doc.isObject()) {
+        return createJsonResponse(QJsonObject{{"error", "Invalid JSON body"}}, QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    QJsonObject taskData = doc.object();
+
+    // 4. ВАЛІДАЦІЯ ПОЛІВ
+    if (!taskData.contains("task_name") || !taskData.contains("sql_template") || !taskData.contains("query_filename") || !taskData.contains("is_active")) {
+        return createJsonResponse(QJsonObject{{"error", "Missing required fields for update"}}, QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    // 5. ВИКЛИК ОНОВЛЕННЯ
+    if (DbManager::instance().updateExportTask(id, taskData)) {
+        // УСПІХ: Повертаємо ID та статус 200 OK
+        logInfo() << "Successfully updated Export Task ID:" << id;
+        return createJsonResponse(QJsonObject{{"status", "success"}, {"task_id", id}}, QHttpServerResponse::StatusCode::Ok);
+    } else {
+        // Помилка DB Manager
+        qCritical() << "Failed to update Export Task ID" << id << ". Details:" << DbManager::instance().lastError();
+        return createJsonResponse(QJsonObject{{"error", "Failed to update task in database. Details: " + DbManager::instance().lastError()}},
+                                  QHttpServerResponse::StatusCode::InternalServerError);
+    }
 }

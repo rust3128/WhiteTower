@@ -66,6 +66,15 @@ public:
     void fetchStationsForClient(qint64 telegramId, int clientId);
     void fetchStationDetails(qint64 telegramId, int clientId, const QString& terminalNo);
     void fetchExportTasks();
+
+
+    // --- Методи для управління завданнями експорту (EXPORT_TASKS) ---
+    void fetchAllExportTasks();
+    void fetchExportTaskById(int taskId);
+    void saveExportTask(const QJsonObject& taskData); // Використовується як для створення (ID=-1), так і для оновлення
+
+
+
 signals:
     // Сигнали для логіну
     void loginSuccess(User* user);
@@ -163,8 +172,18 @@ signals:
     void stationDetailsFetched(const QJsonObject& station, qint64 telegramId, int clientId);
     void stationDetailsFetchFailed(const ApiError& error, qint64 telegramId, int clientId);
 
+    // --- Сигнали для Export Tasks ---
     void exportTasksFetched(const QJsonArray& tasks);
     void exportTasksFetchFailed(const ApiError& error);
+
+    void exportTaskFetched(const QJsonObject& task);
+    void exportTaskFetchFailed(const ApiError& error);
+
+    // Сигнал для успішного збереження (створення/оновлення)
+    void exportTaskSaved(int taskId);
+    void exportTaskSaveFailed(const ApiError& error);
+
+
 
 private slots:
 
@@ -205,6 +224,11 @@ private slots:
     void onStationDetailsReplyFinished();
 
     void onExportTasksReplyFinished();
+
+    // --- Слоти для обробки відповідей Export Tasks ---
+    void onAllExportTasksReplyFinished();
+    void onExportTaskDetailsReplyFinished();
+    void onExportTaskSaveReplyFinished();
 private:
     ApiClient(QObject* parent = nullptr);
     ~ApiClient() = default;

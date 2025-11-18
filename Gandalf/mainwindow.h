@@ -25,6 +25,8 @@ private slots:
 
     void on_actionObjectsList_triggered();
 
+    void on_actionExportTasks_triggered();
+
 private:
     Ui::MainWindow *ui;
 };

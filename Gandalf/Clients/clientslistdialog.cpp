@@ -714,9 +714,16 @@ void ClientsListDialog::generateExporterPackage(const QJsonArray& tasks)
 
     QJsonArray tasksArray;
 
+
+
     // 2. Генеруємо файли .json та .sql у тимчасовій папці
     for (const QJsonValue& value : tasks) {
         QJsonObject task = value.toObject();
+
+        if (task["is_active"].toInt() != 1) {
+            continue; // Пропускаємо цей крок циклу, файл не створюється
+        }
+
         QString queryFilename = QString("query_%1.sql").arg(task["task_name"].toString().toLower());
 
         // 2a. Зберігаємо .sql файл

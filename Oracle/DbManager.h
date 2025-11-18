@@ -53,7 +53,19 @@ public:
     QJsonObject getBotUserStatus(qint64 telegramId);
     int findUserIdByTelegramId(qint64 telegramId);
 
+
+    // --- Методи для управління завданнями експорту (EXPORT_TASKS) ---
+    // 1. Завантажити весь список завдань (для табличного відображення)
     QList<QVariantMap> loadAllExportTasks();
+
+    // 2. Завантажити деталі одного завдання (включаючи BLOB SQL)
+    QJsonObject loadExportTaskById(int taskId);
+
+    // 3. Створити нове завдання
+    int createExportTask(const QJsonObject& taskData);
+
+    // 4. Оновити існуюче завдання
+    bool updateExportTask(int taskId, const QJsonObject& taskData);
 
 private:
     DbManager(); // Конструктор тепер приватний
@@ -69,5 +81,6 @@ private:
     DbManager& operator=(const DbManager&) = delete;
 private:
     QSqlDatabase m_db;
+    QString m_lastError;
 };
 #endif // DBMANAGER_H

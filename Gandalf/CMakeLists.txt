@@ -27,6 +27,7 @@ add_executable(Gandalf
     ApplicationController.h
     ApplicationController.cpp
     Clients/objectslistdialog.h Clients/objectslistdialog.cpp Clients/objectslistdialog.ui
+    Settings/exporttasksdialog.h Settings/exporttasksdialog.cpp Settings/exporttasksdialog.ui
 )
 
 # Вказуємо, де шукати заголовні файли (зокрема, з нашої бібліотеки Oracle)
