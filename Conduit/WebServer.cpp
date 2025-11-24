@@ -1157,8 +1157,13 @@ QHttpServerResponse WebServer::handleUpdateExportTaskRequest(const QString &task
     QJsonObject taskData = doc.object();
 
     // 4. ВАЛІДАЦІЯ ПОЛІВ
-    if (!taskData.contains("task_name") || !taskData.contains("sql_template") || !taskData.contains("query_filename") || !taskData.contains("is_active")) {
-        return createJsonResponse(QJsonObject{{"error", "Missing required fields for update"}}, QHttpServerResponse::StatusCode::BadRequest);
+    if (!taskData.contains("task_name") ||
+        !taskData.contains("sql_template") ||
+        !taskData.contains("query_filename") ||
+        !taskData.contains("is_active") ||
+        !taskData.contains("target_table")) { // <-- Варто додати сюди
+
+        return createJsonResponse(QJsonObject{{"error", "Missing required fields"}}, QHttpServerResponse::StatusCode::BadRequest);
     }
 
     // 5. ВИКЛИК ОНОВЛЕННЯ

@@ -1551,7 +1551,7 @@ QList<QVariantMap> DbManager::loadAllExportTasks()
     QSqlQuery query(m_db);
 
     // Переконаймося, що вибираємо всі поля
-    query.prepare("SELECT TASK_ID, TASK_NAME, QUERY_FILENAME, SQL_TEMPLATE, IS_ACTIVE, DESCRIPTION "
+    query.prepare("SELECT TASK_ID, TASK_NAME, QUERY_FILENAME, SQL_TEMPLATE, TARGET_TABLE, DESCRIPTION, IS_ACTIVE "
                   "FROM EXPORT_TASKS "
                   "ORDER BY TASK_ID");
 
@@ -1581,6 +1581,7 @@ QList<QVariantMap> DbManager::loadAllExportTasks()
 
         task["is_active"] = query.value("IS_ACTIVE").toInt(); // SMALLINT
         task["description"] = query.value("DESCRIPTION").toString();
+        task["target_table"] = query.value("TARGET_TABLE").toString();
         tasks.append(task);
     }
 
@@ -1598,8 +1599,10 @@ QJsonObject DbManager::loadExportTaskById(int taskId)
     QSqlQuery query(m_db);
 
     // Включаємо SQL_TEMPLATE (BLOB SUB_TYPE TEXT)
-    query.prepare("SELECT TASK_ID, TASK_NAME, QUERY_FILENAME, SQL_TEMPLATE, IS_ACTIVE, DESCRIPTION "
-                  "FROM EXPORT_TASKS WHERE TASK_ID = :id");
+    query.prepare("SELECT TASK_ID, TASK_NAME, QUERY_FILENAME, SQL_TEMPLATE, "
+                  "IS_ACTIVE, DESCRIPTION, TARGET_TABLE " // <-- Додано
+                  "FROM EXPORT_TASKS "
+                  "WHERE TASK_ID = :id");
     query.bindValue(":id", taskId);
 
     if (!query.exec()) {
@@ -1618,6 +1621,7 @@ QJsonObject DbManager::loadExportTaskById(int taskId)
 
         task["is_active"] = query.value("IS_ACTIVE").toInt();
         task["description"] = query.value("DESCRIPTION").toString();
+        task["target_table"] = query.value("TARGET_TABLE").toString();
 
         qDebug() << "Loaded details for export task ID:" << taskId;
         return task;
@@ -1639,17 +1643,18 @@ int DbManager::createExportTask(const QJsonObject& taskData)
     QSqlQuery query(m_db);
 
     // УВАГА: Ми використовуємо RETURNING, щоб отримати згенерований ID
-    query.prepare("INSERT INTO EXPORT_TASKS ("
-                  "TASK_NAME, QUERY_FILENAME, SQL_TEMPLATE, IS_ACTIVE, DESCRIPTION"
-                  ") VALUES ("
-                  ":name, :filename, :template, :active, :description"
-                  ") RETURNING TASK_ID"); // <--- КРИТИЧНА ЗМІНА ТУТ
+    query.prepare("INSERT INTO EXPORT_TASKS "
+                  "(TASK_NAME, QUERY_FILENAME, SQL_TEMPLATE, IS_ACTIVE, DESCRIPTION, TARGET_TABLE) " // <-- Додано
+                  "VALUES "
+                  "(:name, :filename, :template, :active, :description, :target_table) " // <-- Додано
+                  "RETURNING TASK_ID");
 
     query.bindValue(":name", taskData["task_name"].toString());
     query.bindValue(":filename", taskData["query_filename"].toString());
     query.bindValue(":template", taskData["sql_template"].toString());
-    query.bindValue(":active", taskData.value("is_active").toBool() ? 1 : 0);
-    query.bindValue(":description", taskData.value("description").toString());
+    query.bindValue(":active", taskData["is_active"].toBool() ? 1 : 0);
+    query.bindValue(":description", taskData["description"].toString());
+    query.bindValue(":target_table", taskData["target_table"].toString()); // <-- Додано
 
     if (!query.exec()) {
         m_lastError = "Failed to insert new export task: " + query.lastError().text();
@@ -1687,7 +1692,8 @@ bool DbManager::updateExportTask(int taskId, const QJsonObject& taskData)
                   "QUERY_FILENAME = :filename, "
                   "SQL_TEMPLATE = :template, "
                   "IS_ACTIVE = :active, "
-                  "DESCRIPTION = :description "
+                  "DESCRIPTION = :description, "
+                  "TARGET_TABLE = :target_table "
                   "WHERE TASK_ID = :id");
 
     query.bindValue(":id", taskId);
@@ -1696,6 +1702,7 @@ bool DbManager::updateExportTask(int taskId, const QJsonObject& taskData)
     query.bindValue(":template", taskData["sql_template"].toString());
     query.bindValue(":active", taskData["is_active"].toBool() ? 1 : 0);
     query.bindValue(":description", taskData["description"].toString());
+    query.bindValue(":target_table", taskData["target_table"].toString()); // <-- Додано
 
     if (!query.exec()) {
         logCritical() << "Failed to update export task ID" << taskId << ":" << query.lastError().text();

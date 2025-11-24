@@ -743,6 +743,7 @@ void ClientsListDialog::generateExporterPackage(const QJsonArray& tasks)
         taskConfigEntry["task_name"] = task["task_name"];
         taskConfigEntry["query_file"] = queryFilename;
         taskConfigEntry["output_file"] = queryFilename.replace(".sql", ".json");
+        taskConfigEntry["target_table"] = task["target_table"].toString();
         taskConfigEntry["embed_client_id"] = config["embed_client_id"];
         taskConfigEntry["params"] = config["params"];
         tasksArray.append(taskConfigEntry);
@@ -803,3 +804,29 @@ void ClientsListDialog::onFieldChanged()
     m_isDirty = true;
     ui->pushButtonSync->setEnabled(false); // Вимикаємо синхронізацію, доки не збережено
 }
+
+void ClientsListDialog::on_toolButtonBrowseImport_clicked()
+{
+    // 1. Беремо поточний шлях з поля (якщо там щось є)
+    QString currentPath = ui->lineEditImportPathFile->text();
+
+    // Якщо пусто, відкриваємо домашню папку або диск C
+    if (currentPath.isEmpty()) {
+        currentPath = QDir::homePath();
+    }
+
+    // 2. Відкриваємо діалог вибору папки
+    QString dir = QFileDialog::getExistingDirectory(this,
+                                                    "Виберіть папку для імпорту (Inbox)",
+                                                    currentPath,
+                                                    QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+
+    // 3. Якщо користувач щось вибрав (не натиснув Cancel)
+    if (!dir.isEmpty()) {
+        ui->lineEditImportPathFile->setText(dir);
+
+        // Викликаємо збереження стану (щоб активувалася кнопка Зберегти, якщо треба)
+        onFieldChanged();
+    }
+}
+

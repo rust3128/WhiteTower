@@ -227,7 +227,7 @@ void ExportTasksDialog::populateDetailsForm(const QJsonObject& task)
         // Очищення форми
         ui->lineEditTaskName->clear();
         ui->lineEditQueryFilename->clear();
-        ui->lineEditDescription->clear();
+        ui->lineEditTargetTable->clear();
         ui->checkBoxIsActive->setChecked(true);
         ui->plainTextEditSQL->clear();
         ui->groupBoxDetails->setTitle("Деталі завдання (Нове)");
@@ -236,6 +236,7 @@ void ExportTasksDialog::populateDetailsForm(const QJsonObject& task)
         // Заповнення форми
         ui->lineEditTaskName->setText(task["task_name"].toString());
         ui->lineEditQueryFilename->setText(task["query_filename"].toString());
+        ui->lineEditTargetTable->setText(task["target_table"].toString());
         ui->lineEditDescription->setText(task["description"].toString());
         // is_active приходить як 0 або 1
         ui->checkBoxIsActive->setChecked(task["is_active"].toInt() == 1);
@@ -251,6 +252,7 @@ QJsonObject ExportTasksDialog::gatherFormData() const
     QJsonObject data;
     data["task_name"] = ui->lineEditTaskName->text();
     data["query_filename"] = ui->lineEditQueryFilename->text();
+    data["target_table"] = ui->lineEditTargetTable->text().trimmed();
     data["description"] = ui->lineEditDescription->text();
     data["is_active"] = ui->checkBoxIsActive->isChecked(); // QBool перетвориться на 1 або 0 в ApiClient
     data["sql_template"] = ui->plainTextEditSQL->toPlainText();

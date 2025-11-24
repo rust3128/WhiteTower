@@ -52,6 +52,8 @@ private slots:
     void onFieldChanged(); // реагує на будь-яку зміну
 
 
+    void on_toolButtonBrowseImport_clicked();
+
 private:
     // Методи-помічники для налаштування
     void createConnections();
