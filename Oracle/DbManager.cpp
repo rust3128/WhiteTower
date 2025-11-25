@@ -377,9 +377,6 @@ int DbManager::createClient(const QString& clientName)
     return newClientId;
 }
 
-// У файлі DbManager.cpp
-// БУДЬ ЛАСКА, ПОВНІСТЮ ЗАМІНІТЬ 'loadClientDetails'
-
 QJsonObject DbManager::loadClientDetails(int clientId)
 {
     QJsonObject clientDetails;
@@ -408,7 +405,6 @@ QJsonObject DbManager::loadClientDetails(int clientId)
 
     query.finish(); // Очищуємо
 
-
     // 2. БЕЗУМОВНО завантажуємо 'config_direct'
     QJsonObject configDirect;
     query.prepare("SELECT DB_HOST, DB_PORT, DB_PATH, DB_USER, DB_PASSWORD "
@@ -420,25 +416,28 @@ QJsonObject DbManager::loadClientDetails(int clientId)
         configDirect["db_path"] = query.value("DB_PATH").toString();
         configDirect["db_user"] = query.value("DB_USER").toString();
         configDirect["db_password"] = query.value("DB_PASSWORD").toString();
-
     }
     clientDetails["config_direct"] = configDirect;
     query.finish(); // Очищуємо
 
-    // 4. БЕЗУМОВНО завантажуємо 'config_palantir'
-    QJsonObject configPalantir;
-
-    // Згідно зі структурою, нам потрібен лише API_KEY.
-
-    query.prepare("SELECT API_KEY FROM CLIENT_CONFIG_PALANTIR WHERE CLIENT_ID = :id");
-    query.bindValue(":id", clientId); // Прив'язуємо ID
+    // 3. БЕЗУМОВНО завантажуємо 'config_file' (ДОДАНО)
+    QJsonObject configFile;
+    query.prepare("SELECT IMPORT_PATH FROM CLIENT_CONFIG_FILE WHERE CLIENT_ID = :id");
+    query.bindValue(":id", clientId);
 
     if (query.exec() && query.next()) {
-        // API Key: Сервер надсилає зашифрований рядок (як є)
-        configPalantir["api_key"] = query.value("API_KEY").toString();
+        configFile["import_path"] = query.value("IMPORT_PATH").toString();
+    }
+    clientDetails["config_file"] = configFile;
+    query.finish(); // Очищуємо
 
-        // Поле hostname_template більше не завантажується тут,
-        // оскільки його ID (ip_gen_method_id) завантажено у головній секції 1.
+    // 4. БЕЗУМОВНО завантажуємо 'config_palantir'
+    QJsonObject configPalantir;
+    query.prepare("SELECT API_KEY FROM CLIENT_CONFIG_PALANTIR WHERE CLIENT_ID = :id");
+    query.bindValue(":id", clientId);
+
+    if (query.exec() && query.next()) {
+        configPalantir["api_key"] = query.value("API_KEY").toString();
     }
     clientDetails["config_palantir"] = configPalantir;
     query.finish();
