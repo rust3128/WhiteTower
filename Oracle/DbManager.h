@@ -67,6 +67,8 @@ public:
     // 4. Оновити існуюче завдання
     bool updateExportTask(int taskId, const QJsonObject& taskData);
 
+    bool processObjectsSync(int clientId, const QJsonArray& objects, QString& errorOut);
+
 private:
     DbManager(); // Конструктор тепер приватний
     ~DbManager();
