@@ -89,6 +89,9 @@ private:
     QHttpServerResponse handleCreateExportTaskRequest(const QHttpServerRequest &request);
     QHttpServerResponse handleUpdateExportTaskRequest(const QString &taskId, const QHttpServerRequest &request);
 
+    // GET /api/dashboard
+    QHttpServerResponse handleDashboardRequest(const QHttpServerRequest &request);
+
 private:
     QHttpServer* m_httpServer;
     quint16 m_port;

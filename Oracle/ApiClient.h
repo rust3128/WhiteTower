@@ -73,7 +73,11 @@ public:
     void fetchExportTaskById(int taskId);
     void saveExportTask(const QJsonObject& taskData); // Використовується як для створення (ID=-1), так і для оновлення
 
+    // Запит даних для моніторингу
+    void fetchDashboardData();
 
+    // Команда на запуск синхронізації
+    void syncClient(int clientId);
 
 signals:
     // Сигнали для логіну
@@ -183,9 +187,13 @@ signals:
     void exportTaskSaved(int taskId);
     void exportTaskSaveFailed(const ApiError& error);
 
+    // Сигнали для дашборду
+    void dashboardDataFetched(const QJsonArray& data);
+    void dashboardDataFetchFailed(const ApiError& error);
 
+    // Сигнали результату запуску
+    void clientSyncRequestFinished(int clientId, bool success, QString message);
 
-private slots:
 
 private slots:
     void onLoginReplyFinished();
@@ -229,6 +237,8 @@ private slots:
     void onAllExportTasksReplyFinished();
     void onExportTaskDetailsReplyFinished();
     void onExportTaskSaveReplyFinished();
+
+    void onDashboardDataReplyFinished(); // Обробник відповіді
 private:
     ApiClient(QObject* parent = nullptr);
     ~ApiClient() = default;

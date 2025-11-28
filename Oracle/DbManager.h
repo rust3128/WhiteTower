@@ -67,10 +67,13 @@ public:
     // 4. Оновити існуюче завдання
     bool updateExportTask(int taskId, const QJsonObject& taskData);
 
-    bool processObjectsSync(int clientId, const QJsonArray& objects, QString& errorOut);
+//    bool processObjectsSync(int clientId, const QJsonArray& objects, QString& errorOut);
 
     // Новий метод для прямої синхронізації
     QVariantMap syncViaDirect(int clientId, const QJsonObject& clientDetails);
+
+    // Повертає масив JSON зі статусами всіх клієнтів
+    QJsonArray getDashboardData();
 
 private:
     DbManager(); // Конструктор тепер приватний

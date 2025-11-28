@@ -1546,3 +1546,80 @@ void ApiClient::onExportTaskSaveReplyFinished()
     }
     reply->deleteLater();
 }
+
+
+// --- DASHBOARD API ---
+
+void ApiClient::fetchDashboardData()
+{
+    // 1. Формуємо URL (використовуємо вашу змінну m_serverUrl)
+    QUrl url(m_serverUrl + "/api/dashboard");
+
+    // 2. Створюємо АВТОРИЗОВАНИЙ запит
+    // (createAuthenticatedRequest додає заголовок Authorization: Bearer <token>)
+    QNetworkRequest request = createAuthenticatedRequest(url);
+
+    // 3. Відправляємо GET
+    QNetworkReply* reply = m_networkManager->get(request);
+
+    // 4. Підключаємо обробник
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onDashboardDataReplyFinished);
+}
+
+void ApiClient::onDashboardDataReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    // Використовуємо вашу існуючу функцію розбору відповіді
+    ApiError error = parseReply(reply);
+
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200)
+    {
+        QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
+
+        // Перевіряємо, чи прийшов масив (бо дашборд повертає список)
+        if (doc.isArray()) {
+            emit dashboardDataFetched(doc.array());
+        } else {
+            error.errorString = "Invalid response from server: expected a JSON array.";
+            emit dashboardDataFetchFailed(error);
+        }
+    } else {
+        emit dashboardDataFetchFailed(error);
+    }
+
+    reply->deleteLater();
+}
+
+
+void ApiClient::syncClient(int clientId)
+{
+    QString urlStr = QString("%1/api/clients/%2/sync").arg(m_serverUrl).arg(clientId);
+    QNetworkRequest request = createAuthenticatedRequest(QUrl(urlStr));
+
+    // Це POST запит
+    QNetworkReply* reply = m_networkManager->post(request, QByteArray());
+
+    // Використовуємо лямбду, щоб "захопити" clientId і передати його в обробник
+    connect(reply, &QNetworkReply::finished, this, [this, reply, clientId]() {
+        ApiError error = parseReply(reply);
+        bool success = false;
+        QString msg;
+
+        // Сервер повертає 200 або 202 (Accepted), якщо процес пішов
+        if (reply->error() == QNetworkReply::NoError && (error.httpStatusCode == 200 || error.httpStatusCode == 202)) {
+            success = true;
+            // Сервер може повернути JSON {"status": "started"}
+            QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
+            msg = doc.object()["status"].toString();
+            if (msg.isEmpty()) msg = "Запит на синхронізацію відправлено";
+        } else {
+            success = false;
+            msg = error.errorString;
+        }
+
+        emit clientSyncRequestFinished(clientId, success, msg);
+        reply->deleteLater();
+    });
+}

@@ -160,6 +160,11 @@ void WebServer::setupRoutes()
                         [this](const QString &taskId, const QHttpServerRequest &request) {
                             return handleUpdateExportTaskRequest(taskId, request);
                         });
+
+    // --- API для Дашборду ---
+    m_httpServer->route("/api/dashboard", QHttpServerRequest::Method::Get, [this](const QHttpServerRequest &request) {
+        return handleDashboardRequest(request);
+    });
 }
 
 void WebServer::logRequest(const QHttpServerRequest &request)
@@ -1177,4 +1182,23 @@ QHttpServerResponse WebServer::handleUpdateExportTaskRequest(const QString &task
         return createJsonResponse(QJsonObject{{"error", "Failed to update task in database. Details: " + DbManager::instance().lastError()}},
                                   QHttpServerResponse::StatusCode::InternalServerError);
     }
+}
+
+/**
+ * @brief Обробляє запит на отримання даних для дашборду (список клієнтів зі статусами).
+ * Маршрут: GET /api/dashboard
+ */
+QHttpServerResponse WebServer::handleDashboardRequest(const QHttpServerRequest &request)
+{
+    // 1. Перевірка авторизації (Gandalf повинен надсилати токен)
+    User* user = authenticateRequest(request);
+    if (!user) {
+        return createJsonResponse(QJsonObject{{"error", "Unauthorized"}}, QHttpServerResponse::StatusCode::Unauthorized);
+    }
+
+    // 2. Отримуємо дані з DbManager
+    QJsonArray data = DbManager::instance().getDashboardData();
+
+    // 3. Віддаємо результат
+    return createJsonResponse(data, QHttpServerResponse::StatusCode::Ok);
 }

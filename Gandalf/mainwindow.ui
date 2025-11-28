@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>772</width>
+    <width>629</width>
     <height>638</height>
    </rect>
   </property>
@@ -19,7 +19,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>772</width>
+     <width>629</width>
      <height>21</height>
     </rect>
    </property>
@@ -38,8 +38,15 @@
     <addaction name="action"/>
     <addaction name="actionExportTasks"/>
    </widget>
+   <widget class="QMenu" name="menuTools">
+    <property name="title">
+     <string>Інструменти</string>
+    </property>
+    <addaction name="actionOpenSyncMonitor"/>
+   </widget>
    <addaction name="menu"/>
    <addaction name="menuSettings"/>
+   <addaction name="menuTools"/>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
   <action name="actionUsers">
@@ -85,6 +92,11 @@
    </property>
    <property name="text">
     <string>Завдання Експорту</string>
+   </property>
+  </action>
+  <action name="actionOpenSyncMonitor">
+   <property name="text">
+    <string>Монітор Синхронізації</string>
    </property>
   </action>
  </widget>

@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Знаходимо Qt і необхідні компоненти для GUI-додатку
 # Core - базовий модуль, Gui - для вікон, Widgets - для кнопок, полів і т.д.
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Sql)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Sql Concurrent)
 
 # Список файлів з вихідним кодом для нашого додатку
 add_executable(Gandalf
@@ -28,6 +28,9 @@ add_executable(Gandalf
     ApplicationController.cpp
     Clients/objectslistdialog.h Clients/objectslistdialog.cpp Clients/objectslistdialog.ui
     Settings/exporttasksdialog.h Settings/exporttasksdialog.cpp Settings/exporttasksdialog.ui
+    Clients/SyncManager.h
+    Clients/SyncManager.cpp
+    Clients/syncstatusdialog.h Clients/syncstatusdialog.cpp Clients/syncstatusdialog.ui
 )
 
 # Вказуємо, де шукати заголовні файли (зокрема, з нашої бібліотеки Oracle)
@@ -40,6 +43,7 @@ target_include_directories(Gandalf PRIVATE
 target_link_libraries(Gandalf PRIVATE
     Qt6::Widgets  # <-- Головна бібліотека для Qt Widgets
     Qt6::Sql
+    Qt6::Concurrent
     Oracle        # <-- Наша спільна бібліотека
 )
 

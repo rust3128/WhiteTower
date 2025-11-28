@@ -9,6 +9,7 @@
 #include "Clients/objectslistdialog.h"
 #include "Oracle/SessionManager.h"
 #include "Oracle/Logger.h"
+#include "Clients/syncstatusdialog.h"
 
 #include <QMessageBox>
 
@@ -70,5 +71,14 @@ void MainWindow::on_actionExportTasks_triggered()
     // Створюємо та запускаємо діалог
     ExportTasksDialog dialog(this);
     dialog.exec();
+}
+
+
+void MainWindow::on_actionOpenSyncMonitor_triggered()
+{
+    SyncStatusDialog dlg(this);
+
+    // Відкриваємо його в модальному режимі (блокує головне вікно, поки відкритий)
+    dlg.exec();
 }
 

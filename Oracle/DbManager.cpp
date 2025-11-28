@@ -922,8 +922,21 @@ QVariantMap DbManager::syncViaFile(int clientId, const QJsonObject& clientDetail
     QJsonObject fileConfig = clientDetails["config_file"].toObject();
     QString importPath = fileConfig["import_path"].toString();
 
+    // 1. Перевірка шляху
     if (importPath.isEmpty() || !QDir(importPath).exists()) {
-        return {{"error", "Invalid import path configured."}};
+        QString msg = "Invalid import path configured.";
+
+        // --- FIX: Записуємо помилку в базу ---
+        QSqlQuery statusQuery(m_db);
+        statusQuery.prepare("UPDATE OR INSERT INTO SYNC_STATUS (CLIENT_ID, LAST_SYNC_DATE, LAST_SYNC_STATUS, LAST_SYNC_MESSAGE) "
+                            "VALUES (:id, CURRENT_TIMESTAMP, 'FAILED', :msg) MATCHING (CLIENT_ID)");
+        statusQuery.bindValue(":id", clientId);
+        statusQuery.bindValue(":msg", msg);
+        statusQuery.exec();
+        m_db.commit(); // <--- ОБОВ'ЯЗКОВО!
+        // -------------------------------------
+
+        return {{"error", msg}};
     }
 
     QDir importDir(importPath);
@@ -933,8 +946,22 @@ QVariantMap DbManager::syncViaFile(int clientId, const QJsonObject& clientDetail
     importDir.setSorting(QDir::Time | QDir::Reversed);
 
     QStringList files = importDir.entryList(QDir::Files);
+
+    // 2. Перевірка наявності архівів
     if (files.isEmpty()) {
-        return {{"error", "No result files found."}};
+        QString msg = "No result files found.";
+
+        // --- FIX: Записуємо помилку в базу ---
+        QSqlQuery statusQuery(m_db);
+        statusQuery.prepare("UPDATE OR INSERT INTO SYNC_STATUS (CLIENT_ID, LAST_SYNC_DATE, LAST_SYNC_STATUS, LAST_SYNC_MESSAGE) "
+                            "VALUES (:id, CURRENT_TIMESTAMP, 'FAILED', :msg) MATCHING (CLIENT_ID)");
+        statusQuery.bindValue(":id", clientId);
+        statusQuery.bindValue(":msg", msg);
+        statusQuery.exec();
+        m_db.commit(); // <--- ОБОВ'ЯЗКОВО!
+        // -------------------------------------
+
+        return {{"error", msg}};
     }
 
     QString archiveName = files.first();
@@ -945,21 +972,49 @@ QVariantMap DbManager::syncViaFile(int clientId, const QJsonObject& clientDetail
     if (tempDir.exists()) tempDir.removeRecursively();
     importDir.mkdir("_temp_processing");
 
+    // 3. Розпакування
     QProcess zipper;
     zipper.setWorkingDirectory(tempPath);
     zipper.start("7z", QStringList() << "x" << "-y" << fullArchivePath);
     if (!zipper.waitForFinished(30000) || zipper.exitCode() != 0) {
-        return {{"error", "7z extraction failed."}};
+        QString msg = "7z extraction failed.";
+
+        // --- FIX: Записуємо помилку в базу ---
+        QSqlQuery statusQuery(m_db);
+        statusQuery.prepare("UPDATE OR INSERT INTO SYNC_STATUS (CLIENT_ID, LAST_SYNC_DATE, LAST_SYNC_STATUS, LAST_SYNC_MESSAGE) "
+                            "VALUES (:id, CURRENT_TIMESTAMP, 'FAILED', :msg) MATCHING (CLIENT_ID)");
+        statusQuery.bindValue(":id", clientId);
+        statusQuery.bindValue(":msg", msg);
+        statusQuery.exec();
+        m_db.commit(); // <--- ОБОВ'ЯЗКОВО!
+        // -------------------------------------
+
+        return {{"error", msg}};
     }
 
     // --- ЕТАП 2: ОБРОБКА ФАЙЛІВ ---
     QDir processedDir(tempPath);
     QStringList jsonFiles = processedDir.entryList(QStringList() << "*.json", QDir::Files);
 
+    // 4. Перевірка JSON всередині архіву
     if (jsonFiles.isEmpty()) {
-        return {{"error", "No JSON files found in archive."}};
+        QString msg = "No result files found inside archive (JSON missing).";
+        logWarning() << msg;
+
+        // ВАЖЛИВО: Записуємо помилку в базу
+        QSqlQuery statusQuery(m_db);
+        statusQuery.prepare("UPDATE OR INSERT INTO SYNC_STATUS (CLIENT_ID, LAST_SYNC_DATE, LAST_SYNC_STATUS, LAST_SYNC_MESSAGE) "
+                            "VALUES (:id, CURRENT_TIMESTAMP, 'FAILED', :msg) MATCHING (CLIENT_ID)");
+        statusQuery.bindValue(":id", clientId);
+        statusQuery.bindValue(":msg", msg);
+        statusQuery.exec();
+
+        m_db.commit(); // <--- ВИ ЦЕ ПРОПУСТИЛИ. БЕЗ ЦЬОГО ЗАПИС НЕ ЗБЕРЕЖЕТЬСЯ!
+
+        return {{"error", msg}};
     }
 
+    // Починаємо велику транзакцію для даних
     if (!m_db.transaction()) {
         return {{"error", "Failed to start DB transaction."}};
     }
@@ -969,7 +1024,6 @@ QVariantMap DbManager::syncViaFile(int clientId, const QJsonObject& clientDetail
     bool success = true;
 
     for (const QString& jsonFileName : jsonFiles) {
-        // ... (відкриття файлу та перевірка client_id залишаються без змін) ...
         QFile file(processedDir.absoluteFilePath(jsonFileName));
         if (!file.open(QIODevice::ReadOnly)) continue;
 
@@ -986,32 +1040,19 @@ QVariantMap DbManager::syncViaFile(int clientId, const QJsonObject& clientDetail
 
         QJsonArray data = rootObj["data"].toArray();
 
-        // --- ЛОГІКА ВИБОРУ МЕТОДУ ---
+        QPair<QString, QString> taskInfo = getExportTaskInfo(jsonFileName);
+        QString targetTable = taskInfo.first;
+        QString matchFields = taskInfo.second;
 
-        // 1. Специфічна логіка для OBJECTS (якщо хочемо залишити її окремо)
-        if (jsonFileName.contains("query_exportclientobjects", Qt::CaseInsensitive)) {
-            logInfo() << "Processing OBJECTS (Legacy) from" << jsonFileName;
-            if (!processObjectsSync(clientId, data, errorMessage)) {
-                success = false; break;
+        if (!targetTable.isEmpty() && !matchFields.isEmpty()) {
+            logInfo() << "Processing GENERIC:" << targetTable << "from" << jsonFileName;
+            if (!processGenericSync(clientId, targetTable, matchFields, data, errorMessage)) {
+                success = false;
+                break;
             }
             totalProcessed += data.count();
-        }
-        // 2. Універсальна логіка для всього іншого
-        else {
-            // Шукаємо в базі, що це за файл
-            QPair<QString, QString> taskInfo = getExportTaskInfo(jsonFileName);
-            QString targetTable = taskInfo.first;
-            QString matchFields = taskInfo.second;
-
-            if (!targetTable.isEmpty() && !matchFields.isEmpty()) {
-                logInfo() << "Processing GENERIC:" << targetTable << "from" << jsonFileName;
-                if (!processGenericSync(clientId, targetTable, matchFields, data, errorMessage)) {
-                    success = false; break;
-                }
-                totalProcessed += data.count();
-            } else {
-                logWarning() << "Unknown file (no task found in DB):" << jsonFileName;
-            }
+        } else {
+            logWarning() << "Unknown file (no task found in DB):" << jsonFileName;
         }
     }
 
@@ -1022,28 +1063,31 @@ QVariantMap DbManager::syncViaFile(int clientId, const QJsonObject& clientDetail
             return {{"error", "Failed to commit transaction."}};
         }
 
-        // 1. Оновлюємо статус в БД (Щоб Gandalf перестав опитувати)
+        // 1. Оновлюємо статус в БД (SUCCESS)
         QSqlQuery statusQuery(m_db);
         statusQuery.prepare("UPDATE OR INSERT INTO SYNC_STATUS (CLIENT_ID, LAST_SYNC_DATE, LAST_SYNC_STATUS, LAST_SYNC_MESSAGE) "
                             "VALUES (:id, CURRENT_TIMESTAMP, 'SUCCESS', :msg) MATCHING (CLIENT_ID)");
         statusQuery.bindValue(":id", clientId);
         statusQuery.bindValue(":msg", QString("File: %1. Records: %2").arg(archiveName).arg(totalProcessed));
         statusQuery.exec();
+        m_db.commit(); // <--- Теж комітимо статус окремо, бо попередня транзакція вже закрита
 
-        // 2. Прибираємо за собою
-        // Переміщуємо архів в Processed
+        // 2. Видаляємо тимчасову папку
+        tempDir.removeRecursively();
+
+        /* ЗАКОМЕНТОВАНО: НЕ ПЕРЕМІЩУВАТИ ФАЙЛИ
+           Ми залишаємо файл в Inbox, як ви просили.
+
         if (!importDir.exists("Processed")) importDir.mkdir("Processed");
         QString destFile = importDir.filePath("Processed/" + archiveName);
         if (QFile::exists(destFile)) QFile::remove(destFile);
         QFile::rename(fullArchivePath, destFile);
-
-        // Видаляємо темп
-        tempDir.removeRecursively();
+        */
 
         logInfo() << "FILE Sync Success. Processed:" << totalProcessed;
         return {{"status", "success"}, {"processed_count", totalProcessed}};
     } else {
-        m_db.rollback();
+        m_db.rollback(); // Відкочуємо зміни в даних
 
         // Записуємо помилку в статус
         QSqlQuery statusQuery(m_db);
@@ -1052,6 +1096,7 @@ QVariantMap DbManager::syncViaFile(int clientId, const QJsonObject& clientDetail
         statusQuery.bindValue(":id", clientId);
         statusQuery.bindValue(":msg", errorMessage);
         statusQuery.exec();
+        m_db.commit(); // <--- Комітимо статус помилки
 
         return {{"error", errorMessage}};
     }
@@ -1854,54 +1899,54 @@ bool DbManager::updateExportTask(int taskId, const QJsonObject& taskData)
 }
 
 
-// Допоміжний метод для імпорту АЗС (Objects)
-bool DbManager::processObjectsSync(int clientId, const QJsonArray& objects, QString& errorOut)
-{
-    // Використовуємо транзакцію, яка вже відкрита в syncViaFile
-    QSqlQuery query(m_db);
+// // Допоміжний метод для імпорту АЗС (Objects)
+// bool DbManager::processObjectsSync(int clientId, const QJsonArray& objects, QString& errorOut)
+// {
+//     // Використовуємо транзакцію, яка вже відкрита в syncViaFile
+//     QSqlQuery query(m_db);
 
-    // Використовуємо Firebird UPDATE OR INSERT
-    // Це дозволяє оновити існуючий запис або створити новий, якщо його немає
-    // MATCHING (CLIENT_ID, TERMINAL_ID) вказує, як шукати дублікати
-    QString sql = R"(
-        UPDATE OR INSERT INTO OBJECTS (
-            CLIENT_ID, TERMINAL_ID, NAME, ADDRESS,
-            IS_ACTIVE, IS_WORK, PHONE, REGION_NAME,
-            LATITUDE, LONGITUDE
-        ) VALUES (
-            :client_id, :term_id, :name, :addr,
-            :active, :work, :phone, :region,
-            :lat, :lon
-        ) MATCHING (CLIENT_ID, TERMINAL_ID)
-    )";
+//     // Використовуємо Firebird UPDATE OR INSERT
+//     // Це дозволяє оновити існуючий запис або створити новий, якщо його немає
+//     // MATCHING (CLIENT_ID, TERMINAL_ID) вказує, як шукати дублікати
+//     QString sql = R"(
+//         UPDATE OR INSERT INTO OBJECTS (
+//             CLIENT_ID, TERMINAL_ID, NAME, ADDRESS,
+//             IS_ACTIVE, IS_WORK, PHONE, REGION_NAME,
+//             LATITUDE, LONGITUDE
+//         ) VALUES (
+//             :client_id, :term_id, :name, :addr,
+//             :active, :work, :phone, :region,
+//             :lat, :lon
+//         ) MATCHING (CLIENT_ID, TERMINAL_ID)
+//     )";
 
-    query.prepare(sql);
+//     query.prepare(sql);
 
-    for (const QJsonValue& val : objects) {
-        if (!val.isObject()) continue;
-        QJsonObject obj = val.toObject();
+//     for (const QJsonValue& val : objects) {
+//         if (!val.isObject()) continue;
+//         QJsonObject obj = val.toObject();
 
-        query.bindValue(":client_id", clientId);
-        query.bindValue(":term_id", obj["TERMINAL_ID"].toInt());
-        query.bindValue(":name", obj["NAME"].toString());
-        query.bindValue(":addr", obj["ADDRESS"].toString());
-        // JSON bool/int -> DB int (0 або 1)
-        query.bindValue(":active", obj["IS_ACTIVE"].toInt());
-        query.bindValue(":work", obj["IS_WORK"].toInt());
-        query.bindValue(":phone", obj["PHONE"].toString());
-        query.bindValue(":region", obj["REGION_NAME"].toString());
+//         query.bindValue(":client_id", clientId);
+//         query.bindValue(":term_id", obj["TERMINAL_ID"].toInt());
+//         query.bindValue(":name", obj["NAME"].toString());
+//         query.bindValue(":addr", obj["ADDRESS"].toString());
+//         // JSON bool/int -> DB int (0 або 1)
+//         query.bindValue(":active", obj["IS_ACTIVE"].toInt());
+//         query.bindValue(":work", obj["IS_WORK"].toInt());
+//         query.bindValue(":phone", obj["PHONE"].toString());
+//         query.bindValue(":region", obj["REGION_NAME"].toString());
 
-        // Обробка координат (можуть бути null або double)
-        query.bindValue(":lat", obj["LATITUDE"].isDouble() ? obj["LATITUDE"].toDouble() : QVariant(QVariant::Double));
-        query.bindValue(":lon", obj["LONGITUDE"].isDouble() ? obj["LONGITUDE"].toDouble() : QVariant(QVariant::Double));
+//         // Обробка координат (можуть бути null або double)
+//         query.bindValue(":lat", obj["LATITUDE"].isDouble() ? obj["LATITUDE"].toDouble() : QVariant(QVariant::Double));
+//         query.bindValue(":lon", obj["LONGITUDE"].isDouble() ? obj["LONGITUDE"].toDouble() : QVariant(QVariant::Double));
 
-        if (!query.exec()) {
-            errorOut = "SQL Error for Terminal " + QString::number(obj["TERMINAL_ID"].toInt()) + ": " + query.lastError().text();
-            return false;
-        }
-    }
-    return true;
-}
+//         if (!query.exec()) {
+//             errorOut = "SQL Error for Terminal " + QString::number(obj["TERMINAL_ID"].toInt()) + ": " + query.lastError().text();
+//             return false;
+//         }
+//     }
+//     return true;
+// }
 
 
 QPair<QString, QString> DbManager::getExportTaskInfo(const QString& jsonFileName)
@@ -2125,4 +2170,55 @@ QVariantMap DbManager::syncViaDirect(int clientId, const QJsonObject& clientDeta
 
         return {{"error", lastError}};
     }
+}
+
+QJsonArray DbManager::getDashboardData()
+{
+    QJsonArray result;
+    QSqlQuery query(m_db);
+
+    // Вибираємо активних клієнтів і приєднуємо останній статус із таблиці SYNC_STATUS
+    QString sql = R"(
+        SELECT
+            c.CLIENT_ID,
+            c.CLIENT_NAME,
+            c.SYNC_METHOD,
+            s.LAST_SYNC_DATE,
+            s.LAST_SYNC_STATUS,
+            s.LAST_SYNC_MESSAGE
+        FROM CLIENTS c
+        LEFT JOIN SYNC_STATUS s ON c.CLIENT_ID = s.CLIENT_ID
+        WHERE c.IS_ACTIVE = 1
+        ORDER BY c.CLIENT_NAME
+    )";
+
+    if (!query.exec(sql)) {
+        logCritical() << "Failed to fetch dashboard data:" << query.lastError().text();
+        return result;
+    }
+
+    while (query.next()) {
+        QJsonObject clientObj;
+        clientObj["client_id"] = query.value("CLIENT_ID").toInt();
+        clientObj["client_name"] = query.value("CLIENT_NAME").toString();
+        clientObj["sync_method"] = query.value("SYNC_METHOD").toString();
+
+        // Форматуємо дату
+        QDateTime dt = query.value("LAST_SYNC_DATE").toDateTime();
+        if (dt.isValid()) {
+            clientObj["last_sync_date"] = dt.toString("yyyy-MM-dd HH:mm:ss");
+        } else {
+            clientObj["last_sync_date"] = "";
+        }
+
+        // Якщо статус NULL (немає запису), ставимо "UNKNOWN" або пустий рядок
+        QString status = query.value("LAST_SYNC_STATUS").toString();
+        clientObj["status"] = status.isEmpty() ? "UNKNOWN" : status;
+
+        clientObj["message"] = query.value("LAST_SYNC_MESSAGE").toString();
+
+        result.append(clientObj);
+    }
+
+    return result;
 }

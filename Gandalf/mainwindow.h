@@ -27,6 +27,8 @@ private slots:
 
     void on_actionExportTasks_triggered();
 
+    void on_actionOpenSyncMonitor_triggered();
+
 private:
     Ui::MainWindow *ui;
 };
