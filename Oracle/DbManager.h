@@ -69,6 +69,9 @@ public:
 
     bool processObjectsSync(int clientId, const QJsonArray& objects, QString& errorOut);
 
+    // Новий метод для прямої синхронізації
+    QVariantMap syncViaDirect(int clientId, const QJsonObject& clientDetails);
+
 private:
     DbManager(); // Конструктор тепер приватний
     ~DbManager();
@@ -77,6 +80,12 @@ private:
     QVariantMap syncViaDirectConnection(int clientId, const QJsonObject& clientDetails);
     QVariantMap syncViaPalantir(int clientId, const QJsonObject& clientDetails);
     QVariantMap syncViaFile(int clientId, const QJsonObject& clientDetails);
+
+    // Отримує назву таблиці та поля для пошуку за іменем файлу
+    QPair<QString, QString> getExportTaskInfo(const QString& jsonFileName);
+
+    // Універсальний метод імпорту
+    bool processGenericSync(int clientId, const QString& tableName, const QString& matchFields, const QJsonArray& data, QString& errorOut);
 
     // Забороняємо копіювання
     DbManager(const DbManager&) = delete;

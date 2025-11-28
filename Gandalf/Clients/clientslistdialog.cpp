@@ -721,10 +721,19 @@ void ClientsListDialog::generateExporterPackage(const QJsonArray& tasks)
         QJsonObject task = value.toObject();
 
         if (task["is_active"].toInt() != 1) {
-            continue; // Пропускаємо цей крок циклу, файл не створюється
+            continue; // Пропускаємо неактивні
         }
 
-        QString queryFilename = QString("query_%1.sql").arg(task["task_name"].toString().toLower());
+        // --- ВИПРАВЛЕННЯ ПОЧАТОК ---
+        // Використовуємо реальне ім'я файлу з налаштувань БД (query_posdatas.sql),
+        // а не генеруємо його з назви завдання (щоб уникнути пробілів).
+        QString queryFilename = task["query_filename"].toString();
+
+        // На випадок, якщо в базі пусто (старі записи), залишаємо фолбек, але вирізаємо пробіли
+        if (queryFilename.isEmpty()) {
+            queryFilename = QString("query_%1.sql").arg(task["task_name"].toString().toLower().simplified().replace(" ", ""));
+        }
+        // --- ВИПРАВЛЕННЯ КІНЕЦЬ ---
 
         // 2a. Зберігаємо .sql файл
         QFile sqlFile(tempDir.path() + "/" + queryFilename);
@@ -741,8 +750,14 @@ void ClientsListDialog::generateExporterPackage(const QJsonArray& tasks)
         // 2b. Додаємо завдання в конфіг
         QJsonObject taskConfigEntry;
         taskConfigEntry["task_name"] = task["task_name"];
-        taskConfigEntry["query_file"] = queryFilename;
-        taskConfigEntry["output_file"] = queryFilename.replace(".sql", ".json");
+        taskConfigEntry["query_file"] = queryFilename; // Наприклад: query_posdatas.sql
+
+        // Формуємо ім'я вихідного файлу (.json) на основі вхідного (.sql)
+        // Використовуємо окрему змінну, щоб не псувати queryFilename
+        QString outputJsonName = queryFilename;
+        outputJsonName.replace(".sql", ".json", Qt::CaseInsensitive);
+
+        taskConfigEntry["output_file"] = outputJsonName; // Наприклад: query_posdatas.json
         taskConfigEntry["target_table"] = task["target_table"].toString();
         taskConfigEntry["embed_client_id"] = config["embed_client_id"];
         taskConfigEntry["params"] = config["params"];
