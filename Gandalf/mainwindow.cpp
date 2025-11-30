@@ -10,8 +10,13 @@
 #include "Oracle/SessionManager.h"
 #include "Oracle/Logger.h"
 #include "Clients/syncstatusdialog.h"
+#include "Oracle/ApiClient.h"
+#include "Oracle/AppParams.h"
+#include "Clients/SyncManager.h"
 
 #include <QMessageBox>
+#include <QTimer>
+#include <QDateTime>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -21,6 +26,19 @@ MainWindow::MainWindow(QWidget *parent)
 
     QString windowTitle = QString("Gandalf %1").arg(PROJECT_VERSION_STR);
     setWindowTitle(windowTitle);
+
+    // Читаємо параметр (періодичність у днях).
+    // Якщо параметра немає, беремо 1 день за замовчуванням.
+    m_syncPeriodDays = AppParams::instance().getParam("Gandalf", "SyncPeriodDays", 1).toInt();
+
+    // Якщо прийшов 0 або помилка -> ставимо 1
+    if (m_syncPeriodDays <= 0) m_syncPeriodDays = 1;
+
+    if (m_syncPeriodDays > 0) {
+        logInfo() << "Auto-sync check scheduled in 2 seconds. Period:" << m_syncPeriodDays << "days.";
+        // Запускаємо перевірку через 2 секунди після старту
+        QTimer::singleShot(2000, this, &MainWindow::checkAutoSyncNeeded);
+    }
 }
 
 MainWindow::~MainWindow()
@@ -82,3 +100,71 @@ void MainWindow::on_actionOpenSyncMonitor_triggered()
     dlg.exec();
 }
 
+void MainWindow::checkAutoSyncNeeded()
+{
+    // Підписуємося на сигнал ОТРИМАННЯ ДАНИХ один раз
+    // Важливо використати Qt::SingleShotConnection, щоб цей слот спрацював лише 1 раз,
+    // а не викликався щоразу, коли ми відкриваємо діалог моніторингу.
+    connect(&ApiClient::instance(), &ApiClient::dashboardDataFetched,
+            this, &MainWindow::onDashboardDataForAutoSync,
+            Qt::SingleShotConnection);
+
+    // Робимо запит до API (той самий, що і для діалогу)
+    ApiClient::instance().fetchDashboardData();
+}
+
+void MainWindow::onDashboardDataForAutoSync(const QJsonArray& data)
+{
+    logInfo() << "Checking clients for auto-sync...";
+    int queuedCount = 0;
+    QDateTime now = QDateTime::currentDateTime();
+
+    for (const QJsonValue& val : data) {
+        QJsonObject obj = val.toObject();
+        int clientId = obj["client_id"].toInt();
+        QString lastSyncStr = obj["last_sync_date"].toString();
+        QString status = obj["status"].toString();
+
+        bool needSync = false;
+
+        // 1. Якщо ніколи не синхронізувався
+        if (lastSyncStr.isEmpty()) {
+            needSync = true;
+        }
+        else {
+            // 2. Перевіряємо давність
+            QDateTime lastSync = QDateTime::fromString(lastSyncStr, "yyyy-MM-dd HH:mm:ss");
+            if (lastSync.isValid()) {
+                // Різниця у днях
+                qint64 daysDiff = lastSync.daysTo(now);
+                if (daysDiff >= m_syncPeriodDays) {
+                    needSync = true;
+                }
+            } else {
+                // Дата некоректна -> синхронізуємо
+                needSync = true;
+            }
+        }
+
+        // Додаткова умова: Якщо останній статус FAILED -> теж можна спробувати ще раз
+        if (status == "FAILED") {
+            needSync = true;
+        }
+
+        if (needSync) {
+            logInfo() << "Auto-sync triggered for client" << clientId;
+            SyncManager::instance().queueClient(clientId);
+            queuedCount++;
+        }
+    }
+
+    if (queuedCount > 0) {
+        // Можна показати спливаюче повідомлення у треї або статус-барі
+        ui->statusbar->showMessage(QString("Автозапуск: Розпочато синхронізацію %1 клієнтів").arg(queuedCount), 10000);
+
+        // (Опціонально) Можна автоматично відкрити монітор, якщо хочете:
+        // on_actionOpenSyncMonitor_triggered();
+    } else {
+        logInfo() << "All clients are up to date.";
+    }
+}

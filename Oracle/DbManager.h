@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QDateTime>
 #include <QJsonArray>
+#include <QMutex>
 
 
 class ConfigManager;
@@ -96,5 +97,6 @@ private:
 private:
     QSqlDatabase m_db;
     QString m_lastError;
+    QMutex m_syncMutex;
 };
 #endif // DBMANAGER_H

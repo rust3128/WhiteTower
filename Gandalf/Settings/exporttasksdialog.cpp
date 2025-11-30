@@ -16,6 +16,8 @@ ExportTasksDialog::ExportTasksDialog(QWidget *parent)
     ui->setupUi(this);
     setWindowTitle("⚙️ Керування завданнями експорту");
 
+    m_sqlHighlighter = new SqlHighlighter(ui->plainTextEditSQL->document());
+
     createModel();
     createConnections();
     createUI();
@@ -237,6 +239,7 @@ void ExportTasksDialog::populateDetailsForm(const QJsonObject& task)
         ui->lineEditTaskName->setText(task["task_name"].toString());
         ui->lineEditQueryFilename->setText(task["query_filename"].toString());
         ui->lineEditTargetTable->setText(task["target_table"].toString());
+        ui->lineEditMatchFields->setText(task["match_fields"].toString());
         ui->lineEditDescription->setText(task["description"].toString());
         // is_active приходить як 0 або 1
         ui->checkBoxIsActive->setChecked(task["is_active"].toInt() == 1);
@@ -253,6 +256,7 @@ QJsonObject ExportTasksDialog::gatherFormData() const
     data["task_name"] = ui->lineEditTaskName->text();
     data["query_filename"] = ui->lineEditQueryFilename->text();
     data["target_table"] = ui->lineEditTargetTable->text().trimmed();
+    data["match_fields"] = ui->lineEditMatchFields->text().trimmed();
     data["description"] = ui->lineEditDescription->text();
     data["is_active"] = ui->checkBoxIsActive->isChecked(); // QBool перетвориться на 1 або 0 в ApiClient
     data["sql_template"] = ui->plainTextEditSQL->toPlainText();

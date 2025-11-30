@@ -5,6 +5,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include "Oracle/ApiClient.h" // Для ApiError
+#include "SqlHighlighter.h"
 
 class QStandardItemModel;
 class QModelIndex; // Для роботи з індексом таблиці
@@ -50,6 +51,7 @@ private:
     Ui::ExportTasksDialog *ui;
     QStandardItemModel *m_model;
     int m_currentTaskId = -1; // -1 означає "Нове завдання"
+    SqlHighlighter *m_sqlHighlighter;
 };
 
 #endif // EXPORTTASKSDIALOG_H

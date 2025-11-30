@@ -31,6 +31,8 @@ add_executable(Gandalf
     Clients/SyncManager.h
     Clients/SyncManager.cpp
     Clients/syncstatusdialog.h Clients/syncstatusdialog.cpp Clients/syncstatusdialog.ui
+    Settings/SqlHighlighter.h
+    Settings/SqlHighlighter.cpp
 )
 
 # Вказуємо, де шукати заголовні файли (зокрема, з нашої бібліотеки Oracle)

@@ -93,16 +93,6 @@
        <string>Деталі завдання</string>
       </property>
       <layout class="QGridLayout" name="gridLayout_3">
-       <item row="3" column="1">
-        <widget class="QLineEdit" name="lineEditDescription"/>
-       </item>
-       <item row="4" column="0" colspan="2">
-        <widget class="QCheckBox" name="checkBoxIsActive">
-         <property name="text">
-          <string>Активне</string>
-         </property>
-        </widget>
-       </item>
        <item row="1" column="0">
         <widget class="QLabel" name="label_3">
          <property name="text">
@@ -110,15 +100,18 @@
          </property>
         </widget>
        </item>
-       <item row="6" column="0" colspan="2">
-        <widget class="QPlainTextEdit" name="plainTextEditSQL"/>
-       </item>
-       <item row="3" column="0">
-        <widget class="QLabel" name="label_4">
+       <item row="5" column="0" colspan="2">
+        <widget class="QCheckBox" name="checkBoxIsActive">
          <property name="text">
-          <string>Опис:</string>
+          <string>Активне</string>
          </property>
         </widget>
+       </item>
+       <item row="4" column="1">
+        <widget class="QLineEdit" name="lineEditDescription"/>
+       </item>
+       <item row="7" column="0" colspan="2">
+        <widget class="QPlainTextEdit" name="plainTextEditSQL"/>
        </item>
        <item row="0" column="0">
         <widget class="QLabel" name="label_2">
@@ -127,26 +120,47 @@
          </property>
         </widget>
        </item>
-       <item row="5" column="0">
+       <item row="4" column="0">
+        <widget class="QLabel" name="label_4">
+         <property name="text">
+          <string>Опис:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="1">
+        <widget class="QLineEdit" name="lineEditQueryFilename"/>
+       </item>
+       <item row="0" column="1">
+        <widget class="QLineEdit" name="lineEditTaskName"/>
+       </item>
+       <item row="6" column="0">
         <widget class="QLabel" name="label_5">
          <property name="text">
           <string>SQL Шаблон (BLOB):</string>
          </property>
         </widget>
        </item>
-       <item row="0" column="1">
-        <widget class="QLineEdit" name="lineEditTaskName"/>
-       </item>
-       <item row="1" column="1">
-        <widget class="QLineEdit" name="lineEditQueryFilename"/>
-       </item>
-       <item row="2" column="1">
+       <item row="3" column="1">
         <widget class="QLineEdit" name="lineEditTargetTable"/>
        </item>
-       <item row="2" column="0">
+       <item row="3" column="0">
         <widget class="QLabel" name="label_6">
          <property name="text">
           <string>Таблиця за запису</string>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="0">
+        <widget class="QLabel" name="label_7">
+         <property name="text">
+          <string>Поля співставлення (Match Fields):</string>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="1">
+        <widget class="QLineEdit" name="lineEditMatchFields">
+         <property name="toolTip">
+          <string>Поля, за якими перевіряється існування запису (через кому)</string>
          </property>
         </widget>
        </item>

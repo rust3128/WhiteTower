@@ -1113,7 +1113,12 @@ QHttpServerResponse WebServer::handleCreateExportTaskRequest(const QHttpServerRe
     QJsonObject taskData = doc.object();
 
     // 3. Валідація полів (мінімальна)
-    if (!taskData.contains("task_name") || !taskData.contains("sql_template") || !taskData.contains("query_filename") || !taskData.contains("is_active")) {
+    if (!taskData.contains("task_name") ||
+        !taskData.contains("sql_template") ||
+        !taskData.contains("query_filename") ||
+        !taskData.contains("is_active") ||
+        !taskData.contains("match_fields") || // <-- ДОДАНО
+        !taskData.contains("target_table")) {
         return createJsonResponse(QJsonObject{{"error", "Missing required fields for create (task_name, sql_template, query_filename, is_active)"}},
                                   QHttpServerResponse::StatusCode::BadRequest);
     }
@@ -1166,6 +1171,7 @@ QHttpServerResponse WebServer::handleUpdateExportTaskRequest(const QString &task
         !taskData.contains("sql_template") ||
         !taskData.contains("query_filename") ||
         !taskData.contains("is_active") ||
+        !taskData.contains("match_fields") ||
         !taskData.contains("target_table")) { // <-- Варто додати сюди
 
         return createJsonResponse(QJsonObject{{"error", "Missing required fields"}}, QHttpServerResponse::StatusCode::BadRequest);
