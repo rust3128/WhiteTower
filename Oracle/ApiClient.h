@@ -79,6 +79,13 @@ public:
     // Команда на запуск синхронізації
     void syncClient(int clientId);
 
+    // Запит на отримання даних РРО (POS)
+    // telegramId = 0 за замовчуванням (для Gandalf)
+    void fetchStationPosData(int clientId, int terminalId, qint64 telegramId = 0);
+
+    // Запит на отримання резервуарів
+    void fetchStationTanks(int clientId, int terminalId, qint64 telegramId = 0);
+
 signals:
     // Сигнали для логіну
     void loginSuccess(User* user);
@@ -194,6 +201,13 @@ signals:
     // Сигнали результату запуску
     void clientSyncRequestFinished(int clientId, bool success, QString message);
 
+    //  Сигнали для РРО
+    void stationPosDataReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId);
+    void stationPosDataFailed(const ApiError& error, qint64 telegramId);
+
+    // Сигнали для резервуарів
+    void stationTanksReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId);
+    void stationTanksFailed(const ApiError& error, qint64 telegramId);
 
 private slots:
     void onLoginReplyFinished();
@@ -238,7 +252,11 @@ private slots:
     void onExportTaskDetailsReplyFinished();
     void onExportTaskSaveReplyFinished();
 
-    void onDashboardDataReplyFinished(); // Обробник відповіді
+    void onDashboardDataReplyFinished();
+
+    void onStationPosDataReplyFinished();
+
+    void onStationTanksReplyFinished();
 private:
     ApiClient(QObject* parent = nullptr);
     ~ApiClient() = default;

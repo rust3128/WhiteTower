@@ -53,6 +53,14 @@ void Bot::setupConnections()
     connect(&m_apiClient, &ApiClient::stationDetailsFetched, this, &Bot::onStationDetailsReceived);
     connect(&m_apiClient, &ApiClient::stationDetailsFetchFailed, this, &Bot::onStationDetailsFailed);
 
+    // --- РРО (POS) ---
+    connect(&m_apiClient, &ApiClient::stationPosDataReceived, this, &Bot::onStationPosDataReceived);
+    connect(&m_apiClient, &ApiClient::stationPosDataFailed, this, &Bot::onStationPosDataFailed);
+
+    // --- TANKS ------
+    connect(&m_apiClient, &ApiClient::stationTanksReceived, this, &Bot::onStationTanksReceived);
+    connect(&m_apiClient, &ApiClient::stationTanksFailed, this, &Bot::onStationTanksFailed);
+
     logInfo() << "Signal-slot connections established.";
 }
 
@@ -106,6 +114,8 @@ void Bot::setupCallbackHandlers()
     // Префікс "station:" (дії на картці АЗС)
     m_stationHandlers["stub"] = &Bot::handleCallbackStationStub;
     m_stationHandlers["map"]  = &Bot::handleCallbackStationMap;
+    m_stationHandlers["pos"] = &Bot::handleCallbackStationPos;
+    m_stationHandlers["tanks"] = &Bot::handleCallbackStationTanks;
 
     logInfo() << "Callback query handlers registered.";
 }
@@ -684,9 +694,24 @@ void Bot::onStationDetailsReceived(const QJsonObject& station, qint64 telegramId
 
     // --- Ряд 1: Заглушки (3 кнопки в ряд) ---
     QJsonArray row1;
-    row1.append(QJsonObject{{"text", "РРО"}, {"callback_data", "station:stub"}});
+    // !!! [ЗМІНА ТУТ] !!!
+    // Було: row1.append(QJsonObject{{"text", "РРО"}, {"callback_data", "station:stub"}});
+
+    // Стало: Формуємо реальний callback для РРО
+    // termNo - це змінна, яку ви отримали вище: QString termNo = station["terminal_no"].toString();
+    QString posCallback = QString("station:pos:%1:%2").arg(clientId).arg(termNo);
+
+    // Додаємо кнопку (використовуємо той самий стиль QJsonObject, що й у вас в коді)
+    row1.append(QJsonObject{{"text", "📠 РРО"}, {"callback_data", posCallback}});
+    // !!! [КІНЕЦЬ ЗМІНИ] !!!
+
+
+
     row1.append(QJsonObject{{"text", "ПРК"}, {"callback_data", "station:stub"}});
-    row1.append(QJsonObject{{"text", "Резервуари"}, {"callback_data", "station:stub"}});
+    // Формуємо callback: station:tanks:clientId:termNo
+    QString tanksCallback = QString("station:tanks:%1:%2").arg(clientId).arg(termNo);
+    // Додаємо кнопку
+    row1.append(QJsonObject{{"text", "🛢 Резервуари"}, {"callback_data", tanksCallback}});
     rows.append(row1);
 
     // --- Ряд 2: Мапа ---
@@ -872,13 +897,14 @@ void Bot::handleCallbackClientSelect(const QJsonObject& query, const QStringList
     QJsonArray rows;
     QJsonArray row1;
     row1.append(QJsonObject{
-        {"text", "📋 Список АЗС"},
-        {"callback_data", QString("stations:list:%1").arg(clientId)}
-    });
-    row1.append(QJsonObject{
         {"text", "⌨️ Ввести номер АЗС"},
         {"callback_data", QString("stations:enter:%1").arg(clientId)}
     });
+    row1.append(QJsonObject{
+        {"text", "📋 Список АЗС"},
+        {"callback_data", QString("stations:list:%1").arg(clientId)}
+    });
+
     rows.append(row1);
     QJsonArray row2;
     row2.append(QJsonObject{
@@ -912,18 +938,43 @@ void Bot::handleCallbackStationsList(const QJsonObject& query, const QStringList
  */
 void Bot::handleCallbackStationsEnter(const QJsonObject& query, const QStringList& parts)
 {
-    qint64 chatId = query["message"].toObject()["chat"].toObject()["id"].toVariant().toLongLong();
-    QString callbackQueryId = query["id"].toString();
+    qint64 telegramId = query["from"].toObject()["id"].toVariant().toLongLong();
+    QString callbackId = query["id"].toString();
 
-    if (parts.count() < 3) return; // Захист
-    int clientId = parts.at(2).toInt(); // "stations:enter:10"
+    // 1. Сценарій кнопки "Назад" (stations:enter:CLIENT_ID:TERMINAL_ID)
+    // parts: ["stations", "enter", "clientId", "terminalId"]
+    if (parts.count() >= 4) {
+        int clientId = parts.at(2).toInt();
+        QString terminalNo = parts.at(3);
 
-    m_userState[chatId] = UserState::WaitingForStationNumber;
-    m_userClientContext[chatId] = clientId;
+        // Зберігаємо контекст про всяк випадок
+        m_userClientContext[telegramId] = clientId;
 
-    logInfo() << "User" << chatId << "is now WaitingForStationNumber for client" << clientId;
-    m_telegramClient->answerCallbackQuery(callbackQueryId, "Введіть номер терміналу");
-    m_telegramClient->sendMessage(chatId, "<b>Введіть номер терміналу (АЗС):</b>");
+        m_telegramClient->answerCallbackQuery(callbackId, "Завантаження картки АЗС...");
+
+        // Відразу викликаємо API
+        m_apiClient.fetchStationDetails(telegramId, clientId, terminalNo);
+        return;
+    }
+
+    // 2. Сценарій ручного вводу (stations:enter:CLIENT_ID)
+    // parts: ["stations", "enter", "clientId"]
+    if (parts.count() >= 3) {
+        int clientId = parts.at(2).toInt();
+
+        // !!! ВИПРАВЛЕННЯ: ЗБЕРІГАЄМО КОНТЕКСТ КЛІЄНТА !!!
+        m_userClientContext[telegramId] = clientId;
+        // ------------------------------------------------
+
+        m_userState[telegramId] = UserState::WaitingForStationNumber;
+
+        m_telegramClient->sendMessage(telegramId, "🔢 <b>Введіть номер терміналу (АЗС):</b>");
+        m_telegramClient->answerCallbackQuery(callbackId);
+    } else {
+        // Якщо раптом прийшло щось без ID клієнта
+        logWarning() << "Invalid stations:enter callback:" << parts;
+        m_telegramClient->answerCallbackQuery(callbackId, "? Помилка навігації. Спробуйте ще раз.");
+    }
 }
 
 /**
@@ -998,3 +1049,197 @@ void Bot::handleCallbackUnknown(const QJsonObject& query, const QStringList& par
 }
 
 // --- (КІНЕЦЬ НОВИХ ОБРОБНИКІВ) ---
+
+void Bot::handleCallbackStationPos(const QJsonObject& query, const QStringList& parts)
+{
+    // Формат callback: station:pos:<clientId>:<terminalId>
+    // parts[0]="station", parts[1]="pos", parts[2]=clientId, parts[3]=terminalId
+
+    if (parts.count() < 4) {
+        logWarning() << "Invalid POS callback format:" << parts;
+        return;
+    }
+
+    int clientId = parts.at(2).toInt();
+    int terminalId = parts.at(3).toInt();
+
+    // Отримуємо telegramId того, хто натиснув
+    qint64 telegramId = query["from"].toObject()["id"].toVariant().toLongLong();
+    QString callbackId = query["id"].toString();
+
+    // Показуємо користувачеві "годинник" (що запит пішов)
+    m_telegramClient->answerCallbackQuery(callbackId, "Завантаження даних РРО...");
+
+    // Викликаємо API
+    m_apiClient.fetchStationPosData(clientId, terminalId, telegramId);
+}
+
+void Bot::onStationPosDataReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId)
+{
+    if (data.isEmpty()) {
+        m_telegramClient->sendMessage(telegramId, QString("ℹ️ <b>Інформація про РРО відсутня</b> для АЗС %1.").arg(terminalId));
+        return;
+    }
+
+    QString message = QString("📠 <b>РРО на АЗС %1</b>\n\n").arg(terminalId);
+
+    for (const QJsonValue& val : data) {
+        QJsonObject pos = val.toObject();
+
+        // Читаємо дані
+        int posId = pos["pos_id"].toInt();
+        QString manufacturer = pos["manufacturer"].toString();
+        QString model = pos["model"].toString();
+        QString factoryNum = pos["factory_number"].toString();
+        QString taxNum = pos["tax_number"].toString();
+        QString dateReg = pos["reg_date"].toString();
+
+        // --- ЧИТАЄМО НОВІ ПОЛЯ ---
+        QString ver = pos["version"].toString();
+        QString muk = pos["muk_version"].toString();
+        // -------------------------
+
+        // 1. Заголовок
+        message += QString("🔹 <b>Каса №%1</b>").arg(posId);
+        if (!manufacturer.isEmpty() || !model.isEmpty()) {
+            message += QString(" %1").arg(model);
+        }
+        message += "\n";
+
+        // 2. Основні номери
+        if (!factoryNum.isEmpty()) message += QString("   ЗН: <code>%1</code>\n").arg(factoryNum);
+        if (!taxNum.isEmpty())     message += QString("   ФН: <code>%1</code>\n").arg(taxNum);
+
+        // 3. --- ВИВЕДЕННЯ ВЕРСІЙ ---
+        if (!ver.isEmpty() || !muk.isEmpty()) {
+            QString vStr;
+            if (!ver.isEmpty()) vStr += QString("ПО: %1").arg(ver);
+            if (!ver.isEmpty() && !muk.isEmpty()) vStr += " | "; // Розділювач, якщо є обидві
+            if (!muk.isEmpty()) vStr += QString("МУК: %1").arg(muk);
+
+            message += QString("   🛠 %1\n").arg(vStr);
+        }
+        // ---------------------------
+
+        if (!dateReg.isEmpty())    message += QString("   📅 Рєєстрація %1\n").arg(dateReg);
+
+        message += "\n";
+    }
+    // --- 2. КНОПКА "НАЗАД" ---
+    QJsonObject keyboard;
+    QJsonArray rows;
+    QJsonArray rowBack;
+
+    // ГОЛОВНИЙ МОМЕНТ:
+    // Ми формуємо команду "stations:enter" і додаємо туди ID.
+    // Це змушує бота думати: "О, користувач вибрав АЗС №1001 клієнта №3".
+    // І бот одразу покаже картку станції (ту, що на скріншоті).
+    QString backCallback = QString("stations:enter:%1:%2").arg(clientId).arg(terminalId);
+
+    rowBack.append(QJsonObject{
+        {"text", "⬅️ Назад до АЗС"},
+        {"callback_data", backCallback}
+    });
+
+    rows.append(rowBack);
+    keyboard["inline_keyboard"] = rows;
+
+    // 3. Відправляємо
+    m_telegramClient->sendMessageWithInlineKeyboard(telegramId, message, keyboard);
+}
+
+
+void Bot::onStationPosDataFailed(const ApiError& error, qint64 telegramId)
+{
+    m_telegramClient->sendMessage(telegramId, "❌ Не вдалося отримати дані РРО.\n" + error.errorString);
+}
+
+
+void Bot::handleCallbackStationTanks(const QJsonObject& query, const QStringList& parts)
+{
+    // parts: station:tanks:clientId:terminalId
+    if (parts.count() < 4) return;
+
+    int clientId = parts.at(2).toInt();
+    int terminalId = parts.at(3).toInt();
+
+    qint64 telegramId = query["from"].toObject()["id"].toVariant().toLongLong();
+    QString callbackId = query["id"].toString();
+
+    m_telegramClient->answerCallbackQuery(callbackId, "Завантаження резервуарів...");
+
+    m_apiClient.fetchStationTanks(clientId, terminalId, telegramId);
+}
+
+void Bot::onStationTanksReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId)
+{
+    QString message;
+
+    if (data.isEmpty()) {
+        message = QString("ℹ️ <b>Резервуари не знайдені</b> для АЗС %1.").arg(terminalId);
+    } else {
+        // Заголовок
+        message = QString("🏭 <b>АЗС №%1: Паспорт резервуарів</b>\n").arg(terminalId);
+        message += "➖➖➖➖➖➖➖➖➖➖\n\n";
+
+        for (const QJsonValue& val : data) {
+            QJsonObject t = val.toObject();
+
+            // Читаємо ВСІ необхідні поля з DbManager (snake_case)
+            int tankId = t["tank_id"].toInt();
+            QString fuelName = t["fuel_name"].toString();
+            QString fuelShortname = t["fuel_shortname"].toString();
+
+            int maxVol = t["max_vol"].toInt();
+            int minVol = t["min_vol"].toInt();
+            int deadMax = t["dead_max"].toInt();
+            int deadMin = t["dead_min"].toInt();
+            int tubeVol = t["tube_vol"].toInt();
+
+            // --- ФОРМАТУВАННЯ ЗГІДНО СПЕЦИФІКАЦІЇ ---
+
+            // Line 1 (Header)
+            message += QString("🔹 <b>Резервуар %1</b> – %2, %3:\n")
+                           .arg(tankId)
+                           .arg(fuelName.isEmpty() ? fuelShortname : fuelName)
+                           .arg(fuelShortname);
+
+            // Line 2 (Volume Limits)
+            message += QString("   🔽 Min: %1 | 🔼 Max: %2\n")
+                           .arg(minVol)
+                           .arg(maxVol);
+
+            // Line 3 (Dead/Unusable Limits)
+            message += QString("   📏 Рівномір: %1 - %2\n")
+                           .arg(deadMin)
+                           .arg(deadMax);
+
+            // Line 4 (Pipe Volume)
+            message += QString("   🏭 Трубопровід: %1\n").arg(tubeVol);
+
+            message += "\n"; // Розділювач
+        }
+    }
+
+    // --- КНОПКА "НАЗАД" ---
+    QJsonObject keyboard;
+    QJsonArray rows;
+    QJsonArray rowBack;
+
+    QString backCallback = QString("stations:enter:%1:%2").arg(clientId).arg(terminalId);
+
+    rowBack.append(QJsonObject{
+        {"text", "⬅️ Назад до АЗС"},
+        {"callback_data", backCallback}
+    });
+
+    rows.append(rowBack);
+    keyboard["inline_keyboard"] = rows;
+
+    m_telegramClient->sendMessageWithInlineKeyboard(telegramId, message, keyboard);
+}
+
+void Bot::onStationTanksFailed(const ApiError& error, qint64 telegramId)
+{
+    m_telegramClient->sendMessage(telegramId, "❌ Не вдалося отримати дані резервуарів.\n" + error.errorString);
+}

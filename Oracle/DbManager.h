@@ -76,6 +76,12 @@ public:
     // Повертає масив JSON зі статусами всіх клієнтів
     QJsonArray getDashboardData();
 
+    // Отримати список РРО для конкретного терміналу (Для Бота та Gandalf)
+    QJsonArray getPosDataByTerminal(int clientId, int terminalId);
+
+    // Отримати список резервуарів для терміналу
+    QJsonArray getTanksByTerminal(int clientId, int terminalId);
+
 private:
     DbManager(); // Конструктор тепер приватний
     ~DbManager();

@@ -92,6 +92,12 @@ private:
     // GET /api/dashboard
     QHttpServerResponse handleDashboardRequest(const QHttpServerRequest &request);
 
+    // Новий метод: Отримати РРО (приймає або BotKey, або UserToken)
+    QHttpServerResponse handleGetStationPosData(const QString& clientId, const QString& terminalNo, const QHttpServerRequest& request);
+
+    // GET /api/clients/<clientId>/station/<terminalNo>/tanks
+    QHttpServerResponse handleGetStationTanks(const QString& clientId, const QString& terminalNo, const QHttpServerRequest& request);
+
 private:
     QHttpServer* m_httpServer;
     quint16 m_port;

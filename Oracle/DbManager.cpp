@@ -2214,3 +2214,89 @@ QJsonArray DbManager::getDashboardData()
 
     return result;
 }
+
+
+QJsonArray DbManager::getPosDataByTerminal(int clientId, int terminalId)
+{
+    QJsonArray results;
+    QSqlQuery query(m_db);
+
+    // --- 1. ОНОВЛЕНИЙ SQL ЗАПИТ (Додано MUKVERSION) ---
+    QString sql = "SELECT POS_ID, MANUFACTURER, MODEL, "
+                  "POSVERSION, MUKVERSION, " // <--- ДОДАНО ТУТ
+                  "FACTORYNUMBER, TAXNUMBER, DATREG "
+                  "FROM POS_DATA "
+                  "WHERE CLIENT_ID = :clientId AND TERMINAL_ID = :termId "
+                  "ORDER BY POS_ID";
+
+    query.prepare(sql);
+    query.bindValue(":clientId", clientId);
+    query.bindValue(":termId", terminalId);
+
+    if (query.exec()) {
+        while (query.next()) {
+            QJsonObject item;
+
+            item["pos_id"] = query.value("POS_ID").toInt();
+            item["manufacturer"] = query.value("MANUFACTURER").toString();
+            item["model"] = query.value("MODEL").toString();
+
+            // --- 2. ДОДАЄМО ВЕРСІЇ В JSON ---
+            item["version"] = query.value("POSVERSION").toString();
+            item["muk_version"] = query.value("MUKVERSION").toString();
+            // --------------------------------
+
+            item["factory_number"] = query.value("FACTORYNUMBER").toString();
+            item["tax_number"] = query.value("TAXNUMBER").toString();
+
+            QDateTime dt = query.value("DATREG").toDateTime();
+            item["reg_date"] = dt.isValid() ? dt.toString("dd.MM.yyyy") : "";
+
+            results.append(item);
+        }
+    } else {
+        logCritical() << "Failed to fetch POS data:" << query.lastError().text();
+    }
+
+    return results;
+}
+
+QJsonArray DbManager::getTanksByTerminal(int clientId, int terminalId)
+{
+    QJsonArray results;
+    QSqlQuery query(m_db);
+
+    QString sql = "SELECT TANK_ID, FUEL_ID, SHORTNAME, NAME, "
+                  "MAXVALUE, MINVALUE, DEADMAX, DEADMIN, TUBEAMOUNT "
+                  "FROM TANKS_DATA "
+                  "WHERE CLIENT_ID = :clientId AND TERMINAL_ID = :termId "
+                  "ORDER BY TANK_ID";
+
+    query.prepare(sql);
+    query.bindValue(":clientId", clientId);
+    query.bindValue(":termId", terminalId);
+
+    if (query.exec()) {
+        while (query.next()) {
+            QJsonObject item;
+
+            item["tank_id"] = query.value("TANK_ID").toInt();
+            item["fuel_id"] = query.value("FUEL_ID").toInt();
+            item["fuel_shortname"] = query.value("SHORTNAME").toString();
+            item["fuel_name"] = query.value("NAME").toString();
+
+            // Об'єми (ми домовилися, що вони INTEGER)
+            item["max_vol"] = query.value("MAXVALUE").toInt();
+            item["min_vol"] = query.value("MINVALUE").toInt();
+            item["dead_max"] = query.value("DEADMAX").toInt();
+            item["dead_min"] = query.value("DEADMIN").toInt();
+            item["tube_vol"] = query.value("TUBEAMOUNT").toInt();
+
+            results.append(item);
+        }
+    } else {
+        logCritical() << "Failed to fetch Tanks data:" << query.lastError().text();
+    }
+
+    return results;
+}

@@ -165,6 +165,18 @@ void WebServer::setupRoutes()
     m_httpServer->route("/api/dashboard", QHttpServerRequest::Method::Get, [this](const QHttpServerRequest &request) {
         return handleDashboardRequest(request);
     });
+
+    // Додаємо новий маршрут для РРО
+    m_httpServer->route("/api/clients/<arg>/station/<arg>/pos", QHttpServerRequest::Method::Get,
+                        [this](const QString &clientId, const QString &terminalNo, const QHttpServerRequest &request) {
+                            return handleGetStationPosData(clientId, terminalNo, request);
+                        });
+
+    // Додаємо маршрут для резервуарів
+    m_httpServer->route("/api/clients/<arg>/station/<arg>/tanks", QHttpServerRequest::Method::Get,
+                        [this](const QString &clientId, const QString &terminalNo, const QHttpServerRequest &request) {
+                            return handleGetStationTanks(clientId, terminalNo, request);
+                        });
 }
 
 void WebServer::logRequest(const QHttpServerRequest &request)
@@ -1206,5 +1218,43 @@ QHttpServerResponse WebServer::handleDashboardRequest(const QHttpServerRequest &
     QJsonArray data = DbManager::instance().getDashboardData();
 
     // 3. Віддаємо результат
+    return createJsonResponse(data, QHttpServerResponse::StatusCode::Ok);
+}
+
+
+QHttpServerResponse WebServer::handleGetStationPosData(const QString& clientId, const QString& terminalNo, const QHttpServerRequest& request)
+{
+    // Ваша функція authenticateRequest сама розбереться, хто це (Бот чи Гандальф)
+    User* user = authenticateRequest(request);
+
+    if (!user) {
+        return createJsonResponse(QJsonObject{{"error", "Unauthorized"}}, QHttpServerResponse::StatusCode::Unauthorized);
+    }
+
+    // Якщо дійшли сюди - користувач авторизований.
+    // Отримуємо дані:
+    QJsonArray data = DbManager::instance().getPosDataByTerminal(clientId.toInt(), terminalNo.toInt());
+
+    // Важливо: authenticateRequest повертає об'єкт, який треба видалити (згідно коментаря у вашому коді)
+    delete user;
+
+    return createJsonResponse(data, QHttpServerResponse::StatusCode::Ok);
+}
+
+
+QHttpServerResponse WebServer::handleGetStationTanks(const QString& clientId, const QString& terminalNo, const QHttpServerRequest& request)
+{
+    // 1. Універсальна авторизація (Бот або User)
+    User* user = authenticateRequest(request);
+    if (!user) {
+        return createJsonResponse(QJsonObject{{"error", "Unauthorized"}}, QHttpServerResponse::StatusCode::Unauthorized);
+    }
+
+    // 2. Отримуємо дані
+    QJsonArray data = DbManager::instance().getTanksByTerminal(clientId.toInt(), terminalNo.toInt());
+
+    // 3. Прибираємо за собою
+    delete user;
+
     return createJsonResponse(data, QHttpServerResponse::StatusCode::Ok);
 }

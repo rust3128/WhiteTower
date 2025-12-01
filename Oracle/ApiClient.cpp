@@ -1623,3 +1623,113 @@ void ApiClient::syncClient(int clientId)
         reply->deleteLater();
     });
 }
+
+void ApiClient::fetchStationPosData(int clientId, int terminalId, qint64 telegramId)
+{
+    // 1. Формуємо URL до нашого нового маршруту
+    QString urlStr = QString("%1/api/clients/%2/station/%3/pos")
+                         .arg(m_serverUrl)
+                         .arg(clientId)
+                         .arg(terminalId);
+    QUrl url(urlStr);
+    QNetworkRequest request;
+
+    // 2. Логіка вибору авторизації
+    if (!m_botApiKey.isEmpty()) {
+        // --- МИ В ISENGARD (БОТ) ---
+        // Використовуємо існуючий хелпер, який додає X-Bot-Token та X-Telegram-ID
+        request = createBotRequest(url, telegramId);
+    } else {
+        // --- МИ В GANDALF (GUI) ---
+        // Використовуємо хелпер для Bearer Token
+        request = createAuthenticatedRequest(url);
+    }
+
+    // 3. Відправляємо запит
+    QNetworkReply* reply = m_networkManager->get(request);
+
+    // 4. Зберігаємо контекст (щоб знати, кому відповідати)
+    reply->setProperty("telegramId", telegramId);
+    reply->setProperty("clientId", clientId);
+    reply->setProperty("terminalId", terminalId);
+
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onStationPosDataReplyFinished);
+}
+
+void ApiClient::onStationPosDataReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    // Дістаємо контекст
+    qint64 telegramId = reply->property("telegramId").toLongLong();
+    int clientId = reply->property("clientId").toInt();
+    int terminalId = reply->property("terminalId").toInt();
+
+    ApiError error = parseReply(reply);
+
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200) {
+        // Успіх: Парсимо JSON масив
+        QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
+        if (doc.isArray()) {
+            emit stationPosDataReceived(doc.array(), clientId, terminalId, telegramId);
+        } else {
+            // Якщо прийшло щось дивне (не масив)
+            error.errorString = "Invalid response format (expected array)";
+            emit stationPosDataFailed(error, telegramId);
+        }
+    } else {
+        // Помилка
+        emit stationPosDataFailed(error, telegramId);
+    }
+    reply->deleteLater();
+}
+
+
+void ApiClient::fetchStationTanks(int clientId, int terminalId, qint64 telegramId)
+{
+    // 1. Формуємо URL: /api/clients/ID/station/ID/tanks
+    QString urlStr = QString("%1/api/clients/%2/station/%3/tanks")
+                         .arg(m_serverUrl)
+                         .arg(clientId)
+                         .arg(terminalId);
+
+    QUrl url(urlStr);
+    QNetworkRequest request;
+
+    // 2. Авторизація (Бот або Гандальф)
+    if (!m_botApiKey.isEmpty()) {
+        request = createBotRequest(url, telegramId);
+    } else {
+        request = createAuthenticatedRequest(url);
+    }
+
+    QNetworkReply* reply = m_networkManager->get(request);
+
+    // 3. Контекст
+    reply->setProperty("telegramId", telegramId);
+    reply->setProperty("clientId", clientId);
+    reply->setProperty("terminalId", terminalId);
+
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onStationTanksReplyFinished);
+}
+
+void ApiClient::onStationTanksReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    qint64 telegramId = reply->property("telegramId").toLongLong();
+    int clientId = reply->property("clientId").toInt();
+    int terminalId = reply->property("terminalId").toInt();
+
+    ApiError error = parseReply(reply);
+
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200) {
+        QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
+        emit stationTanksReceived(doc.array(), clientId, terminalId, telegramId);
+    } else {
+        emit stationTanksFailed(error, telegramId);
+    }
+    reply->deleteLater();
+}
