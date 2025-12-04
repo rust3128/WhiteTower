@@ -177,6 +177,11 @@ void WebServer::setupRoutes()
                         [this](const QString &clientId, const QString &terminalNo, const QHttpServerRequest &request) {
                             return handleGetStationTanks(clientId, terminalNo, request);
                         });
+
+    // GET /api/clients/<clientId>/station/<terminalNo>/dispensers
+    m_httpServer->route(QStringLiteral("/api/clients/<arg>/station/<arg>/dispensers"), [this](const QString& clientId, const QString& terminalNo, const QHttpServerRequest &request) {
+        return handleGetStationDispensers(clientId, terminalNo, request);
+    });
 }
 
 void WebServer::logRequest(const QHttpServerRequest &request)
@@ -1256,5 +1261,28 @@ QHttpServerResponse WebServer::handleGetStationTanks(const QString& clientId, co
     // 3. Прибираємо за собою
     delete user;
 
+    return createJsonResponse(data, QHttpServerResponse::StatusCode::Ok);
+}
+
+// WebServer.cpp (Додайте після handleGetStationTanks)
+
+/**
+ * @brief Обробляє запит на отримання конфігурації ТРК та Пістолетів.
+ * Маршрут: GET /api/clients/<clientId>/station/<terminalNo>/dispensers
+ */
+QHttpServerResponse WebServer::handleGetStationDispensers(const QString& clientId, const QString& terminalNo, const QHttpServerRequest& request)
+{
+    // 1. Універсальна авторизація (Бот або User)
+    User* user = authenticateRequest(request);
+    if (!user) {
+        return createJsonResponse(QJsonObject{{"error", "Unauthorized"}}, QHttpServerResponse::StatusCode::Unauthorized);
+    }
+
+    // 2. Отримуємо дані з DbManager
+    QJsonArray data = DbManager::instance().getDispenserConfigByTerminal(clientId.toInt(), terminalNo.toInt());
+
+    delete user;
+
+    // 3. Повертаємо масив
     return createJsonResponse(data, QHttpServerResponse::StatusCode::Ok);
 }

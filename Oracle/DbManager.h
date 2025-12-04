@@ -82,6 +82,9 @@ public:
     // Отримати список резервуарів для терміналу
     QJsonArray getTanksByTerminal(int clientId, int terminalId);
 
+    // Отримати конфігурацію ПРК
+    QJsonArray getDispenserConfigByTerminal(int clientId, int terminalId);
+
 private:
     DbManager(); // Конструктор тепер приватний
     ~DbManager();
@@ -95,7 +98,9 @@ private:
     QPair<QString, QString> getExportTaskInfo(const QString& jsonFileName);
 
     // Універсальний метод імпорту
-    bool processGenericSync(int clientId, const QString& tableName, const QString& matchFields, const QJsonArray& data, QString& errorOut);
+    bool processGenericSync(int clientId, const QString& tableName, const QString& matchFields,
+                            const QString& deleteStrategy,
+                            const QJsonArray& data, QString& errorOut);
 
     // Забороняємо копіювання
     DbManager(const DbManager&) = delete;
@@ -103,6 +108,6 @@ private:
 private:
     QSqlDatabase m_db;
     QString m_lastError;
-    QMutex m_syncMutex;
+    QMutex m_dbMutex;
 };
 #endif // DBMANAGER_H

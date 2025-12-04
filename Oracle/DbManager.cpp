@@ -862,7 +862,7 @@ QVariantMap DbManager::syncViaDirectConnection(int clientId, const QJsonObject& 
 // ===================================================================
 QVariantMap DbManager::syncClientObjects(int clientId)
 {
-    QMutexLocker locker(&m_syncMutex);
+    QMutexLocker locker(&m_dbMutex);
 
     // --- 1. Оновлюємо статус на "PENDING" (Виконується) ---
     QSqlQuery statusQuery(m_db);
@@ -920,6 +920,14 @@ QVariantMap DbManager::syncViaFile(int clientId, const QJsonObject& clientDetail
 {
     logInfo() << "--- Starting FILE sync (Full Process) for client" << clientId << "---";
 
+    // =========================================================
+    // 1. ОГОЛОШЕННЯ ЗМІННИХ (ОБЛАСТЬ ВИДИМОСТІ - ВЕСЬ МЕТОД)
+    // =========================================================
+    int totalProcessed = 0;
+    QString errorMessage; // Замість lastError
+    bool success = true;  // Замість globalSuccess
+    // =========================================================
+
     // --- ЕТАП 1: ПОШУК І РОЗПАКУВАННЯ ---
     QJsonObject fileConfig = clientDetails["config_file"].toObject();
     QString importPath = fileConfig["import_path"].toString();
@@ -927,17 +935,14 @@ QVariantMap DbManager::syncViaFile(int clientId, const QJsonObject& clientDetail
     // 1. Перевірка шляху
     if (importPath.isEmpty() || !QDir(importPath).exists()) {
         QString msg = "Invalid import path configured.";
-
-        // --- FIX: Записуємо помилку в базу ---
+        // Фіксуємо помилку в базу
         QSqlQuery statusQuery(m_db);
         statusQuery.prepare("UPDATE OR INSERT INTO SYNC_STATUS (CLIENT_ID, LAST_SYNC_DATE, LAST_SYNC_STATUS, LAST_SYNC_MESSAGE) "
                             "VALUES (:id, CURRENT_TIMESTAMP, 'FAILED', :msg) MATCHING (CLIENT_ID)");
         statusQuery.bindValue(":id", clientId);
         statusQuery.bindValue(":msg", msg);
         statusQuery.exec();
-        m_db.commit(); // <--- ОБОВ'ЯЗКОВО!
-        // -------------------------------------
-
+        m_db.commit();
         return {{"error", msg}};
     }
 
@@ -952,17 +957,14 @@ QVariantMap DbManager::syncViaFile(int clientId, const QJsonObject& clientDetail
     // 2. Перевірка наявності архівів
     if (files.isEmpty()) {
         QString msg = "No result files found.";
-
-        // --- FIX: Записуємо помилку в базу ---
+        // Фіксуємо помилку в базу
         QSqlQuery statusQuery(m_db);
         statusQuery.prepare("UPDATE OR INSERT INTO SYNC_STATUS (CLIENT_ID, LAST_SYNC_DATE, LAST_SYNC_STATUS, LAST_SYNC_MESSAGE) "
                             "VALUES (:id, CURRENT_TIMESTAMP, 'FAILED', :msg) MATCHING (CLIENT_ID)");
         statusQuery.bindValue(":id", clientId);
         statusQuery.bindValue(":msg", msg);
         statusQuery.exec();
-        m_db.commit(); // <--- ОБОВ'ЯЗКОВО!
-        // -------------------------------------
-
+        m_db.commit();
         return {{"error", msg}};
     }
 
@@ -980,17 +982,14 @@ QVariantMap DbManager::syncViaFile(int clientId, const QJsonObject& clientDetail
     zipper.start("7z", QStringList() << "x" << "-y" << fullArchivePath);
     if (!zipper.waitForFinished(30000) || zipper.exitCode() != 0) {
         QString msg = "7z extraction failed.";
-
-        // --- FIX: Записуємо помилку в базу ---
+        // Фіксуємо помилку в базу
         QSqlQuery statusQuery(m_db);
         statusQuery.prepare("UPDATE OR INSERT INTO SYNC_STATUS (CLIENT_ID, LAST_SYNC_DATE, LAST_SYNC_STATUS, LAST_SYNC_MESSAGE) "
                             "VALUES (:id, CURRENT_TIMESTAMP, 'FAILED', :msg) MATCHING (CLIENT_ID)");
         statusQuery.bindValue(":id", clientId);
         statusQuery.bindValue(":msg", msg);
         statusQuery.exec();
-        m_db.commit(); // <--- ОБОВ'ЯЗКОВО!
-        // -------------------------------------
-
+        m_db.commit();
         return {{"error", msg}};
     }
 
@@ -1002,17 +1001,14 @@ QVariantMap DbManager::syncViaFile(int clientId, const QJsonObject& clientDetail
     if (jsonFiles.isEmpty()) {
         QString msg = "No result files found inside archive (JSON missing).";
         logWarning() << msg;
-
-        // ВАЖЛИВО: Записуємо помилку в базу
+        // Фіксуємо помилку в базу
         QSqlQuery statusQuery(m_db);
         statusQuery.prepare("UPDATE OR INSERT INTO SYNC_STATUS (CLIENT_ID, LAST_SYNC_DATE, LAST_SYNC_STATUS, LAST_SYNC_MESSAGE) "
                             "VALUES (:id, CURRENT_TIMESTAMP, 'FAILED', :msg) MATCHING (CLIENT_ID)");
         statusQuery.bindValue(":id", clientId);
         statusQuery.bindValue(":msg", msg);
         statusQuery.exec();
-
-        m_db.commit(); // <--- ВИ ЦЕ ПРОПУСТИЛИ. БЕЗ ЦЬОГО ЗАПИС НЕ ЗБЕРЕЖЕТЬСЯ!
-
+        m_db.commit(); // КОМІТИМО!
         return {{"error", msg}};
     }
 
@@ -1020,10 +1016,6 @@ QVariantMap DbManager::syncViaFile(int clientId, const QJsonObject& clientDetail
     if (!m_db.transaction()) {
         return {{"error", "Failed to start DB transaction."}};
     }
-
-    int totalProcessed = 0;
-    QString errorMessage;
-    bool success = true;
 
     for (const QString& jsonFileName : jsonFiles) {
         QFile file(processedDir.absoluteFilePath(jsonFileName));
@@ -1042,15 +1034,41 @@ QVariantMap DbManager::syncViaFile(int clientId, const QJsonObject& clientDetail
 
         QJsonArray data = rootObj["data"].toArray();
 
+        // 1. Отримуємо TARGET_TABLE та MATCH_FIELDS з існуючого методу
         QPair<QString, QString> taskInfo = getExportTaskInfo(jsonFileName);
         QString targetTable = taskInfo.first;
         QString matchFields = taskInfo.second;
 
+        // 2. !!! НОВЕ: ЗЧИТУЄМО DELETE_STRATEGY ІЗ БД ПІД ЧАС СИНХРОНІЗАЦІЇ !!!
+        QString deleteStrategy = "NONE";
+
+        QString queryFileName = jsonFileName;
+        if (queryFileName.endsWith(".json", Qt::CaseInsensitive)) {
+            queryFileName.replace(queryFileName.length() - 5, 5, ".sql"); // Замінюємо ".json" на ".sql"
+        }
+
+        // Ми не можемо покластися тільки на getExportTaskInfo, бо воно повертає тільки QPair<QString, QString>.
+        // Тому робимо додатковий запит для стратегії.
+        QSqlQuery strategyQuery(m_db);
+        strategyQuery.prepare("SELECT DELETE_STRATEGY FROM EXPORT_TASKS WHERE QUERY_FILENAME = :filename AND IS_ACTIVE = 1");
+        strategyQuery.bindValue(":filename", queryFileName);
+
+        if (strategyQuery.exec() && strategyQuery.next()) {
+            deleteStrategy = strategyQuery.value("DELETE_STRATEGY").toString();
+            if (deleteStrategy.isEmpty()) deleteStrategy = "NONE";
+        } else {
+            // Це не критична помилка, просто ігноруємо, якщо завдання не знайдено або неактивне
+            logWarning() << "Could not find task strategy for file:" << jsonFileName << ". Using NONE.";
+        }
+        // !!! КІНЕЦЬ НОВОГО БЛОКУ !!!
+
         if (!targetTable.isEmpty() && !matchFields.isEmpty()) {
-            logInfo() << "Processing GENERIC:" << targetTable << "from" << jsonFileName;
-            if (!processGenericSync(clientId, targetTable, matchFields, data, errorMessage)) {
+            logInfo() << "Processing GENERIC:" << targetTable << "from" << jsonFileName << "Strategy:" << deleteStrategy;
+
+            // !!! ЗМІНА: ПЕРЕДАЄМО СТРАТЕГІЮ В processGenericSync !!!
+            if (!processGenericSync(clientId, targetTable, matchFields, deleteStrategy, data, errorMessage)) {
                 success = false;
-                break;
+                break; // Вихід з циклу при першій помилці
             }
             totalProcessed += data.count();
         } else {
@@ -1059,47 +1077,37 @@ QVariantMap DbManager::syncViaFile(int clientId, const QJsonObject& clientDetail
     }
 
     // --- ЕТАП 3: ФІКСАЦІЯ І ЗАВЕРШЕННЯ ---
+    // 1. Оновлення SYNC_STATUS та повернення
+    QSqlQuery statusQuery(m_db);
+    QString status = success ? "SUCCESS" : "ERROR";
+    QString message = success ? QString("File: %1. Records: %2").arg(archiveName).arg(totalProcessed) : errorMessage;
+
+    statusQuery.prepare("UPDATE OR INSERT INTO SYNC_STATUS (CLIENT_ID, LAST_SYNC_DATE, LAST_SYNC_STATUS, LAST_SYNC_MESSAGE) "
+                        "VALUES (:id, CURRENT_TIMESTAMP, :status, :msg) MATCHING (CLIENT_ID)");
+    statusQuery.bindValue(":id", clientId);
+    statusQuery.bindValue(":status", status);
+    statusQuery.bindValue(":msg", message);
+
+    // ВАЖЛИВО: Оновлення статусу має йти у власній транзакції, якщо попередня (з даними) вже завершена.
+    if (!m_db.transaction()) {
+        logCritical() << "Failed to start transaction for final SYNC_STATUS update!";
+        return {{"error", "Internal DB error on status update."}};
+    }
+
+    if (!statusQuery.exec() || !m_db.commit()) {
+        m_db.rollback();
+        logCritical() << "Failed to commit final SYNC_STATUS update.";
+        // Якщо навіть статус не оновився, повертаємо помилку імпорту, а не транзакції статусу
+        return {{"error", errorMessage.isEmpty() ? "DB status update failed." : errorMessage}};
+    }
+
+    // 2. Видаляємо тимчасову папку
+    tempDir.removeRecursively();
+
     if (success) {
-        if (!m_db.commit()) {
-            m_db.rollback();
-            return {{"error", "Failed to commit transaction."}};
-        }
-
-        // 1. Оновлюємо статус в БД (SUCCESS)
-        QSqlQuery statusQuery(m_db);
-        statusQuery.prepare("UPDATE OR INSERT INTO SYNC_STATUS (CLIENT_ID, LAST_SYNC_DATE, LAST_SYNC_STATUS, LAST_SYNC_MESSAGE) "
-                            "VALUES (:id, CURRENT_TIMESTAMP, 'SUCCESS', :msg) MATCHING (CLIENT_ID)");
-        statusQuery.bindValue(":id", clientId);
-        statusQuery.bindValue(":msg", QString("File: %1. Records: %2").arg(archiveName).arg(totalProcessed));
-        statusQuery.exec();
-        m_db.commit(); // <--- Теж комітимо статус окремо, бо попередня транзакція вже закрита
-
-        // 2. Видаляємо тимчасову папку
-        tempDir.removeRecursively();
-
-        /* ЗАКОМЕНТОВАНО: НЕ ПЕРЕМІЩУВАТИ ФАЙЛИ
-           Ми залишаємо файл в Inbox, як ви просили.
-
-        if (!importDir.exists("Processed")) importDir.mkdir("Processed");
-        QString destFile = importDir.filePath("Processed/" + archiveName);
-        if (QFile::exists(destFile)) QFile::remove(destFile);
-        QFile::rename(fullArchivePath, destFile);
-        */
-
         logInfo() << "FILE Sync Success. Processed:" << totalProcessed;
         return {{"status", "success"}, {"processed_count", totalProcessed}};
     } else {
-        m_db.rollback(); // Відкочуємо зміни в даних
-
-        // Записуємо помилку в статус
-        QSqlQuery statusQuery(m_db);
-        statusQuery.prepare("UPDATE OR INSERT INTO SYNC_STATUS (CLIENT_ID, LAST_SYNC_DATE, LAST_SYNC_STATUS, LAST_SYNC_MESSAGE) "
-                            "VALUES (:id, CURRENT_TIMESTAMP, 'ERROR', :msg) MATCHING (CLIENT_ID)");
-        statusQuery.bindValue(":id", clientId);
-        statusQuery.bindValue(":msg", errorMessage);
-        statusQuery.exec();
-        m_db.commit(); // <--- Комітимо статус помилки
-
         return {{"error", errorMessage}};
     }
 }
@@ -1783,9 +1791,8 @@ QJsonObject DbManager::loadExportTaskById(int taskId)
     QJsonObject task;
     QSqlQuery query(m_db);
 
-    // ДОДАНО: MATCH_FIELDS у SELECT
     query.prepare("SELECT TASK_ID, TASK_NAME, QUERY_FILENAME, SQL_TEMPLATE, "
-                  "IS_ACTIVE, DESCRIPTION, TARGET_TABLE, MATCH_FIELDS "
+                  "IS_ACTIVE, DESCRIPTION, TARGET_TABLE, MATCH_FIELDS, DELETE_STRATEGY " // <-- ДОДАНО
                   "FROM EXPORT_TASKS WHERE TASK_ID = :id");
     query.bindValue(":id", taskId);
 
@@ -1798,6 +1805,7 @@ QJsonObject DbManager::loadExportTaskById(int taskId)
         task["description"] = query.value("DESCRIPTION").toString();
         task["target_table"] = query.value("TARGET_TABLE").toString();
         task["match_fields"] = query.value("MATCH_FIELDS").toString();
+        task["delete_strategy"] = query.value("DELETE_STRATEGY").toString();
     }
     return task;
 }
@@ -1811,11 +1819,10 @@ int DbManager::createExportTask(const QJsonObject& taskData)
 {
     QSqlQuery query(m_db);
 
-    // УВАГА: Ми використовуємо RETURNING, щоб отримати згенерований ID
     query.prepare("INSERT INTO EXPORT_TASKS ("
-                  "TASK_NAME, QUERY_FILENAME, SQL_TEMPLATE, IS_ACTIVE, DESCRIPTION, TARGET_TABLE, MATCH_FIELDS) "
+                  "TASK_NAME, QUERY_FILENAME, SQL_TEMPLATE, IS_ACTIVE, DESCRIPTION, TARGET_TABLE, MATCH_FIELDS, DELETE_STRATEGY) "
                   "VALUES "
-                  "(:name, :filename, :template, :active, :description, :target_table, :match_fields) "
+                  "(:name, :filename, :template, :active, :description, :target_table, :match_fields, :delete_strategy) "
                   "RETURNING TASK_ID");
 
     query.bindValue(":name", taskData["task_name"].toString());
@@ -1825,6 +1832,7 @@ int DbManager::createExportTask(const QJsonObject& taskData)
     query.bindValue(":description", taskData["description"].toString());
     query.bindValue(":target_table", taskData["target_table"].toString());
     query.bindValue(":match_fields", taskData["match_fields"].toString());
+    query.bindValue(":delete_strategy", taskData["delete_strategy"].toString());
 
     if (!query.exec()) {
         m_lastError = "Failed to insert new export task: " + query.lastError().text();
@@ -1864,7 +1872,8 @@ bool DbManager::updateExportTask(int taskId, const QJsonObject& taskData)
                   "IS_ACTIVE = :active, "
                   "DESCRIPTION = :description, "
                   "TARGET_TABLE = :target_table, "
-                  "MATCH_FIELDS = :match_fields "
+                  "MATCH_FIELDS = :match_fields, "
+                  "DELETE_STRATEGY = :delete_strategy "
                   "WHERE TASK_ID = :id");
 
     query.bindValue(":id", taskId);
@@ -1873,19 +1882,15 @@ bool DbManager::updateExportTask(int taskId, const QJsonObject& taskData)
     query.bindValue(":template", taskData["sql_template"].toString());
     query.bindValue(":active", taskData["is_active"].toBool() ? 1 : 0);
     query.bindValue(":description", taskData["description"].toString());
-    query.bindValue(":target_table", taskData["target_table"].toString()); // <-- Додано
+    query.bindValue(":target_table", taskData["target_table"].toString());
     query.bindValue(":match_fields", taskData["match_fields"].toString());
+    query.bindValue(":delete_strategy", taskData["delete_strategy"].toString());
 
     if (!query.exec()) {
         logCritical() << "Failed to update export task ID" << taskId << ":" << query.lastError().text();
         return false;
     }
 
-    // if (!m_db.commit()) {
-    //     qCritical() << "Failed to commit transaction for task ID" << taskId << ":" << m_db.lastError().text();
-    //     m_db.rollback();
-    //     return false;
-    // }
     logInfo() << "Successfully updated export task ID:" << taskId;
     return true;
 }
@@ -1961,21 +1966,70 @@ QPair<QString, QString> DbManager::getExportTaskInfo(const QString& jsonFileName
     return qMakePair(QString(), QString()); // Не знайдено
 }
 
-bool DbManager::processGenericSync(int clientId, const QString& tableName, const QString& matchFields, const QJsonArray& data, QString& errorOut)
+bool DbManager::processGenericSync(int clientId, const QString& tableName, const QString& matchFields,
+                                   const QString& deleteStrategy, // <-- НОВИЙ ПАРАМЕТР
+                                   const QJsonArray& data, QString& errorOut)
 {
-    if (data.isEmpty()) return true;
+    // 1. Обробка порожнього масиву (Це важливий випадок для FULL_REFRESH)
+    if (data.isEmpty()) {
+        if (deleteStrategy == "FULL_REFRESH") {
+            // Якщо масив порожній і стратегія FULL_REFRESH, ми видаляємо всі записи для цього клієнта.
+            QString deleteSql = QString("DELETE FROM %1 WHERE CLIENT_ID = :clientId").arg(tableName);
+            QSqlQuery deleteQuery(m_db);
+            deleteQuery.prepare(deleteSql);
+            deleteQuery.bindValue(":clientId", clientId);
+            if (deleteQuery.exec()) {
+                logInfo() << "Executed FULL_REFRESH (DELETE) for empty array on table" << tableName;
+                return true;
+            } else {
+                errorOut = "Failed to perform FULL_REFRESH for empty array: " + deleteQuery.lastError().text();
+                logCritical() << errorOut;
+                return false;
+            }
+        }
+        logWarning() << "Received empty data array for table" << tableName << ". Skipping import.";
+        return true;
+    }
 
-    // 1. Аналіз структури (беремо ключі з першого об'єкта)
+    // Починаємо транзакцію (для атомарності)
+    m_db.transaction();
+
+    // --- ЕТАП А: ПОПЕРЕДНЯ ОПЕРАЦІЯ (ОЧИЩЕННЯ ЗГІДНО СТРАТЕГІЇ) ---
+    if (deleteStrategy != "NONE") {
+        QString sql;
+
+        if (deleteStrategy == "FULL_REFRESH") {
+            // FULL_REFRESH: Фізично видаляємо. Використовуємо arg() для прямого форматування.
+            // Ми повертаємося до цього, бо це обхід помилки драйвера.
+            sql = QString("DELETE FROM %1 WHERE CLIENT_ID = %2").arg(tableName).arg(clientId);
+
+        } else if (deleteStrategy == "SOFT_DELETE") {
+            // SOFT_DELETE: Позначаємо як неактуальні (IS_SYNC_ACTIVE = 0).
+            // Ми використовуємо пряме форматування, щоб обійти конфлікт параметрів.
+            sql = QString("UPDATE %1 SET IS_SYNC_ACTIVE = 0 WHERE CLIENT_ID = %2").arg(tableName).arg(clientId);
+        }
+
+        QSqlQuery cleanupQuery(m_db);
+
+        // Виконуємо запит без PREPARE/BIND, щоб уникнути помилки "expected 0, got 1".
+        if (!cleanupQuery.exec(sql)) {
+            m_db.rollback();
+            // Ми використовуємо логування, щоб записати, який саме SQL упав.
+            logCritical() << "Failed cleanup SQL:" << sql;
+            errorOut = "Failed to execute cleanup query (" + deleteStrategy + ") for table " + tableName + ": " + cleanupQuery.lastError().text();
+            return false;
+        }
+    }
+    // -------------------------------------------------------------
+
+
+    // --- ЕТАП Б: УНІВЕРСАЛЬНИЙ UPSERT (Ваш код з модифікацією) ---
+
+    // 1. Аналіз структури
     QJsonObject firstObj = data.at(0).toObject();
     QStringList jsonKeys = firstObj.keys();
 
-    if (jsonKeys.isEmpty()) {
-        errorOut = "JSON data objects are empty.";
-        return false;
-    }
-
-    // 2. Формування динамічного SQL
-    // Нам треба: UPDATE OR INSERT INTO TABLE (CLIENT_ID, COL1, COL2) VALUES (:client_id, :col1, :col2) MATCHING (MATCH_FIELDS)
+    // ... (перевірка порожніх ключів) ...
 
     QStringList colNames;
     QStringList bindNames;
@@ -1984,10 +2038,17 @@ bool DbManager::processGenericSync(int clientId, const QString& tableName, const
     colNames << "CLIENT_ID";
     bindNames << ":client_id";
 
+    // *** КЛЮЧОВА ЗМІНА ДЛЯ SOFT_DELETE: ДОДАЄМО IS_SYNC_ACTIVE ***
+    if (deleteStrategy == "SOFT_DELETE") {
+        colNames << "IS_SYNC_ACTIVE";
+        bindNames << "1";
+    }
+    // *************************************************************
+
     // Додаємо колонки з JSON
     for (const QString& key : jsonKeys) {
-        colNames << key;            // Назва колонки
-        bindNames << ":" + key;     // Ім'я параметра (напр. :TERMINAL_ID)
+        colNames << key;
+        bindNames << ":" + key;
     }
 
     QString sql = QString("UPDATE OR INSERT INTO %1 (%2) VALUES (%3) MATCHING (%4)")
@@ -1996,18 +2057,21 @@ bool DbManager::processGenericSync(int clientId, const QString& tableName, const
                       .arg(bindNames.join(", "))
                       .arg(matchFields);
 
-    // logInfo() << "Generated SQL:" << sql; // Розкоментуйте для налагодження
-
     QSqlQuery query(m_db);
     query.prepare(sql);
 
-    // 3. Виконання (Batch processing)
+    // 2. Виконання (Batch processing)
     for (const QJsonValue& val : data) {
         if (!val.isObject()) continue;
         QJsonObject row = val.toObject();
 
-        // Біндимо CLIENT_ID (він від сервера)
         query.bindValue(":client_id", clientId);
+
+        // // *** КЛЮЧОВА ЗМІНА ДЛЯ SOFT_DELETE: БІНДИМО IS_SYNC_ACTIVE = 1 ***
+        // if (deleteStrategy == "SOFT_DELETE") {
+        //     query.bindValue(":is_sync_active", 1); // Повертаємо запис до активного стану
+        // }
+        // // ***************************************************************
 
         // Біндимо дані з JSON
         for (const QString& key : jsonKeys) {
@@ -2015,11 +2079,21 @@ bool DbManager::processGenericSync(int clientId, const QString& tableName, const
         }
 
         if (!query.exec()) {
+            m_db.rollback(); // Відкат у разі помилки UPSERT
             errorOut = QString("Generic Sync Error (%1): %2").arg(tableName, query.lastError().text());
+            logCritical() << errorOut;
             return false;
         }
     }
 
+    if (!m_db.commit()) {
+        m_db.rollback();
+        errorOut = "Failed to commit transaction: " + m_db.lastError().text();
+        logCritical() << errorOut;
+        return false;
+    }
+
+    logInfo() << "Successfully synced" << data.count() << "records into" << tableName << "with strategy" << deleteStrategy;
     return true;
 }
 
@@ -2029,34 +2103,36 @@ bool DbManager::processGenericSync(int clientId, const QString& tableName, const
 // --------------------------------------------------------------------------
 QVariantMap DbManager::syncViaDirect(int clientId, const QJsonObject& clientDetails)
 {
+    // !!! ВАЖЛИВО: Захищаємо м'ютексом ВЕСЬ метод, оскільки він працює з m_db !!!
+//    QMutexLocker locker(&m_dbMutex);
     logInfo() << "--- Starting DIRECT sync for client" << clientId << "---";
 
     // =========================================================
-    // 1. ОГОЛОШЕННЯ ЗМІННИХ (ОБЛАСТЬ ВИДИМОСТІ - ВЕСЬ МЕТОД)
+    // 1. ОГОЛОШЕННЯ ЗМІННИХ
     // =========================================================
-    int totalProcessed = 0;       // Лічильник оброблених записів
-    QString lastError;            // Текст останньої помилки
-    bool globalSuccess = true;    // Прапорець загального успіху
+    int totalProcessed = 0;
+    QString lastError;
+    bool globalSuccess = true;
     // =========================================================
 
     // Генеруємо унікальне ім'я для підключення
     QString connectionName = QString("DirectSync_%1_%2").arg(clientId).arg(QDateTime::currentMSecsSinceEpoch());
     QJsonObject directConfig = clientDetails["config_direct"].toObject();
 
-    // Блок обмеження області видимості для clientDb (щоб з'єднання закрилося автоматично)
+    // Блок обмеження області видимості для clientDb
     {
         QSqlDatabase clientDb = QSqlDatabase::addDatabase("QIBASE", connectionName);
         clientDb.setHostName(directConfig["db_host"].toString());
         clientDb.setDatabaseName(directConfig["db_path"].toString());
         clientDb.setPort(directConfig["db_port"].toInt());
         clientDb.setUserName(directConfig["db_user"].toString());
+        // Використовуємо QMutexLocker, тому що DbManager::instance() може бути викликаний в іншому потоці
         clientDb.setPassword(CriptPass::instance().decriptPass(directConfig["db_password"].toString()));
 
         if (!clientDb.open()) {
             QString err = clientDb.lastError().text();
-            // Важливо: видаляємо з'єднання перед виходом
-            // Але не можна видаляти поточне підключення, тому робимо це зовні блоку або через костиль
-            // Тут просто повернемо помилку, видалення буде нижче (через warning драйвера, але це ок для помилки)
+            // Важливо: clientDb закриється після виходу з цього блоку
+            QSqlDatabase::removeDatabase(connectionName);
             return {{"error", "Failed to connect to client DB: " + err}};
         }
 
@@ -2064,18 +2140,16 @@ QVariantMap DbManager::syncViaDirect(int clientId, const QJsonObject& clientDeta
 
         // 2. Отримуємо список завдань
         QSqlQuery tasksQuery(m_db);
-        tasksQuery.prepare("SELECT TARGET_TABLE, MATCH_FIELDS, SQL_TEMPLATE, TASK_NAME FROM EXPORT_TASKS WHERE IS_ACTIVE = 1");
+        // ЗМІНА: ДОДАНО DELETE_STRATEGY
+        tasksQuery.prepare("SELECT TARGET_TABLE, MATCH_FIELDS, SQL_TEMPLATE, TASK_NAME, DELETE_STRATEGY FROM EXPORT_TASKS WHERE IS_ACTIVE = 1");
 
         if (!tasksQuery.exec()) {
             clientDb.close();
+            QSqlDatabase::removeDatabase(connectionName);
             return {{"error", "Failed to fetch tasks list: " + tasksQuery.lastError().text()}};
         }
 
-        // Старт транзакції на СЕРВЕРІ
-        if (!m_db.transaction()) {
-            clientDb.close();
-            return {{"error", "Failed to start server transaction"}};
-        }
+        // !!! ВИДАЛЕНО: m_db.transaction() - КОЖНЕ ЗАВДАННЯ АТОМАРНЕ !!!
 
         // 3. Цикл по завданнях
         while (tasksQuery.next()) {
@@ -2083,6 +2157,8 @@ QVariantMap DbManager::syncViaDirect(int clientId, const QJsonObject& clientDeta
             QString matchFields = tasksQuery.value("MATCH_FIELDS").toString();
             QString sqlTemplate = tasksQuery.value("SQL_TEMPLATE").toString();
             QString taskName    = tasksQuery.value("TASK_NAME").toString();
+            QString deleteStrategy = tasksQuery.value("DELETE_STRATEGY").toString();
+            if (deleteStrategy.isEmpty()) deleteStrategy = "NONE";
 
             if (targetTable.isEmpty() || sqlTemplate.isEmpty()) continue;
 
@@ -2100,7 +2176,7 @@ QVariantMap DbManager::syncViaDirect(int clientId, const QJsonObject& clientDeta
             if (!clientQuery.exec()) {
                 logWarning() << "Client SQL failed for" << taskName << ":" << clientQuery.lastError().text();
                 lastError = "Client SQL Error: " + clientQuery.lastError().text();
-                globalSuccess = false; // Змінюємо змінну, оголошену на початку
+                globalSuccess = false;
                 break;
             }
 
@@ -2116,54 +2192,52 @@ QVariantMap DbManager::syncViaDirect(int clientId, const QJsonObject& clientDeta
             }
 
             // 3.3. Імпорт
-            if (!dataArray.isEmpty()) {
-                QString importError;
-                if (!processGenericSync(clientId, targetTable, matchFields, dataArray, importError)) {
-                    logCritical() << "Import failed for" << targetTable << ":" << importError;
-                    lastError = importError; // Змінюємо змінну
-                    globalSuccess = false;   // Змінюємо змінну
-                    break;
-                }
-                totalProcessed += dataArray.count(); // Змінюємо змінну
-                logInfo() << "Imported" << dataArray.count() << "rows into" << targetTable;
+            QString importError;
+            // !!! processGenericSync ВЖЕ ВИКОНУЄ КОМІТ або ВІДКАТ !!!
+            if (!processGenericSync(clientId, targetTable, matchFields, deleteStrategy, dataArray, importError)) {
+                logCritical() << "Import failed for" << targetTable << ":" << importError;
+                lastError = importError;
+                globalSuccess = false;
+                break;
             }
+            totalProcessed += dataArray.count();
+            logInfo() << "Imported" << dataArray.count() << "rows into" << targetTable;
         }
 
         clientDb.close();
-    } // Тут clientDb знищується, з'єднання звільняється
+    } // Тут clientDb знищується
 
     QSqlDatabase::removeDatabase(connectionName);
 
-    // 4. Фіксація результатів
-    // Тут globalSuccess, lastError і totalProcessed ВСЕ ЩЕ ВИДИМІ і доступні
+    // 4. Фіксація результатів (Оновлення SYNC_STATUS)
+    QSqlQuery statusQuery(m_db);
+    QString status = globalSuccess ? "SUCCESS" : "ERROR";
+    QString message = globalSuccess ? QString("Direct Sync. Processed: %1").arg(totalProcessed) : lastError;
+
+    statusQuery.prepare("UPDATE OR INSERT INTO SYNC_STATUS (CLIENT_ID, LAST_SYNC_DATE, LAST_SYNC_STATUS, LAST_SYNC_MESSAGE) "
+                        "VALUES (:id, CURRENT_TIMESTAMP, :status, :msg) MATCHING (CLIENT_ID)");
+    statusQuery.bindValue(":id", clientId);
+    statusQuery.bindValue(":status", status);
+    statusQuery.bindValue(":msg", message);
+
+    // !!! Оновлення статусу відбувається окремою транзакцією !!!
+    if (!m_db.transaction()) {
+        logCritical() << "Failed to start transaction for SYNC_STATUS update!";
+        return {{"error", "Internal DB error on status update."}};
+    }
+
+    if (!statusQuery.exec() || !m_db.commit()) {
+        m_db.rollback();
+        logCritical() << "Failed to commit SYNC_STATUS update.";
+        return {{"error", "Internal DB error on status update."}};
+    }
+
     if (globalSuccess) {
-        if (!m_db.commit()) {
-            m_db.rollback();
-            return {{"error", "Failed to commit transaction"}};
-        }
-
-        QSqlQuery statusQuery(m_db);
-        statusQuery.prepare("UPDATE OR INSERT INTO SYNC_STATUS (CLIENT_ID, LAST_SYNC_DATE, LAST_SYNC_STATUS, LAST_SYNC_MESSAGE) "
-                            "VALUES (:id, CURRENT_TIMESTAMP, 'SUCCESS', :msg) MATCHING (CLIENT_ID)");
-        statusQuery.bindValue(":id", clientId);
-        statusQuery.bindValue(":msg", QString("Direct Sync. Processed: %1").arg(totalProcessed));
-        statusQuery.exec();
-
         return {{"status", "success"}, {"processed_count", totalProcessed}};
     } else {
-        m_db.rollback();
-
-        QSqlQuery statusQuery(m_db);
-        statusQuery.prepare("UPDATE OR INSERT INTO SYNC_STATUS (CLIENT_ID, LAST_SYNC_DATE, LAST_SYNC_STATUS, LAST_SYNC_MESSAGE) "
-                            "VALUES (:id, CURRENT_TIMESTAMP, 'ERROR', :msg) MATCHING (CLIENT_ID)");
-        statusQuery.bindValue(":id", clientId);
-        statusQuery.bindValue(":msg", lastError);
-        statusQuery.exec();
-
         return {{"error", lastError}};
     }
 }
-
 QJsonArray DbManager::getDashboardData()
 {
     QJsonArray result;
@@ -2270,6 +2344,7 @@ QJsonArray DbManager::getTanksByTerminal(int clientId, int terminalId)
                   "MAXVALUE, MINVALUE, DEADMAX, DEADMIN, TUBEAMOUNT "
                   "FROM TANKS_DATA "
                   "WHERE CLIENT_ID = :clientId AND TERMINAL_ID = :termId "
+                  "AND IS_SYNC_ACTIVE = 1 " // <-- НОВИЙ ФІЛЬТР (ТЕПЕР БУДЕ ПРАЦЮВАТИ)
                   "ORDER BY TANK_ID";
 
     query.prepare(sql);
@@ -2299,4 +2374,102 @@ QJsonArray DbManager::getTanksByTerminal(int clientId, int terminalId)
     }
 
     return results;
+}
+
+
+/**
+ * @brief Повертає конфігурацію ТРК та Пістолетів для терміналу у форматі дерева (вкладений JSON).
+ * Вибирає лише активні записи (IS_SYNC_ACTIVE = 1).
+ */
+QJsonArray DbManager::getDispenserConfigByTerminal(int clientId, int terminalId)
+{
+    // QMap для тимчасового зберігання та групування:
+    // Ключ: DISPENSER_ID, Значення: Об'єкт ТРК з масивом пістолетів
+    QMap<int, QJsonObject> dispensersMap;
+
+    QSqlQuery query(m_db);
+
+    // SQL-запит: Об'єднання DISPENSERS_DATA та NOZZLES_DATA
+    // Обов'язкова фільтрація: IS_SYNC_ACTIVE = 1 для обох
+    QString sql = R"V0G0N(
+        SELECT
+            d.DISPENSER_ID,
+            d.PROTOCOL_NAME,
+            d.CHANNELPORT,
+            d.CHANNELSPEED,
+            d.NETADDRESS,
+            d.TYPERS485,
+            d.EMUL_COUNTERS,
+
+            n.TRK_ID,
+            n.TANK_ID,
+            n.FUEL_SHORTNAME
+        FROM
+            DISPENSERS_DATA d
+        LEFT JOIN
+            NOZZLES_DATA n ON d.CLIENT_ID = n.CLIENT_ID
+                          AND d.TERMINAL_ID = n.TERMINAL_ID
+                          AND d.DISPENSER_ID = n.DISPENSER_ID
+        WHERE
+            d.CLIENT_ID = :clientId AND d.TERMINAL_ID = :termId
+            AND d.IS_SYNC_ACTIVE = 1    /* Тільки активні ТРК */
+            AND (n.IS_SYNC_ACTIVE IS NULL OR n.IS_SYNC_ACTIVE = 1) /* Тільки активні Пістолети */
+        ORDER BY
+            d.DISPENSER_ID, n.TRK_ID
+    )V0G0N";
+
+    query.prepare(sql);
+    query.bindValue(":clientId", clientId);
+    query.bindValue(":termId", terminalId);
+
+    if (!query.exec()) {
+        logCritical() << "Failed to fetch dispenser config:" << query.lastError().text();
+        return {};
+    }
+
+    while (query.next()) {
+        int dispenserId = query.value("DISPENSER_ID").toInt();
+
+        // --- 1. Створення/Оновлення об'єкта ТРК ---
+        if (!dispensersMap.contains(dispenserId)) {
+            QJsonObject dispenser;
+            dispenser["dispenser_id"] = dispenserId;
+            dispenser["protocol_name"] = query.value("PROTOCOL_NAME").toString();
+            dispenser["channel_port"] = query.value("CHANNELPORT").toInt();
+            dispenser["channel_speed"] = query.value("CHANNELSPEED").toInt();
+            dispenser["net_address"] = query.value("NETADDRESS").toInt();
+            dispenser["rs485_type"] = query.value("TYPERS485").toInt(); // 2 або 4
+            dispenser["emul_counters"] = query.value("EMUL_COUNTERS").toInt(); // 0 або 1
+            dispenser["nozzles"] = QJsonArray(); // Створюємо порожній масив для пістолетів
+
+            dispensersMap.insert(dispenserId, dispenser);
+        }
+
+        // --- 2. Додавання Пістолета до ТРК ---
+        int nozzleId = query.value("TRK_ID").toInt();
+
+        // Перевіряємо, чи є дані пістолета (це може бути NULL, якщо ТРК не має пістолетів)
+        if (nozzleId > 0) {
+            QJsonObject nozzle;
+            nozzle["nozzle_id"] = nozzleId;
+            nozzle["tank_id"] = query.value("TANK_ID").toInt();
+            nozzle["fuel_shortname"] = query.value("FUEL_SHORTNAME").toString().trimmed();
+
+            QJsonObject dispenser = dispensersMap.value(dispenserId);
+            QJsonArray nozzlesArray = dispenser["nozzles"].toArray();
+            nozzlesArray.append(nozzle);
+            dispenser["nozzles"] = nozzlesArray;
+
+            // Зберігаємо оновлений об'єкт ТРК назад у мапу
+            dispensersMap.insert(dispenserId, dispenser);
+        }
+    }
+
+    // --- 3. Конвертація мапи у фінальний QJsonArray ---
+    QJsonArray finalArray;
+    for (const QJsonObject& dispenser : dispensersMap.values()) {
+        finalArray.append(dispenser);
+    }
+
+    return finalArray;
 }

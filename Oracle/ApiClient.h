@@ -85,6 +85,11 @@ public:
 
     // Запит на отримання резервуарів
     void fetchStationTanks(int clientId, int terminalId, qint64 telegramId = 0);
+///////////////////////////////////
+    // Новий  бредовий метод для отримання конфігурації ТРК
+ //   void dispenserConfigReceived(const QJsonArray& config, int clientId, int terminalId, qint64 telegramId);
+    // для ПРК
+    void fetchDispenserConfig(int clientId, int terminalId, qint64 telegramId = 0);
 
 signals:
     // Сигнали для логіну
@@ -209,6 +214,9 @@ signals:
     void stationTanksReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId);
     void stationTanksFailed(const ApiError& error, qint64 telegramId);
 
+    void dispenserConfigReceived(const QJsonArray& config, int clientId, int terminalId, qint64 telegramId);
+    void dispenserConfigFailed(const ApiError& error, qint64 telegramId);
+
 private slots:
     void onLoginReplyFinished();
     void onUsersReplyFinished();
@@ -257,6 +265,9 @@ private slots:
     void onStationPosDataReplyFinished();
 
     void onStationTanksReplyFinished();
+
+//    void onDispenserConfigReplyFinished();
+    void onStantionDispenserReplyFinished();
 private:
     ApiClient(QObject* parent = nullptr);
     ~ApiClient() = default;

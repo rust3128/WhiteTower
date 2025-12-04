@@ -1733,3 +1733,57 @@ void ApiClient::onStationTanksReplyFinished()
     }
     reply->deleteLater();
 }
+
+
+void ApiClient::fetchDispenserConfig(int clientId, int terminalId, qint64 telegramId)
+{
+    QString urlStr = QString("%1/api/clients/%2/station/%3/dispensers")
+    .arg(m_serverUrl)
+        .arg(clientId)
+        .arg(terminalId);
+
+    QNetworkRequest request = createBotRequest(QUrl(urlStr), telegramId);
+
+    QNetworkReply* reply = m_networkManager->get(request);
+
+    // !!! НАСЛІДУВАННЯ ШАБЛОНУ: ВСТАНОВЛЕННЯ ВЛАСТИВОСТЕЙ НА REPLY !!!
+    reply->setProperty("telegramId", telegramId);
+    reply->setProperty("clientId", clientId);
+    reply->setProperty("terminalId", terminalId);
+    // !!! КІНЕЦЬ ШАБЛОНУ !!!
+
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onStantionDispenserReplyFinished);
+}
+
+
+// ApiClient.cpp
+
+void ApiClient::onStantionDispenserReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    // !!! НАСЛІДУВАННЯ ШАБЛОНУ: ЧИТАННЯ ВСІХ ID З REPLY !!!
+    qint64 telegramId = reply->property("telegramId").toLongLong();
+    int clientId = reply->property("clientId").toInt();
+    int terminalId = reply->property("terminalId").toInt();
+    // !!! КІНЕЦЬ ШАБЛОНУ !!!
+
+    ApiError error = parseReply(reply);
+
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200)
+    {
+        QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
+        if (doc.isArray()) {
+            // Емітуємо сигнал з повним набором параметрів
+            emit dispenserConfigReceived(doc.array(), clientId, terminalId, telegramId);
+        } else {
+            error.errorString = "Invalid response from server: expected a JSON array.";
+            emit dispenserConfigFailed(error, telegramId);
+        }
+    } else {
+        emit dispenserConfigFailed(error, telegramId);
+    }
+
+    reply->deleteLater();
+}

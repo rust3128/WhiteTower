@@ -50,6 +50,13 @@ private slots:
     // Слоти для резервуарів
     void onStationTanksReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId);
     void onStationTanksFailed(const ApiError& error, qint64 telegramId);
+
+    // Обробник для отримання конфігурації ТРК
+//----    void handleCallbackStationDisp(const QJsonObject& query, const QStringList& parts);
+
+    void onDispenserConfigReceived(const QJsonArray& config, int clientId, int terminalId, qint64 telegramId);
+    void onDispenserConfigFailed(const ApiError& error, qint64 telegramId);
+
 private:
     // Тип-вказівник на метод-обробник
     using CommandHandler = void (Bot::*)(const QJsonObject& message);
@@ -99,8 +106,8 @@ private:
     void sendPaginatedStations(qint64 telegramId, int clientId, int page, int messageId);
 
     void handleCallbackStationPos(const QJsonObject& query, const QStringList& parts);
-
     void handleCallbackStationTanks(const QJsonObject& query, const QStringList& parts);
+    void handleCallbackStationDisp(const QJsonObject& query, const QStringList& parts);
 private:
     enum class UserState { None, WaitingForStationNumber };
     QMap<qint64, UserState> m_userState; // <telegramId, State>

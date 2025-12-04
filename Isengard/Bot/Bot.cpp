@@ -61,6 +61,12 @@ void Bot::setupConnections()
     connect(&m_apiClient, &ApiClient::stationTanksReceived, this, &Bot::onStationTanksReceived);
     connect(&m_apiClient, &ApiClient::stationTanksFailed, this, &Bot::onStationTanksFailed);
 
+    // З'єднання для конфігурації ТРК
+    connect(&m_apiClient, &ApiClient::dispenserConfigReceived,
+            this, &Bot::onDispenserConfigReceived);
+    connect(&m_apiClient, &ApiClient::dispenserConfigFailed,
+            this, &Bot::onDispenserConfigFailed);
+
     logInfo() << "Signal-slot connections established.";
 }
 
@@ -116,6 +122,7 @@ void Bot::setupCallbackHandlers()
     m_stationHandlers["map"]  = &Bot::handleCallbackStationMap;
     m_stationHandlers["pos"] = &Bot::handleCallbackStationPos;
     m_stationHandlers["tanks"] = &Bot::handleCallbackStationTanks;
+    m_stationHandlers["disp"] = &Bot::handleCallbackStationDisp;
 
     logInfo() << "Callback query handlers registered.";
 }
@@ -707,7 +714,14 @@ void Bot::onStationDetailsReceived(const QJsonObject& station, qint64 telegramId
 
 
 
-    row1.append(QJsonObject{{"text", "ПРК"}, {"callback_data", "station:stub"}});
+    // !!! ВИПРАВЛЕННЯ: ФОРМУЄМО КНОПКУ ТРК У ТОМУ Ж СТИЛІ !!!
+    QString dispCallback = QString("station:disp:%1:%2").arg(clientId).arg(termNo);
+
+    // Додаємо кнопку "Конфігурація ТРК"
+    row1.append(QJsonObject{{"text", "⛽ ПРК"}, {"callback_data", dispCallback}});
+
+
+
     // Формуємо callback: station:tanks:clientId:termNo
     QString tanksCallback = QString("station:tanks:%1:%2").arg(clientId).arg(termNo);
     // Додаємо кнопку
@@ -1242,4 +1256,120 @@ void Bot::onStationTanksReceived(const QJsonArray& data, int clientId, int termi
 void Bot::onStationTanksFailed(const ApiError& error, qint64 telegramId)
 {
     m_telegramClient->sendMessage(telegramId, "❌ Не вдалося отримати дані резервуарів.\n" + error.errorString);
+}
+
+
+/**
+ * @brief Обробник для callback-запиту "station:disp:<clientId>:<terminalId>"
+ */
+void Bot::handleCallbackStationDisp(const QJsonObject& query, const QStringList& parts)
+{
+    QString callbackQueryId = query["id"].toString();
+    qint64 telegramId = query["message"].toObject()["chat"].toObject()["id"].toVariant().toLongLong();
+
+    // Перевірка формату callback: [station, disp, clientId, terminalId]
+    if (parts.count() != 4) {
+        m_telegramClient->answerCallbackQuery(callbackQueryId, "❌ Некоректний формат запиту.");
+        return;
+    }
+
+    int clientId = parts.at(2).toInt();
+    int terminalId = parts.at(3).toInt();
+
+    m_telegramClient->answerCallbackQuery(callbackQueryId); // Прибираємо "годинник"
+    m_telegramClient->sendChatAction(telegramId, "typing"); // Показуємо "друкує"
+
+    // Виклик API для отримання конфігурації ТРК
+    m_apiClient.fetchDispenserConfig(clientId, terminalId, telegramId);
+}
+
+/**
+ * @brief Обробляє успішно отриману конфігурацію ПРК і формує звіт.
+ */
+void Bot::onDispenserConfigReceived(const QJsonArray& config, int clientId, int terminalId, qint64 telegramId)
+{
+    logInfo() << "Call Bot::onDispenserConfigReceived. Client:" << clientId << "Terminal:" << terminalId;
+
+    if (config.isEmpty()) {
+        m_telegramClient->sendMessage(telegramId, QString("ℹ️ Конфігурація ТРК відсутня."));
+        return;
+    }
+
+    // --- 1. Формуємо простий текстовий звіт (без HTML) ---
+    QString message = QString("⛽ Конфігурація ТРК на АЗС %1:\n\n").arg(terminalId);
+
+    for (const QJsonValue& dispValue : config) {
+        QJsonObject dispenser = dispValue.toObject();
+
+        int dispId = dispenser["dispenser_id"].toInt();
+        QString protocol = dispenser["protocol_name"].toString().trimmed();
+        int address = dispenser["net_address"].toInt();
+        int rs485Type = dispenser["rs485_type"].toInt();
+        bool emulCounters = dispenser["emul_counters"].toInt() == 1;
+
+        QString rs485Str = (rs485Type == 2 || rs485Type == 4) ? QString("%1-провідний").arg(rs485Type) : "Невідомий тип";
+
+        // Заголовок ТРК
+        message += QString("🔹 ПРК %1 (Адреса: %2, Протокол: %3)\n")
+                       .arg(dispId)
+                       .arg(address)
+                       .arg(protocol);
+
+        message += QString("  → RS485 Тип: %1\n").arg(rs485Str);
+        if (emulCounters) {
+            message += QString("  → УВАГА: Емуляція лічильників УВІМКНЕНА!\n");
+        }
+
+
+        // Обробка пістолетів (вкладений масив)
+        QJsonArray nozzles = dispenser["nozzles"].toArray();
+        if (nozzles.isEmpty()) {
+            message += "  └ Пістолети відсутні.\n";
+        } else {
+            for (int i = 0; i < nozzles.count(); ++i) {
+                QJsonObject nozzle = nozzles.at(i).toObject();
+
+                int nozzleId = nozzle["nozzle_id"].toInt();
+                int tankId = nozzle["tank_id"].toInt();
+                QString fuelName = nozzle["fuel_shortname"].toString();
+
+                QString prefix = (i == nozzles.count() - 1) ? "  └ 🛠 " : "  ├ 🛠 ";
+
+                message += QString("%1 Пістолет %2 (резервуар %3) – %4\n")
+                               .arg(prefix)
+                               .arg(nozzleId)
+                               .arg(tankId)
+                               .arg(fuelName);
+            }
+        }
+    }
+
+    // --- 2. КНОПКА "НАЗАД" (як у робочих методах) ---
+    QJsonObject keyboard;
+    QJsonArray rows;
+    QJsonArray rowBack;
+
+    QString backCallback = QString("stations:enter:%1:%2").arg(clientId).arg(terminalId);
+
+    rowBack.append(QJsonObject{
+        {"text", "⬅️ Назад до АЗС"},
+        {"callback_data", backCallback}
+    });
+
+    rows.append(rowBack);
+    keyboard["inline_keyboard"] = rows;
+
+    // --- 3. Відправка ---
+    m_telegramClient->sendMessageWithInlineKeyboard(telegramId, message, keyboard);
+}
+
+/**
+ * @brief Обробляє помилки запиту конфігурації ПРК.
+ */
+void Bot::onDispenserConfigFailed(const ApiError& error, qint64 telegramId)
+{
+    logCritical() << "Failed to fetch dispenser config:" << error.errorString;
+    QString errMsg = QString("❌ Помилка під час запиту конфігурації ТРК.\nСервер: <code>%1</code>")
+                         .arg(error.errorString);
+    m_telegramClient->sendMessage(telegramId, errMsg);
 }

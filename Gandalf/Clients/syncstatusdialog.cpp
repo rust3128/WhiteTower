@@ -26,7 +26,7 @@ SyncStatusDialog::SyncStatusDialog(QWidget *parent)
 
     // --- ТАЙМЕР АВТООНОВЛЕННЯ ---
     m_refreshTimer = new QTimer(this);
-    m_refreshTimer->setInterval(3000); // 5000 мс = 5 секунд
+    m_refreshTimer->setInterval(5000); // 5000 мс = 5 секунд
     // Таймер просто викликає той самий метод, що і кнопка "Оновити"
     connect(m_refreshTimer, &QTimer::timeout, this, &SyncStatusDialog::refreshClientList);
     m_refreshTimer->start();

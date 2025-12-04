@@ -59,6 +59,11 @@ void ExportTasksDialog::createUI()
     ui->tableViewTasks->setSelectionBehavior(QAbstractItemView::SelectRows);
     ui->tableViewTasks->setEditTriggers(QAbstractItemView::NoEditTriggers);
     ui->tableViewTasks->setColumnHidden(0, true); // Ховаємо ID
+    // --- ДОДАЄМО НАЛАШТУВАННЯ ДЛЯ СТРАТЕГІЇ ОЧИЩЕННЯ ---
+    ui->comboBoxDeleteStrategy->addItem("NONE (Нічого не робити)", "NONE");
+    ui->comboBoxDeleteStrategy->addItem("FULL_REFRESH (Видалити все)", "FULL_REFRESH");
+    ui->comboBoxDeleteStrategy->addItem("SOFT_DELETE (Позначити як неактивний)", "SOFT_DELETE");
+    // ----------------------------------------------------
 }
 
 void ExportTasksDialog::loadTasks()
@@ -244,7 +249,16 @@ void ExportTasksDialog::populateDetailsForm(const QJsonObject& task)
         // is_active приходить як 0 або 1
         ui->checkBoxIsActive->setChecked(task["is_active"].toInt() == 1);
         ui->plainTextEditSQL->setPlainText(task["sql_template"].toString());
-
+        // --- НОВИЙ КОД: ЧИТАННЯ СТРАТЕГІЇ ---
+        QString strategy = task["delete_strategy"].toString();
+        int index = ui->comboBoxDeleteStrategy->findData(strategy);
+        if (index != -1) {
+            ui->comboBoxDeleteStrategy->setCurrentIndex(index);
+        } else {
+            // Якщо стратегія невідома, обираємо NONE
+            ui->comboBoxDeleteStrategy->setCurrentIndex(ui->comboBoxDeleteStrategy->findData("NONE"));
+        }
+        // -------------------------------------
         m_currentTaskId = task["task_id"].toInt();
         ui->groupBoxDetails->setTitle(QString("Деталі завдання (ID: %1)").arg(m_currentTaskId));
     }
@@ -260,7 +274,7 @@ QJsonObject ExportTasksDialog::gatherFormData() const
     data["description"] = ui->lineEditDescription->text();
     data["is_active"] = ui->checkBoxIsActive->isChecked(); // QBool перетвориться на 1 або 0 в ApiClient
     data["sql_template"] = ui->plainTextEditSQL->toPlainText();
-
+    data["delete_strategy"] = ui->comboBoxDeleteStrategy->currentData().toString();
     // Не додаємо task_id тут, він додається у on_buttonBox_accepted,
     // якщо це не нове завдання.
 
