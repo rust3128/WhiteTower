@@ -882,17 +882,21 @@ void Bot::sendPaginatedStations(qint64 telegramId, int clientId, int page, int m
 //
 
 // --- (НОВІ ОБРОБНИКИ ДЛЯ INLINE-КНОПОК) ---
-
 /**
- * @brief (НОВИЙ) Обробник для "clients:main" (Назад до списку клієнтів)
+ * @brief Обробник для "clients:main" (Повернутися до списку клієнтів)
  */
 void Bot::handleCallbackClientsMain(const QJsonObject& query, const QStringList& parts)
 {
-    qint64 chatId = query["message"].toObject()["chat"].toObject()["id"].toVariant().toLongLong();
+    qint64 telegramId = query["message"].toObject()["chat"].toObject()["id"].toVariant().toLongLong();
     QString callbackQueryId = query["id"].toString();
 
-    m_telegramClient->sendMessage(chatId, "Будь ласка, натисніть /start або 👥 Клієнти, щоб оновити список.");
+    // 1. Прибираємо "годинник" та показуємо "друкує"
     m_telegramClient->answerCallbackQuery(callbackQueryId);
+    m_telegramClient->sendChatAction(telegramId, "typing");
+
+    // 2. Викликаємо API для завантаження списку клієнтів.
+    // Відповідь обробляється onBotClientsReceived, який відображає список.
+    m_apiClient.fetchBotClients(telegramId);
 }
 
 /**
@@ -1284,67 +1288,80 @@ void Bot::handleCallbackStationDisp(const QJsonObject& query, const QStringList&
 }
 
 /**
- * @brief Обробляє успішно отриману конфігурацію ПРК і формує звіт.
+ * @brief Перетворює масив ТРК/Пістолетів у формат Telegram (деревоподібний звіт з HTML).
  */
 void Bot::onDispenserConfigReceived(const QJsonArray& config, int clientId, int terminalId, qint64 telegramId)
 {
-    logInfo() << "Call Bot::onDispenserConfigReceived. Client:" << clientId << "Terminal:" << terminalId;
+    logInfo() << "Call Bot::onDispenserConfigReceived. Final HTML rendering.";
 
     if (config.isEmpty()) {
-        m_telegramClient->sendMessage(telegramId, QString("ℹ️ Конфігурація ТРК відсутня."));
+        // Тут залишаємо HTML, оскільки sendMessageWithInlineKeyboard зазвичай використовує HTML-парсинг
+        m_telegramClient->sendMessage(telegramId, QString("ℹ️ <b>Конфігурація ТРК відсутня</b> або всі вони неактивні."));
         return;
     }
 
-    // --- 1. Формуємо простий текстовий звіт (без HTML) ---
-    QString message = QString("⛽ Конфігурація ТРК на АЗС %1:\n\n").arg(terminalId);
+    QString message = QString("⛽ <b>Конфігурація ТРК</b> на АЗС <code>%1</code>:\n\n").arg(terminalId);
 
     for (const QJsonValue& dispValue : config) {
         QJsonObject dispenser = dispValue.toObject();
 
         int dispId = dispenser["dispenser_id"].toInt();
         QString protocol = dispenser["protocol_name"].toString().trimmed();
+        int port = dispenser["channel_port"].toInt();
+        int speed = dispenser["channel_speed"].toInt();
         int address = dispenser["net_address"].toInt();
         int rs485Type = dispenser["rs485_type"].toInt();
         bool emulCounters = dispenser["emul_counters"].toInt() == 1;
 
-        QString rs485Str = (rs485Type == 2 || rs485Type == 4) ? QString("%1-провідний").arg(rs485Type) : "Невідомий тип";
+        // Форматуємо TYPERS485 (2 або 4)
+        QString rs485Str = (rs485Type == 2 || rs485Type == 4)
+                               ? QString("%1-провідний").arg(rs485Type)
+                               : "Невідомий тип";
 
         // Заголовок ТРК
-        message += QString("🔹 ПРК %1 (Адреса: %2, Протокол: %3)\n")
+        message += QString("🔹 <b>ПРК %1</b>: <i>%2</i>\n")
                        .arg(dispId)
-                       .arg(address)
                        .arg(protocol);
 
-        message += QString("  → RS485 Тип: %1\n").arg(rs485Str);
+        // Технічні параметри
+        message += QString("   → Порт: <code>%1</code>, Шв: <code>%2</code>, Адр: <code>%3</code>\n")
+                       .arg(port)
+                       .arg(speed)
+                       .arg(address);
+
+        message += QString("   → RS485: %1\n").arg(rs485Str);
+
         if (emulCounters) {
-            message += QString("  → УВАГА: Емуляція лічильників УВІМКНЕНА!\n");
+            // !!! ВИПРАВЛЕННЯ КОНФЛІКТУ: ВИКОРИСТОВУЄМО ТІЛЬКИ HTML <b> !!!
+            message += QString("   → ⚠️ <b>Емуляція лічильників УВІМКНЕНА</b>\n");
         }
 
 
         // Обробка пістолетів (вкладений масив)
         QJsonArray nozzles = dispenser["nozzles"].toArray();
         if (nozzles.isEmpty()) {
-            message += "  └ Пістолети відсутні.\n";
+            message += "  └ 🛠 <i>Пістолети відсутні</i>\n";
         } else {
             for (int i = 0; i < nozzles.count(); ++i) {
                 QJsonObject nozzle = nozzles.at(i).toObject();
 
                 int nozzleId = nozzle["nozzle_id"].toInt();
                 int tankId = nozzle["tank_id"].toInt();
-                QString fuelName = nozzle["fuel_shortname"].toString();
+                QString fuelName = nozzle["fuel_shortname"].toString().trimmed();
 
                 QString prefix = (i == nozzles.count() - 1) ? "  └ 🛠 " : "  ├ 🛠 ";
 
-                message += QString("%1 Пістолет %2 (резервуар %3) – %4\n")
+                message += QString("%1 Пістолет %2 (Резервуар %3) – <b>%4</b>\n")
                                .arg(prefix)
                                .arg(nozzleId)
                                .arg(tankId)
                                .arg(fuelName);
             }
         }
+        message += "\n"; // Розділювач між ТРК
     }
 
-    // --- 2. КНОПКА "НАЗАД" (як у робочих методах) ---
+    // --- 2. КНОПКА "НАЗАД" ---
     QJsonObject keyboard;
     QJsonArray rows;
     QJsonArray rowBack;
