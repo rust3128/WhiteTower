@@ -3,6 +3,7 @@
 
 #include "Oracle/SessionManager.h"
 #include "Oracle/User.h"
+#include "Oracle/criptpass.h"
 #include <QMessageBox>
 
 UserEditDialog::UserEditDialog(int userId, QWidget *parent) :
@@ -86,7 +87,24 @@ void UserEditDialog::populateForm()
     ui->lineEditTelegramId->setReadOnly(true); // <--- ВАЖЛИВО
     // --- КІНЕЦЬ ЗМІН ---
 
-    ui->lineEditJiraToken->setText(m_currentUserData["jira_token"].toString());
+    QString encryptedJiraToken = m_currentUserData["jira_token"].toString();
+    QString encryptedRedmineToken = m_currentUserData["redmine_token"].toString(); // <--- НОВЕ ПОЛЕ
+
+    // 1. Дешифрування Jira Token та відображення
+    if (!encryptedJiraToken.isEmpty()) {
+        QString decryptedJiraToken = CriptPass::instance().decriptPass(encryptedJiraToken);
+        ui->lineEditJiraToken->setText(decryptedJiraToken);
+    } else {
+        ui->lineEditJiraToken->clear();
+    }
+
+    // 2. Дешифрування Redmine Token та відображення
+    if (!encryptedRedmineToken.isEmpty()) {
+        QString decryptedRedmineToken = CriptPass::instance().decriptPass(encryptedRedmineToken);
+        ui->lineEditRedmineToken->setText(decryptedRedmineToken); // <--- НОВЕ ПОЛЕ UI
+    } else {
+        ui->lineEditRedmineToken->clear();
+    }
 
     // 2. Динамічно створюємо прапорці для ролей (код без змін)
     QLayoutItem* item;
@@ -125,23 +143,10 @@ void UserEditDialog::on_buttonBox_rejected()
 
 void UserEditDialog::on_buttonBox_accepted()
 {
-    // 1. Збираємо дані з форми
-    QJsonObject userData;
-    userData["fio"] = ui->lineEditPIB->text();
-    userData["is_active"] = ui->checkBoxIsActive->isChecked();
-    userData["jira_token"] = ui->lineEditJiraToken->text();
+    // 1. Збираємо дані з форми та ШИФРУЄМО токени
+    QJsonObject userData = gatherFormData();
 
-    QJsonArray rolesArray;
-    for (int i = 0; i < ui->rolesLayout->count(); ++i) {
-        QCheckBox* checkBox = qobject_cast<QCheckBox*>(ui->rolesLayout->itemAt(i)->widget());
-        if (checkBox && checkBox->isChecked()) {
-            rolesArray.append(checkBox->text());
-        }
-    }
-    userData["roles"] = rolesArray;
-
-    // 2. Просто відправляємо дані.
-    //    З'єднання `connect` вже існують (були створені в конструкторі).
+    // 2. Відправляємо дані на сервер (Conduit).
     ApiClient::instance().updateUser(m_userId, userData);
 }
 
@@ -155,4 +160,34 @@ void UserEditDialog::onUpdateFailed(const ApiError& error)
     msgBox.setDetailedText(QString("URL: %1\nHTTP Status: %2").arg(error.requestUrl).arg(error.httpStatusCode));
     msgBox.exec();
     // Ми НЕ закриваємо вікно, щоб користувач міг виправити дані або спробувати ще раз.
+}
+
+
+QJsonObject UserEditDialog::gatherFormData() const
+{
+    QJsonObject userData;
+    userData["fio"] = ui->lineEditPIB->text();
+    userData["is_active"] = ui->checkBoxIsActive->isChecked();
+
+    // --- ОБРОБКА ТА ШИФРУВАННЯ JIRA TOKEN ---
+    QString jiraTokenInput = ui->lineEditJiraToken->text();
+    QString encryptedJiraToken = jiraTokenInput.isEmpty() ? QString() : CriptPass::instance().criptPass(jiraTokenInput);
+    userData["jira_token"] = encryptedJiraToken;
+
+    // --- ОБРОБКА ТА ШИФРУВАННЯ REDMINE TOKEN ---
+    QString redmineTokenInput = ui->lineEditRedmineToken->text(); // <--- ЗЧИТУЄМО НОВЕ ПОЛЕ
+    QString encryptedRedmineToken = redmineTokenInput.isEmpty() ? QString() : CriptPass::instance().criptPass(redmineTokenInput);
+    userData["redmine_token"] = encryptedRedmineToken; // <--- ДОДАЄМО НОВЕ ПОЛЕ
+
+    // Збір ролей (існуючий код)
+    QJsonArray rolesArray;
+    for (int i = 0; i < ui->rolesLayout->count(); ++i) {
+        QCheckBox* checkBox = qobject_cast<QCheckBox*>(ui->rolesLayout->itemAt(i)->widget());
+        if (checkBox && checkBox->isChecked()) {
+            rolesArray.append(checkBox->text());
+        }
+    }
+    userData["roles"] = rolesArray;
+
+    return userData;
 }

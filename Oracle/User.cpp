@@ -3,9 +3,9 @@
 #include <QJsonArray>
 
 User::User(int id, QString login, QString fio, bool isActive, QStringList roles,
-           qint64 telegramId, const QString& jiraToken)
+           qint64 telegramId, const QString& jiraToken, const QString& redmineToken)
     : m_id(id), m_login(login), m_fio(fio), m_isActive(isActive), m_roles(roles),
-    m_telegramId(telegramId), m_jiraToken(jiraToken)
+    m_telegramId(telegramId), m_jiraToken(jiraToken), m_redmineToken(redmineToken)
 {
 }
 
@@ -16,6 +16,7 @@ bool User::isActive() const { return m_isActive; }
 const QStringList& User::roles() const { return m_roles; }
 qint64 User::telegramId() const { return m_telegramId; }
 const QString& User::jiraToken() const { return m_jiraToken; }
+const QString& User::redmineToken() const { return m_redmineToken; }
 
 bool User::isAdmin() const
 {
@@ -37,6 +38,7 @@ QJsonObject User::toJson() const
     json["roles"] = QJsonArray::fromStringList(m_roles);
     json["telegram_id"] = m_telegramId; // Додано
     json["jira_token"] = m_jiraToken;   // Додано
+    json["redmine_token"] = m_redmineToken;
     return json;
 }
 
@@ -51,6 +53,7 @@ User* User::fromJson(const QJsonObject& json)
     bool isActive = json["is_active"].toBool();
     qint64 telegranId = json["telegram_id"].toInt();
     QString jiraToken = json["jira_token"].toString();
+    QString redmineToken = json["redmine_token"].toString();
 
     QStringList roles;
     if (json.contains("roles") && json["roles"].isArray()) {
@@ -58,5 +61,5 @@ User* User::fromJson(const QJsonObject& json)
             roles.append(val.toString());
         }
     }
-    return new User(id, login, fio, isActive, roles, telegranId, jiraToken);
+    return new User(id, login, fio, isActive, roles, telegranId, jiraToken, redmineToken);
 }

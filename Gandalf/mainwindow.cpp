@@ -39,6 +39,8 @@ MainWindow::MainWindow(QWidget *parent)
         // Запускаємо перевірку через 2 секунди після старту
         QTimer::singleShot(2000, this, &MainWindow::checkAutoSyncNeeded);
     }
+
+    QTimer::singleShot(500, this, &MainWindow::fetchGlobalSettings);
 }
 
 MainWindow::~MainWindow()
@@ -52,6 +54,41 @@ void MainWindow::on_actionUsers_triggered()
     userList->exec();
 }
 
+
+void MainWindow::fetchGlobalSettings()
+{
+    logInfo() << "Fetching Global application settings from API...";
+
+    // 1. Підписуємося на сигнали відповіді
+    connect(&ApiClient::instance(), &ApiClient::settingsFetched,
+            this, &MainWindow::onGlobalSettingsFetched,
+            Qt::SingleShotConnection); // Використовуємо SingleShot, бо нам потрібно отримати дані один раз
+
+    connect(&ApiClient::instance(), &ApiClient::settingsFetchFailed,
+            this, &MainWindow::onGlobalSettingsFetchFailed,
+            Qt::SingleShotConnection);
+
+    // 2. Робимо API-запит для групи "Global"
+    ApiClient::instance().fetchSettings("Global");
+}
+
+void MainWindow::onGlobalSettingsFetched(const QVariantMap& settingsMap)
+{
+    logInfo() << "Successfully fetched Global settings.";
+
+    // !!! КЛЮЧОВИЙ МОМЕНТ: Кешування даних у AppParams
+    AppParams::instance().setScopedParams("Global", settingsMap);
+
+    // Оскільки налаштування оновлено, якщо діалог налаштувань відкрито,
+    // ви можете оновити його, викликавши його loadSettings() (потрібен доступ до екземпляра).
+    // Або, якщо він не відкритий, він просто завантажить правильні дані, коли його відкриють.
+}
+
+void MainWindow::onGlobalSettingsFetchFailed(const ApiError& error)
+{
+    logCritical() << "Failed to fetch Global settings. Error:" << error.errorString;
+    // Тут можна додати логіку для оповіщення користувача, якщо це критично
+}
 
 void MainWindow::on_actionClients_triggered()
 {

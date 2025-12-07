@@ -9,7 +9,7 @@ class User
 {
 public:
     User(int id, QString login, QString fio, bool isActive, QStringList roles,
-         qint64 telegramId, const QString& jiraToken);
+         qint64 telegramId, const QString& jiraToken, const QString& redmineToken);
 
     int id() const;
     const QString& login() const;
@@ -21,6 +21,7 @@ public:
     static User* fromJson(const QJsonObject& json);
     qint64 telegramId() const;
     const QString& jiraToken() const;
+    const QString& redmineToken() const;
     bool isAdmin() const;
 private:
     int m_id;
@@ -30,6 +31,7 @@ private:
     QStringList m_roles;
     qint64 m_telegramId;
     QString m_jiraToken;
+    QString m_redmineToken;
 };
 
 #endif // USER_H

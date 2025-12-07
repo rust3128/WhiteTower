@@ -1,4 +1,5 @@
 #include "AppParams.h"
+#include "Logger.h"
 
 namespace {
 // Ця функція тепер створює і повертає готову структуру
@@ -46,6 +47,8 @@ void AppParams::setParam(const QString& appName, const QString& key, const QVari
 
 QVariant AppParams::getParam(const QString& appName, const QString& key, const QVariant& defaultValue) const
 {
+
+    logInfo() << "Get Param " << appName << key;
     // 1. Спочатку шукаємо параметр для конкретного додатку
     if (m_scopedParams.contains(appName) && m_scopedParams[appName].contains(key)) {
         return m_scopedParams[appName].value(key);
@@ -58,4 +61,12 @@ QVariant AppParams::getParam(const QString& appName, const QString& key, const Q
 
     // 3. Якщо ніде немає, повертаємо значення за замовчуванням
     return defaultValue;
+}
+
+
+void AppParams::setScopedParams(const QString& appName, const QVariantMap& settings)
+{
+    // Оновлюємо внутрішній контейнер:
+    m_scopedParams[appName] = settings;
+    qDebug() << "AppParams cache updated for scope:" << appName << "with" << settings.count() << "items.";
 }

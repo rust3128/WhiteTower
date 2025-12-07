@@ -28,6 +28,7 @@ private slots:
 
 private:
     void populateForm();
+    QJsonObject gatherFormData() const;
 private:
     Ui::UserEditDialog *ui;
     int m_userId; // Зберігаємо ID

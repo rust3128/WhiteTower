@@ -128,14 +128,11 @@ User* DbManager::loadUser(int userId)
     }
 
     QSqlQuery userQuery(m_db);
-    // --- ПОЧАТОК ЗМІН ---
-    // Використовуємо LEFT JOIN, щоб отримати TELEGRAM_ID з пов'язаного запиту,
-    // не чіпаючи таблицю USERS
-    userQuery.prepare("SELECT u.USER_LOGIN, u.USER_FIO, u.IS_ACTIVE, b.TELEGRAM_ID, u.JIRA_TOKEN "
+    // !!! ОНОВЛЕНО: ДОДАНО REDMINE_TOKEN до SELECT !!!
+    userQuery.prepare("SELECT u.USER_LOGIN, u.USER_FIO, u.IS_ACTIVE, b.TELEGRAM_ID, u.JIRA_TOKEN, u.REDMINE_TOKEN "
                       "FROM USERS u "
                       "LEFT JOIN BOT_PENDING_REQUESTS b ON u.BOT_REQUEST_ID = b.REQUEST_ID "
                       "WHERE u.USER_ID = :id");
-    // --- КІНЕЦЬ ЗМІН ---
     userQuery.bindValue(":id", userId);
 
     if (!userQuery.exec()) {
@@ -151,11 +148,15 @@ User* DbManager::loadUser(int userId)
     QString login = userQuery.value(0).toString();
     QString fio = userQuery.value(1).toString();
     bool isActive = userQuery.value(2).toBool();
-    // Поле 3 (b.TELEGRAM_ID) може бути NULL, toLongLong() коректно це обробить (поверне 0)
     qint64 telegramId = userQuery.value(3).toLongLong();
+
+    // 1. Читання JIRA_TOKEN (зашифрований)
     QString jiraToken = userQuery.value(4).toString();
 
-    // Запит для отримання ролей (без змін)
+    // 2. Читання REDMINE_TOKEN (зашифрований)
+    QString redmineToken = userQuery.value(5).toString();
+
+    // Запит для отримання ролей (існуючий код)
     QStringList roles;
     QSqlQuery rolesQuery(m_db);
     rolesQuery.prepare("SELECT r.ROLE_NAME FROM USER_ROLES ur "
@@ -168,7 +169,8 @@ User* DbManager::loadUser(int userId)
         }
     }
 
-    return new User(userId, login, fio, isActive, roles, telegramId, jiraToken);
+    // !!! ОНОВЛЕНО: ВИКЛИК КОНСТРУКТОРА З REDMINE_TOKEN !!!
+    return new User(userId, login, fio, isActive, roles, telegramId, jiraToken, redmineToken);
 }
 
 
@@ -234,19 +236,24 @@ bool DbManager::updateUser(int userId, const QJsonObject& userData)
         return false;
     }
 
-    // --- ПОЧАТОК ЗМІН ---
-    // 1. Оновлюємо основні дані в таблиці USERS (БЕЗ TELEGRAM_ID)
+    // 1. Оновлюємо основні дані в таблиці USERS
     QSqlQuery updateQuery(m_db);
+    // !!! ОНОВЛЕНО: ДОДАНО REDMINE_TOKEN до UPDATE !!!
     updateQuery.prepare("UPDATE USERS SET "
                         "USER_FIO = :fio, "
                         "IS_ACTIVE = :isActive, "
-                        "JIRA_TOKEN = :jiraToken "
+                        "JIRA_TOKEN = :jiraToken, "
+                        "REDMINE_TOKEN = :redmineToken "
                         "WHERE USER_ID = :id");
-    updateQuery.bindValue(":fio", userData["fio"].toString());
-    updateQuery.bindValue(":isActive", userData["is_active"].toBool());
+
+    // 2. Обробка та прив'язка токенів (БЕЗ ШИФРУВАННЯ)
     updateQuery.bindValue(":jiraToken", userData["jira_token"].toString());
+    updateQuery.bindValue(":redmineToken", userData["redmine_token"].toString());
+
+    // Прив'язка існуючих полів
+    updateQuery.bindValue(":fio", userData["fio"].toString());
+    updateQuery.bindValue(":isActive", userData["is_active"].toBool() ? 1 : 0);
     updateQuery.bindValue(":id", userId);
-    // --- КІНЕЦЬ ЗМІН ---
 
     if (!updateQuery.exec()) {
         logCritical() << "Failed to update USERS table:" << updateQuery.lastError().text();
@@ -254,7 +261,7 @@ bool DbManager::updateUser(int userId, const QJsonObject& userData)
         return false;
     }
 
-    // 2. Оновлення ролей (без змін)
+    // 3. Оновлення ролей (існуючий код)
     QSqlQuery deleteRolesQuery(m_db);
     deleteRolesQuery.prepare("DELETE FROM USER_ROLES WHERE USER_ID = :id");
     deleteRolesQuery.bindValue(":id", userId);

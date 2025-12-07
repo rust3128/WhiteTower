@@ -31,6 +31,8 @@ public:
     // Інші константи залишаються як є (поки що)
     const QString TEST_CONSTANT;
 
+    // Метод для заповнення кешу параметрами, отриманими з API
+    void setScopedParams(const QString& appName, const QVariantMap& settings);
 
 
 private:

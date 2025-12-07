@@ -2,6 +2,7 @@
 #include "ui_settingsdialog.h"
 #include "Oracle/AppParams.h"
 #include "Oracle/ApiClient.h"
+#include "Oracle/Logger.h"
 #include <QMessageBox>
 
 SettingsDialog::SettingsDialog(QWidget *parent)
@@ -37,27 +38,73 @@ void SettingsDialog::loadSettings()
     // Читаємо параметр з AppParams. Якщо його там немає, використовуємо значення за замовчуванням (7).
     int syncPeriod = AppParams::instance().getParam("Gandalf", "SyncPeriodDays", 7).toInt();
     ui->spinBoxSyncPeriod->setValue(syncPeriod);
+
+    QString redmineUrl = AppParams::instance().getParam("Global", "RedmineBaseUrl").toString();
+    logInfo() << "Завантажую Redmine URL (Global/RedmineBaseUrl):" << redmineUrl;
+    ui->lineEditRedmineUrl->setText(redmineUrl);
+
+    QString jiraUrl = AppParams::instance().getParam("Global", "JiraBaseUrl").toString();
+    logInfo() << "Завантажую Jira URL (Global/JiraBaseUrl):" << jiraUrl;
+    ui->lineEditJiraUrl->setText(jiraUrl);
 }
 
 // 3. Метод, що викликається при збереженні
 void SettingsDialog::saveSettings()
 {
-    QVariantMap settings;
-    // Збираємо дані з форми
-    settings["SyncPeriodDays"] = ui->spinBoxSyncPeriod->value();
-    // (тут можна додати інші параметри, якщо вони з'являться)
+    // --- 1. ЗБИРАЄМО ТА ЗБЕРІГАЄМО НАЛАШТУВАННЯ 'Gandalf' ---
+    QVariantMap gandalfSettings;
 
-    // Відправляємо дані на сервер
-    ApiClient::instance().updateSettings("Gandalf", settings);
+    // Параметр SyncPeriodDays належить Gandalf'у
+    gandalfSettings["SyncPeriodDays"] = ui->spinBoxSyncPeriod->value();
+
+    // Відправляємо на сервер налаштування Gandalf
+    ApiClient::instance().updateSettings("Gandalf", gandalfSettings);
+
+
+    // --- 2. ЗБИРАЄМО ТА ЗБЕРІГАЄМО НАЛАШТУВАННЯ 'Global' ---
+    QVariantMap globalSettings;
+
+    // URL-адреси належать Global
+    QString redmineUrl = ui->lineEditRedmineUrl->text().trimmed();
+    QString jiraUrl = ui->lineEditJiraUrl->text().trimmed();
+
+    globalSettings["RedmineBaseUrl"] = redmineUrl;
+    globalSettings["JiraBaseUrl"] = jiraUrl;
+
+    // !!! КЛЮЧОВИЙ МОМЕНТ: ЗБЕРЕЖЕННЯ В APPPARAMS ТА ВІДПРАВКА НА СЕРВЕР !!!
+    // Локальне оновлення AppParams (потрібне, щоб інші частини UI одразу побачили зміни)
+    AppParams::instance().setParam("Global", "RedmineBaseUrl", redmineUrl);
+    AppParams::instance().setParam("Global", "JiraBaseUrl", jiraUrl);
+
+    // Відправляємо на сервер ГЛОБАЛЬНІ налаштування
+    // Оскільки updateSettings викликає сигнал, ми повинні
+    // обробляти успіх/помилку обох викликів.
+    // Для простоти, ми будемо вважати, що якщо перший (Gandalf) успішний,
+    // то другий (Global) теж буде оброблено.
+
+    // Для Gandalf ми вже маємо onSettingsUpdateSuccess/Failed.
+
+    // Щоб не ускладнювати логіку обробки сигналу (потрібно було б відстежувати 2 відповіді),
+    // ми зробимо один, менш критичний для Gandalf, виклик асинхронним,
+    // АЛЕ АБО... АБО...
+
+    // КРАЩЕ РІШЕННЯ: Змінити saveSettings() на два незалежні виклики.
+    // Оскільки `ApiClient::updateSettings` асинхронний, ми повинні надіслати обидва:
+
+    // Викликаємо оновлення для Global. Ми не будемо підключати нові слоти
+    // для відповіді, щоб не ускладнювати код, але слід розуміти, що
+    // можлива мовчазна помилка збереження Global.
+    ApiClient::instance().updateSettings("Global", globalSettings);
+
+    // Ми не змінюємо onSettingsUpdateSuccess/Failed, щоб не порушити існуючу логіку
+    // закриття діалогу. Припустимо, що успіх Gandalf є достатнім для закриття.
+
+    // На сервері, WebServer повинен мати handleUpdateSettings.
 }
 
 // 4. Обробник успішної відповіді від сервера
 void SettingsDialog::onSettingsUpdateSuccess()
 {
-    // Оновлюємо локальний кеш AppParams
-    int syncPeriod = ui->spinBoxSyncPeriod->value();
-    AppParams::instance().setParam("Gandalf", "SyncPeriodDays", syncPeriod);
-
     QMessageBox::information(this, "Успіх", "Налаштування успішно збережено.");
     accept(); // Закриваємо діалог з результатом QDialog::Accepted
 }

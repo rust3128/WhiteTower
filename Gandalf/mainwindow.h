@@ -1,6 +1,7 @@
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
+#include "Oracle/ApiClient.h"
 #include <QMainWindow>
 #include <QJsonArray>
 
@@ -30,6 +31,11 @@ private slots:
 
     void on_actionOpenSyncMonitor_triggered();
     void onDashboardDataForAutoSync(const QJsonArray& data);
+
+    // Нові слоти для завантаження Global налаштувань
+    void fetchGlobalSettings();
+    void onGlobalSettingsFetched(const QVariantMap& settingsMap);
+    void onGlobalSettingsFetchFailed(const ApiError& error);
 
 private:
     void checkAutoSyncNeeded();
