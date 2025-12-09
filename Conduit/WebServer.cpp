@@ -415,20 +415,22 @@ QHttpServerResponse WebServer::handleUpdateUserRequest(const QString &userId, co
 // }
 
 /**
- * @brief Перевіряє запит на аутентифікацію. (ВЕРСІЯ 3)
- * Розуміє два методи:
+ * @brief Перевіряє запит на аутентифікацію. (ВЕРСІЯ 4: ВИПРАВЛЕНО СИСТЕМНУ АУТЕНТИФІКАЦІЮ БОТА)
+ * Розуміє три методи:
  * 1. Gandalf (GUI): Заголовок "Authorization: Bearer <session_token>"
- * 2. Isengard (Bot): Заголовки "X-Bot-Token: <secret_key>" + "X-Telegram-ID: <user_id>"
+ * 2. Isengard (Bot): Заголовок "X-Bot-Token: <secret_key>" (Для системних запитів)
+ * 3. Isengard (Bot): Заголовки "X-Bot-Token: <secret_key>" + "X-Telegram-ID: <user_id>" (Для запитів користувача)
  * @return Об'єкт User* у разі успіху (вимагає delete), або nullptr.
  */
 User* WebServer::authenticateRequest(const QHttpServerRequest &request)
 {
-    // --- ВИПРАВЛЕНО: Шукаємо всі заголовки за один прохід ---
+    // --- 1. Пошук всіх заголовків ---
     const auto &headers = request.headers();
     QByteArray authHeader;
     QByteArray botTokenHeader;
     QByteArray telegramIdHeader;
 
+    // Збираємо заголовки (залишаємо як є)
     for (const auto &headerPair : headers) {
         if (headerPair.first.compare("Authorization", Qt::CaseInsensitive) == 0) {
             authHeader = headerPair.second;
@@ -454,12 +456,37 @@ User* WebServer::authenticateRequest(const QHttpServerRequest &request)
         }
     }
 
-    // --- Спроба №2: Аутентифікація Isengard (токен бота) ---
+    // !!! НОВА Спроба №2: АУТЕНТИФІКАЦІЯ СИСТЕМИ БОТА (ТІЛЬКИ X-Bot-Token) !!!
+    // Це потрібно для запитів, що не залежать від конкретного користувача (напр. fetchSettings).
+    if (!botTokenHeader.isEmpty() && telegramIdHeader.isEmpty()) {
+
+        // 1. Перевіряємо секретний ключ бота
+        if (!m_botApiKey.isEmpty() && botTokenHeader == m_botApiKey.toUtf8()) {
+
+            // Токен бота вірний. Аутентифікація успішна.
+            logDebug() << "Bot API Key valid. Authenticating as System User (ID 1).";
+
+            // Завантажуємо System User (ID 1), який повинен мати права адміністратора
+            User* systemUser = DbManager::instance().loadUser(1);
+
+            if (systemUser && systemUser->isActive()) {
+                return systemUser; // Успіх (Системна аутентифікація)
+            }
+            if (systemUser) delete systemUser;
+
+            logCritical() << "Bot API Key valid, but System User (ID 1) cannot be loaded or is inactive!";
+        }
+    }
+
+    // --- Спроба №3: Аутентифікація Isengard (Токен + Telegram ID, для user-specific запитів) ---
+    // Це стара Спроба №2.
     if (!botTokenHeader.isEmpty() && !telegramIdHeader.isEmpty()) {
 
         // 1. Перевіряємо секретний ключ бота (ВИПРАВЛЕНО: беремо з m_botApiKey)
         if (m_botApiKey.isEmpty() || m_botApiKey == "YOUR_DEFAULT_BOT_KEY_HERE") {
-            logCritical() << "Bot API Key is not set on the server! Cannot authenticate bot.";
+            // Цей лог може спрацювати, якщо m_botApiKey не було налаштовано,
+            // але ми припускаємо, що він налаштований.
+            logCritical() << "Bot API Key is not set on the server! Cannot authenticate bot user.";
             return nullptr;
         }
 
@@ -476,7 +503,7 @@ User* WebServer::authenticateRequest(const QHttpServerRequest &request)
             if (userId > 0) {
                 User* user = DbManager::instance().loadUser(userId);
                 if (user && user->isActive()) {
-                    return user; // Успіх (Isengard)
+                    return user; // Успіх (Isengard User)
                 }
                 if (user) delete user;
             }

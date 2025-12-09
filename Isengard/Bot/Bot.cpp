@@ -7,6 +7,18 @@
 #include <QJsonObject>
 #include <QJsonDocument>
 
+
+// Допоміжна функція для екранування HTML-символів у тексті
+QString escapeHtml(const QString& text)
+{
+    QString escaped = text;
+    // & має бути першим!
+    escaped.replace(QLatin1Char('&'), QLatin1String("&amp;"));
+    escaped.replace(QLatin1Char('<'), QLatin1String("&lt;"));
+    escaped.replace(QLatin1Char('>'), QLatin1String("&gt;"));
+    return escaped;
+}
+
 // --- КОНСТРУКТОР ---
 Bot::Bot(const QString& botToken, QObject *parent)
     : QObject(parent),
@@ -1415,41 +1427,92 @@ void Bot::onDispenserConfigFailed(const ApiError& error, qint64 telegramId)
  */
 void Bot::onRedmineTasksFetched(const QJsonArray& tasks, qint64 telegramId, int /*userId*/)
 {
-    if (telegramId == 0) return; // Забезпечення, що це був запит від бота
+    if (telegramId == 0) return;
 
     QString message;
 
+    // Отримуємо URL Redmine (він вже гарантовано завантажений)
+    const QString redmineUrl = AppParams::instance().getParam("Global", "RedmineBaseUrl").toString();
+
     if (tasks.isEmpty()) {
-        // Використовуємо <b> для жирного шрифту, як у ваших інших методах
         message = "✅ <b>У вас немає відкритих задач Redmine, призначених вам.</b>";
     } else {
-        message = QString("📝 <b>Ваші відкриті задачі Redmine (%1):</b>\n").arg(tasks.count());
+        // --- 1. ГРУПУВАННЯ ЗАДАЧ ЗА ПРОЄКТАМИ ---
+        // QMap<Назва Проєкту, Список Задач>
+        QMap<QString, QJsonArray> tasksByProject;
 
         for (const QJsonValue& val : tasks) {
             QJsonObject issue = val.toObject();
-            int id = issue["id"].toInt();
-            QString subject = issue["subject"].toString();
-            QString status = issue["status"].toObject()["name"].toString();
+            // Зчитуємо назву проєкту
+            QString projectName = issue["project"].toObject()["name"].toString();
 
-            QString redmineUrl = AppParams::instance().getParam("Global", "RedmineBaseUrl").toString();
-            // Створюємо HTML посилання
-            QString issueUrl = redmineUrl + "/issues/" + QString::number(id);
+            // Якщо мапа вже містить проєкт, додаємо задачу до існуючого масиву
+            // Інакше, створюємо новий масив і додаємо задачу
+            tasksByProject[projectName].append(val);
+        }
 
-            // Формат: [#1234] [Статус] Назва задачі (Посилання)
-            // Використовуємо HTML: <b> для жирного, <a href=""> для посилання
-            // Примітка: HTML-екранування тексту (subject) має бути забезпечено
-            // вашим клієнтом або перед додаванням, щоб уникнути помилок.
-            message += QString("\n[#%1] [<b>%2</b>] %3\n<a href=\"%4\">Подробиці</a>")
-                           .arg(id)
-                           .arg(status)
-                           .arg(subject.simplified())
-                           .arg(issueUrl);
+        // Заголовок загального повідомлення
+        message = QString("📝 <b>Ваші відкриті задачі Redmine (%1):</b>\n\n").arg(tasks.count());
+
+        // --- 2. ФОРМУВАННЯ ВИВОДУ (Ітерація по проєктах) ---
+
+        // Ітеруємо по проєктах (QMap автоматично сортує за ключем)
+        QMapIterator<QString, QJsonArray> i(tasksByProject);
+        while (i.hasNext()) {
+            i.next();
+            const QString projectName = i.key();
+            const QJsonArray projectTasks = i.value();
+
+            // Заголовок Проєкту
+            message += QString("📁 <b>Проєкт: %1 (%2)</b>\n")
+                           .arg(projectName)
+                           .arg(projectTasks.count());
+
+            // Ітеруємо по задачах у поточному проєкті
+            for (const QJsonValue& val : projectTasks) {
+                QJsonObject issue = val.toObject();
+
+                int id = issue["id"].toInt();
+                QString subject = issue["subject"].toString();
+                QString status = issue["status"].toObject()["name"].toString();
+                int statusId = issue["status"].toObject()["id"].toInt();
+
+                const QString issueUrl = redmineUrl + "/issues/" + QString::number(id);
+
+                // Вибір емодзі
+                QString statusEmoji;
+                if (statusId == 1) { // Новий
+                    statusEmoji = "🟢";
+                } else if (statusId == 2) { // В розробці
+                    statusEmoji = "🛠️";
+                } else if (statusId == 7) { // Відкладена
+                    statusEmoji = "🟡";
+                } else {
+                    statusEmoji = "🔵";
+                }
+
+                // Екрануємо тему
+                const QString escapedSubject = escapeHtml(subject.simplified());
+
+                // Формуємо рядок задачі
+                message += QString("  %1 <b>[#%2] [%3]</b> %4\n  <a href=\"%5\">➡️ Перейти до задачі</a>\n")
+                               .arg(statusEmoji)      // %1
+                               .arg(id)               // %2
+                               .arg(status)           // %3
+                               .arg(escapedSubject)   // %4
+                               .arg(issueUrl);         // %5
+            }
+
+            // Додаємо додатковий пробіл після проєкту для розділення
+            message += "\n";
         }
     }
 
-    // !!! ВИКОРИСТОВУЄМО ІСНУЮЧИЙ РОБОЧИЙ МЕТОД БЕЗ БУДЬ-ЯКИХ ДОДАТКОВИХ ПАРАМЕТРІВ !!!
     m_telegramClient->sendMessage(telegramId, message);
 }
+
+
+
 
 /**
  * @brief Обробляє помилку завантаження задач.

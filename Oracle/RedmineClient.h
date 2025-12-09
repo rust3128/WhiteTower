@@ -16,6 +16,18 @@ class RedmineClient : public QObject
 public:
     explicit RedmineClient(QObject *parent = nullptr);
 
+
+    // Визначення всіх ID статусів Redmine для зручності супроводу
+    enum class StatusId {
+        New = 1,               // Новый (Новий)
+        InDevelopment = 2,     // В разработке (В розробці)
+        Testing = 3,           // Тестирование (Тестування)
+        Feedback = 4,          // Обратная связь (Закритий)
+        Closed = 5,            // Закрыт (Закритий)
+        Rejected = 6,          // Отказ (Відмова)
+        Deferred = 7           // Отложена (Відкладена)
+    };
+
     /**
      * @brief Надсилає асинхронний запит до Redmine API для отримання відкритих задач
      * @param baseUrl Базовий URL Redmine (напр., http://redmine.mycompany.com)

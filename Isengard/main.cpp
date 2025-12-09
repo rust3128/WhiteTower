@@ -20,6 +20,50 @@
 // Змінна для зберігання ID останнього оновлення
 static qint64 g_lastUpdateId = 0;
 
+
+bool loadGlobalSettingsSync()
+{
+    logInfo() << "Synchronously loading global settings from API...";
+
+    QEventLoop loop;
+    QTimer timer;
+    timer.setSingleShot(true);
+    timer.setInterval(5000); // Таймаут 5 секунд
+
+    bool success = false;
+
+    // Підключаємо слоти для отримання відповіді (використовуємо ApiClient::fetchSettings)
+    QObject::connect(&ApiClient::instance(), &ApiClient::settingsFetched,
+                     QCoreApplication::instance(), // <-- КОНТЕКСТ
+                     [&loop, &success](const QVariantMap& settingsMap) {
+                         AppParams::instance().setScopedParams("Global", settingsMap);
+                         logInfo() << "Successfully synchronized Global settings from server.";
+                         success = true;
+                         loop.quit();
+                     }, Qt::DirectConnection);
+
+    QObject::connect(&ApiClient::instance(), &ApiClient::settingsFetchFailed,
+                     QCoreApplication::instance(), // <-- КОНТЕКСТ
+                     [&loop](const ApiError& error) {
+                         logCritical() << "Failed to load Global settings synchronously:" << error.errorString;
+                         loop.quit();
+                     }, Qt::DirectConnection);
+
+    // Обробка таймауту
+    QObject::connect(&timer, &QTimer::timeout, [&loop](){
+        logCritical() << "Synchronous settings loading timed out after 5 seconds.";
+        loop.quit();
+    });
+
+    // Запускаємо запит
+    ApiClient::instance().fetchSettings("Global");
+    timer.start();
+    loop.exec(); // Блокуємо, доки не отримаємо відповідь або таймаут
+
+    return success;
+}
+
+
 // --- ОНОВЛЕНА ФУНКЦІЯ ---
 QVariantMap setupBotConfiguration()
 {
@@ -106,6 +150,11 @@ int main(int argc, char *argv[])
     // --- ДОДАЄМО НАЛАШТУВАННЯ КЛЮЧА ---
     // (ApiClient візьме ApiBaseUrl сам, а ми передамо йому ключ)
     ApiClient::instance().setBotApiKey(botApiKey);
+
+    if (!loadGlobalSettingsSync()) {
+        logCritical() << "Cannot start bot: Failed to initialize global settings (Redmine URL/Jira URL).";
+        return 1;
+    }
 
     // 3. Створюємо і запускаємо "мозок" бота
     Bot bot(botToken);

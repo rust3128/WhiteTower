@@ -77,9 +77,24 @@ ApiClient::ApiClient(QObject* parent) : QObject(parent)
 QNetworkRequest ApiClient::createAuthenticatedRequest(const QUrl &url)
 {
     QNetworkRequest request(url);
+
+    // Встановлення загальних заголовків
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    // 1. АУТЕНТИФІКАЦІЯ КОРИСТУВАЧА (Bearer Token)
     if (!m_authToken.isEmpty()) {
         request.setRawHeader("Authorization", ("Bearer " + m_authToken).toUtf8());
+        logDebug() << "ApiClient: Adding Bearer token header.";
     }
+
+    // !!! КЛЮЧОВА ЗМІНА: ДОДАЄМО X-BOT-TOKEN НЕЗАЛЕЖНО !!!
+    // Це забезпечує, що Bot Key буде присутній, навіть якщо є Bearer Token.
+    // У Isengard, Bearer Token порожній, тому цей блок додасть необхідний ключ.
+    if (!m_botApiKey.isEmpty()) {
+        request.setRawHeader("X-Bot-Token", m_botApiKey.toUtf8());
+        logDebug() << "ApiClient: Adding X-Bot-Token header.";
+    }
+
     return request;
 }
 
@@ -552,11 +567,32 @@ void ApiClient::onClientUpdateReplyFinished()
 
 void ApiClient::fetchSettings(const QString& appName)
 {
-    QNetworkRequest request = createAuthenticatedRequest(QUrl(m_serverUrl + "/api/settings/" + appName));
+    // Оновлюємо URL сервера перед запитом
+    m_serverUrl = AppParams::instance().getParam("Global", "ApiBaseUrl").toString();
+
+    if (m_serverUrl.isEmpty()) {
+        logCritical() << "ApiClient: API Base URL is not configured. Cannot fetch settings.";
+        // Емітуємо помилку синхронно
+        ApiError error;
+        error.errorString = "API Base URL is not configured.";
+        emit settingsFetchFailed(error);
+        return;
+    }
+
+    // Формуємо повний URL запиту
+    QUrl url(m_serverUrl + "/api/settings/" + appName);
+
+    // !!! ВИКОРИСТОВУЄМО ОНОВЛЕНИЙ createAuthenticatedRequest !!!
+    QNetworkRequest request = createAuthenticatedRequest(url);
+
     QNetworkReply* reply = m_networkManager->get(request);
+
+    // !!! НАСЛІДУВАННЯ ШАБЛОНУ: ВСТАНОВЛЕННЯ ВЛАСТИВОСТЕЙ НА REPLY !!!
+    reply->setProperty("appName", appName);
+    // !!! КІНЕЦЬ ШАБЛОНУ !!!
+
     connect(reply, &QNetworkReply::finished, this, &ApiClient::onSettingsReplyFinished);
 }
-
 void ApiClient::updateSettings(const QString& appName, const QVariantMap& settings)
 {
     QNetworkRequest request = createAuthenticatedRequest(QUrl(m_serverUrl + "/api/settings/" + appName));

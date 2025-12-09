@@ -305,6 +305,7 @@ private:
 
     QNetworkRequest createAuthenticatedRequest(const QUrl &url);
 
+
     QNetworkAccessManager* m_networkManager;
     QString m_serverUrl;
     QString m_authToken;

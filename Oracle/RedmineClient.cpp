@@ -33,16 +33,20 @@ QNetworkReply* RedmineClient::fetchOpenIssues(const QString& baseUrl, const QStr
 
     // --- 1. Формування URL та фільтрів ---
     QUrl url(baseUrl);
-    // Redmine API часто вимагає скіс у кінці базового URL, але ми додамо його тут, якщо потрібно
+
+    // Додаємо скіс, якщо його немає, та кінцеву точку
     if (!url.path().endsWith('/')) {
         url.setPath(url.path() + "/");
     }
-    // Додаємо кінцеву точку
     url.setPath(url.path() + "issues.json");
 
-    // Фільтри: незакриті задачі (status_id=open) та задачі, призначені користувачу (assigned_to_id=me)
+    // !!! ВИПРАВЛЕННЯ: ВИКОРИСТАННЯ НАДІЙНОГО ФІЛЬТРА "status_id=open" !!!
+    // Оскільки фільтрація за списком ID викликає HTTP 500, повертаємося
+    // до стандартного фільтра, який включає всі незакриті задачі (включаючи потрібні).
+    const QString statusFilter = "open";
+
     QUrlQuery query;
-    query.addQueryItem("status_id", "open");
+    query.addQueryItem("status_id", statusFilter);
     query.addQueryItem("assigned_to_id", "me");
     url.setQuery(query);
 
@@ -50,9 +54,7 @@ QNetworkReply* RedmineClient::fetchOpenIssues(const QString& baseUrl, const QStr
 
     // --- 2. Створення запиту та заголовків ---
     QNetworkRequest request(url);
-    // Аутентифікація Redmine API через заголовок X-Redmine-API-Key
     request.setRawHeader("X-Redmine-API-Key", apiKey.toUtf8());
-    // Вимагаємо JSON
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
     // --- 3. Відправка запиту ---
