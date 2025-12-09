@@ -20,6 +20,8 @@ struct ApiError {
 };
 Q_DECLARE_METATYPE(ApiError)
 
+ApiError parseReply(QNetworkReply* reply);
+
 class ApiClient : public QObject
 {
     Q_OBJECT
@@ -90,6 +92,18 @@ public:
  //   void dispenserConfigReceived(const QJsonArray& config, int clientId, int terminalId, qint64 telegramId);
     // для ПРК
     void fetchDispenserConfig(int clientId, int terminalId, qint64 telegramId = 0);
+
+    /**
+     * @brief Запит Redmine задач для користувача Telegram.
+     * @param telegramId ID користувача Telegram.
+     */
+    void fetchRedmineTasks(qint64 telegramId);
+
+    /**
+     * @brief Запит Redmine задач для користувача Gandalf.
+     * @param userId ID користувача Gandalf.
+     */
+    void fetchRedmineTasks(int userId);
 
 signals:
     // Сигнали для логіну
@@ -217,6 +231,15 @@ signals:
     void dispenserConfigReceived(const QJsonArray& config, int clientId, int terminalId, qint64 telegramId);
     void dispenserConfigFailed(const ApiError& error, qint64 telegramId);
 
+    /**
+     * @brief Сигнал успішного отримання Redmine задач.
+     * @param tasks Масив JSON із завданнями.
+     * @param telegramId ID користувача Telegram (якщо запит від бота).
+     * @param userId ID користувача Gandalf (якщо запит від Gandalf).
+     */
+    void redmineTasksFetched(const QJsonArray& tasks, qint64 telegramId = 0, int userId = 0);
+    void redmineTasksFetchFailed(const ApiError& error, qint64 telegramId = 0, int userId = 0);
+
 private slots:
     void onLoginReplyFinished();
     void onUsersReplyFinished();
@@ -268,6 +291,8 @@ private slots:
 
 //    void onDispenserConfigReplyFinished();
     void onStantionDispenserReplyFinished();
+
+    void onRedmineTasksReplyFinished();
 private:
     ApiClient(QObject* parent = nullptr);
     ~ApiClient() = default;

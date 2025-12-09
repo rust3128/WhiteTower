@@ -1,9 +1,18 @@
 #include "WebServer.h"
+#include "Oracle/ApiClient.h"
 #include "Oracle/Logger.h"
 #include "Oracle/DbManager.h"
 #include "version.h"
 #include "Oracle/SessionManager.h"
 #include "Oracle/ConfigManager.h"
+
+#include "Oracle/User.h"         // Потрібен для доступу до токенів користувача
+#include "Oracle/CriptPass.h"    // Потрібен для дешифрування токенів
+#include "Oracle/RedmineClient.h" // Потрібен для виклику зовнішнього API
+#include "Oracle/AppParams.h"    // Потрібен для Redmine Base URL
+#include <QEventLoop>            // Потрібен для синхронного очікування відповіді Redmine
+
+
 #include <QHttpServer>
 #include <QHttpServerRequest>
 #include <QJsonObject>
@@ -181,6 +190,10 @@ void WebServer::setupRoutes()
     // GET /api/clients/<clientId>/station/<terminalNo>/dispensers
     m_httpServer->route(QStringLiteral("/api/clients/<arg>/station/<arg>/dispensers"), [this](const QString& clientId, const QString& terminalNo, const QHttpServerRequest &request) {
         return handleGetStationDispensers(clientId, terminalNo, request);
+    });
+
+    m_httpServer->route("/api/bot/redmine/tasks", QHttpServerRequest::Method::Get, [this](const QHttpServerRequest &request) {
+        return handleGetRedmineTasks(request);
     });
 }
 
@@ -1285,4 +1298,96 @@ QHttpServerResponse WebServer::handleGetStationDispensers(const QString& clientI
 
     // 3. Повертаємо масив
     return createJsonResponse(data, QHttpServerResponse::StatusCode::Ok);
+}
+
+
+// Conduit/WebServer.cpp
+
+// ... (після всіх існуючих обробників запитів)
+
+/**
+ * @brief Обробляє запит бота на отримання списку відкритих Redmine задач.
+ * Маршрут: GET /api/bot/redmine/tasks
+ */
+QHttpServerResponse WebServer::handleGetRedmineTasks(const QHttpServerRequest& request)
+{
+    // --- 1. АУТЕНТИФІКАЦІЯ ---
+    // Аутентифікація повертає User* або nullptr
+    User* user = authenticateRequest(request);
+    if (!user) {
+        return createJsonResponse(QJsonObject{{"error", "Unauthorized or invalid credentials."}},
+                                  QHttpServerResponse::StatusCode::Unauthorized);
+    }
+
+    // !!! ДЕБАГ !!!
+    logDebug() << "Handling Redmine Tasks request for user ID:" << user->id();
+
+    // --- 2. ДЕШИФРУВАННЯ ТОКЕНА ---
+    QString encryptedToken = user->redmineToken(); // Отримуємо зашифрований токен
+
+    if (encryptedToken.isEmpty()) {
+        delete user;
+        return createJsonResponse(QJsonObject{{"error", "Redmine API token not configured for this user."}},
+                                  QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    // !!! ВИКЛИК КРИПТОГРАФІЇ ПЕРЕД ВИКОРИСТАННЯМ !!!
+    QString decryptedToken = CriptPass::instance().decriptPass(encryptedToken);
+
+    // --- 3. НАЛАШТУВАННЯ ---
+    QString redmineUrl = AppParams::instance().getParam("Global", "RedmineBaseUrl").toString();
+
+    if (redmineUrl.isEmpty()) {
+        delete user;
+        return createJsonResponse(QJsonObject{{"error", "Redmine Base URL is not configured in application settings."}},
+                                  QHttpServerResponse::StatusCode::InternalServerError);
+    }
+
+    // --- 4. ВИКЛИК ЗОВНІШНЬОГО КЛІЄНТА (Синхронний виклик) ---
+    QJsonArray tasksArray;
+    ApiError clientError;
+
+    // Створюємо клієнт для виконання запиту
+    RedmineClient client;
+    QNetworkReply* reply = client.fetchOpenIssues(redmineUrl, decryptedToken);
+
+    if (reply) {
+        // !!! Блокування та очікування відповіді Redmine !!!
+        QEventLoop loop;
+        QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+        loop.exec();
+
+        // Перевіряємо, чи був успішно випущений сигнал issuesFetched
+        if (reply->property("issuesFetched").toBool()) {
+            // Якщо issuesFetched спрацював, масив задач зберігається у властивостях
+            tasksArray = reply->property("issuesArray").toJsonArray();
+            logInfo() << "Successfully retrieved" << tasksArray.count() << "tasks from Redmine.";
+        } else {
+            // Якщо issuesFetched НЕ спрацював, помилка була оброблена в onIssuesReplyFinished
+            // Помилка вже знаходиться у властивості "errorDetails"
+            clientError = reply->property("errorDetails").value<ApiError>();
+            logCritical() << "Redmine API failed during sync call. Error:" << clientError.errorString;
+        }
+
+        // Оскільки reply вже буде видалено у RedmineClient::onIssuesReplyFinished,
+        // тут ми просто продовжуємо.
+        // Але нам потрібно тимчасово змінити RedmineClient.cpp, щоб він зберігав дані
+        // у властивостях, а не просто емітував сигнал, бо тут ми синхронно чекаємо.
+    } else {
+        // Помилка вхідних параметрів (URL/токен порожні)
+        clientError.errorString = "RedmineClient failed to initiate fetch (check URL/Token).";
+        clientError.httpStatusCode = 500;
+    }
+
+    // --- 5. ФІНАЛЬНА ВІДПОВІДЬ ---
+    delete user;
+
+    if (tasksArray.isEmpty() && clientError.httpStatusCode != 0 && clientError.httpStatusCode != 404) {
+        // Помилка, відмінна від "не знайдено"
+        return createJsonResponse(QJsonObject{{"error", clientError.errorString}},
+                                  (QHttpServerResponse::StatusCode)clientError.httpStatusCode);
+    } else {
+        // Успіх або 404/порожній список (що вважається успіхом для бота)
+        return createJsonResponse(tasksArray, QHttpServerResponse::StatusCode::Ok);
+    }
 }

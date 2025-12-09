@@ -101,6 +101,12 @@ private:
     // GET /api/clients/<clientId>/station/<terminalNo>/dispensers
     QHttpServerResponse handleGetStationDispensers(const QString& clientId, const QString& terminalNo, const QHttpServerRequest& request);
 
+    /**
+     * @brief Обробляє запит бота на отримання списку відкритих Redmine задач.
+     * Маршрут: GET /api/bot/redmine/tasks
+     */
+    QHttpServerResponse handleGetRedmineTasks(const QHttpServerRequest& request);
+
 private:
     QHttpServer* m_httpServer;
     quint16 m_port;

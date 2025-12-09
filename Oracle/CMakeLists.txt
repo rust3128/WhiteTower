@@ -29,6 +29,8 @@ add_library(Oracle STATIC
   SessionManager.cpp
   ApiClient.h
   ApiClient.cpp
+  RedmineClient.h
+  RedmineClient.cpp
 )
 
 target_link_libraries(Oracle PRIVATE Qt${QT_VERSION_MAJOR}::Core

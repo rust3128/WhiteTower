@@ -47,8 +47,6 @@ void AppParams::setParam(const QString& appName, const QString& key, const QVari
 
 QVariant AppParams::getParam(const QString& appName, const QString& key, const QVariant& defaultValue) const
 {
-
-    logInfo() << "Get Param " << appName << key;
     // 1. Спочатку шукаємо параметр для конкретного додатку
     if (m_scopedParams.contains(appName) && m_scopedParams[appName].contains(key)) {
         return m_scopedParams[appName].value(key);

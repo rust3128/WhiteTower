@@ -11,9 +11,6 @@
 #include <QUrl>
 #include <QUrlQuery>
 
-// Використовуємо анонімний простір імен, щоб зробити цю функцію
-// видимою тільки всередині цього файлу (це гарна практика).
-namespace {
 ApiError parseReply(QNetworkReply* reply)
 {
     ApiError error;
@@ -31,19 +28,32 @@ ApiError parseReply(QNetworkReply* reply)
         error.errorString = "Network error: " + reply->errorString();
     } else {
         // Сервер відповів, але це може бути помилка (4xx, 5xx)
-        // Намагаємось розібрати JSON з тіла відповіді
-        QJsonObject jsonObj = QJsonDocument::fromJson(error.responseBody).object();
-        if (jsonObj.contains("error")) {
-            error.errorString = jsonObj["error"].toString();
-        } else if (jsonObj.contains("message")) {
-            error.errorString = jsonObj["message"].toString();
-        } else {
-            error.errorString = "Unknown server error.";
+        // Намагаємось розібрати JSON...
+        QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
+        if (doc.isObject()) {
+            QJsonObject jsonObj = doc.object();
+            // Якщо сервер повернув JSON з полем "error", використовуємо його.
+            if (jsonObj.contains("error")) {
+                error.errorString = jsonObj["error"].toString();
+            } else {
+                // Якщо статус помилки (4xx, 5xx), але немає JSON-поля error
+                if (error.httpStatusCode >= 400) {
+                    error.errorString = QString("HTTP Error %1. Server returned non-standard error format.").arg(error.httpStatusCode);
+                }
+            }
+        } else if (error.httpStatusCode >= 400) {
+            // Якщо не JSON і статус помилки
+            error.errorString = QString("HTTP Error %1. Invalid or empty response body.").arg(error.httpStatusCode);
         }
     }
+
+    // Встановлюємо defaultString, якщо помилка виявлена, але опис порожній
+    if (error.errorString.isEmpty() && error.httpStatusCode >= 400) {
+        error.errorString = QString("Request failed with status code %1.").arg(error.httpStatusCode);
+    }
+
     return error;
 }
-} // кінець анонімного простору імен
 
 
 ApiClient& ApiClient::instance()
@@ -1783,6 +1793,95 @@ void ApiClient::onStantionDispenserReplyFinished()
         }
     } else {
         emit dispenserConfigFailed(error, telegramId);
+    }
+
+    reply->deleteLater();
+}
+
+
+void ApiClient::fetchRedmineTasks(qint64 telegramId)
+{
+    logInfo() << "ApiClient: Fetching Redmine tasks for Telegram ID" << telegramId;
+
+    // Формуємо URL до нашого нового маршруту на Вебсервері
+    QUrl url(m_serverUrl + "/api/bot/redmine/tasks");
+
+    // Використовуємо існуючий шаблон для створення запиту з авторизацією бота
+    QNetworkRequest request = createBotRequest(url, telegramId);
+
+    QNetworkReply* reply = m_networkManager->get(request);
+
+    // !!! НАСЛІДУВАННЯ ШАБЛОНУ: ВСТАНОВЛЕННЯ ВЛАСТИВОСТЕЙ НА REPLY !!!
+    reply->setProperty("telegramId", telegramId);
+    reply->setProperty("isBotRequest", true);
+    // !!! КІНЕЦЬ ШАБЛОНУ !!!
+
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onRedmineTasksReplyFinished);
+}
+
+void ApiClient::fetchRedmineTasks(int userId)
+{
+    logInfo() << "ApiClient: Fetching Redmine tasks for User ID (Gandalf)" << userId;
+
+    // Формуємо URL до нашого нового маршруту на Вебсервері
+    // Зверніть увагу: ми можемо використовувати той самий маршрут, але з іншою аутентифікацією
+    QUrl url(m_serverUrl + "/api/bot/redmine/tasks");
+
+    // Для Gandalf ми повинні використовувати інший метод аутентифікації
+    // Припускаємо, що існує метод createAuthenticatedRequest(url, userId)
+    // або що аутентифікація користувача Gandalf вже встановлена через SessionManager.
+
+    // !!! УВАГА: ТИМЧАСОВА РЕАЛІЗАЦІЯ БЕЗ СЕСІЇ !!!
+    // Використовуємо шаблон для Gandalf (припускаючи, що User ID буде в URL або заголовку)
+    // Оскільки ми ще не реалізували універсальний маршрут з UserID, тимчасово використовуємо
+    // шаблон бота, але без токена, і передаємо лише ID користувача.
+
+    QNetworkRequest request = createAuthenticatedRequest(url); // Шаблон для Gandalf
+
+    QNetworkReply* reply = m_networkManager->get(request);
+
+    // !!! НАСЛІДУВАННЯ ШАБЛОНУ: ВСТАНОВЛЕННЯ ВЛАСТИВОСТЕЙ НА REPLY !!!
+    reply->setProperty("userId", userId);
+    reply->setProperty("isBotRequest", false);
+    // !!! КІНЕЦЬ ШАБЛОНУ !!!
+
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onRedmineTasksReplyFinished);
+}
+
+// Oracle/ApiClient.cpp
+
+// ... (після існуючих слотів обробки відповідей)
+
+void ApiClient::onRedmineTasksReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    // !!! НАСЛІДУВАННЯ ШАБЛОНУ: ЧИТАННЯ ВСІХ ID З REPLY !!!
+    qint64 telegramId = reply->property("telegramId").toLongLong();
+    int userId = reply->property("userId").toInt();
+    bool isBotRequest = reply->property("isBotRequest").toBool();
+    // !!! КІНЕЦЬ ШАБЛОНУ !!!
+
+    ApiError error = parseReply(reply);
+
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200)
+    {
+        QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
+        if (doc.isArray()) {
+            QJsonArray tasksArray = doc.array();
+            // Емітуємо сигнал з повним набором параметрів
+            emit redmineTasksFetched(tasksArray, telegramId, userId);
+            logInfo() << "Redmine tasks fetched successfully. Count:" << tasksArray.count();
+        } else {
+            error.errorString = "Invalid response from server: expected a JSON array of tasks.";
+            emit redmineTasksFetchFailed(error, telegramId, userId);
+        }
+    }
+    else
+    {
+        // Сервер повернув помилку
+        emit redmineTasksFetchFailed(error, telegramId, userId);
     }
 
     reply->deleteLater();

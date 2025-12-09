@@ -57,6 +57,9 @@ private slots:
     void onDispenserConfigReceived(const QJsonArray& config, int clientId, int terminalId, qint64 telegramId);
     void onDispenserConfigFailed(const ApiError& error, qint64 telegramId);
 
+    void onRedmineTasksFetched(const QJsonArray& tasks, qint64 telegramId, int userId);
+    void onRedmineTasksFetchFailed(const ApiError& error, qint64 telegramId, int userId);
+
 private:
     // Тип-вказівник на метод-обробник
     using CommandHandler = void (Bot::*)(const QJsonObject& message);

@@ -2,6 +2,7 @@
 #include "TelegramClient.h"
 #include "Oracle/ApiClient.h"
 #include "Oracle/Logger.h"
+#include "Oracle/AppParams.h"
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonDocument>
@@ -66,6 +67,11 @@ void Bot::setupConnections()
             this, &Bot::onDispenserConfigReceived);
     connect(&m_apiClient, &ApiClient::dispenserConfigFailed,
             this, &Bot::onDispenserConfigFailed);
+
+    connect(&ApiClient::instance(), &ApiClient::redmineTasksFetched,
+            this, &Bot::onRedmineTasksFetched);
+    connect(&ApiClient::instance(), &ApiClient::redmineTasksFetchFailed,
+            this, &Bot::onRedmineTasksFetchFailed);
 
     logInfo() << "Signal-slot connections established.";
 }
@@ -281,9 +287,15 @@ void Bot::handleAdminHelp(const QJsonObject& message)
 
 void Bot::handleMyTasks(const QJsonObject& message)
 {
-    qint64 chatId = message["from"].toObject()["id"].toVariant().toLongLong();
-    logInfo() << "User called 'My Tasks'.";
-    m_telegramClient->sendMessage(chatId, "Функція 'Мої задачі' наразі в розробці.");
+    qint64 telegramId = message["from"].toObject()["id"].toVariant().toLongLong();
+    logInfo() << "Bot: User called 'Мої задачі' (" << telegramId << ").";
+
+    // 1. Надсилаємо повідомлення про очікування
+    m_telegramClient->sendMessage(telegramId, "Завантажую ваші відкриті задачі Redmine...");
+
+    // 2. Викликаємо метод для ініціації запиту до нашого Вебсервера
+    // Використовуємо ApiClient::instance(), оскільки ApiClient був правильно доданий до контексту Bot::Bot
+    ApiClient::instance().fetchRedmineTasks(telegramId);
 }
 
 //
@@ -1389,4 +1401,67 @@ void Bot::onDispenserConfigFailed(const ApiError& error, qint64 telegramId)
     QString errMsg = QString("❌ Помилка під час запиту конфігурації ТРК.\nСервер: <code>%1</code>")
                          .arg(error.errorString);
     m_telegramClient->sendMessage(telegramId, errMsg);
+}
+
+
+// Isengard/Bot/Bot.cpp
+
+// ... (після існуючих слотів)
+
+/**
+ * @brief Форматує список задач у текстове повідомлення та надсилає користувачу Telegram.
+ * @param tasks Масив JSON із задачами Redmine.
+ * @param telegramId ID користувача, який ініціював запит.
+ */
+void Bot::onRedmineTasksFetched(const QJsonArray& tasks, qint64 telegramId, int /*userId*/)
+{
+    if (telegramId == 0) return; // Забезпечення, що це був запит від бота
+
+    QString message;
+
+    if (tasks.isEmpty()) {
+        // Використовуємо <b> для жирного шрифту, як у ваших інших методах
+        message = "✅ <b>У вас немає відкритих задач Redmine, призначених вам.</b>";
+    } else {
+        message = QString("📝 <b>Ваші відкриті задачі Redmine (%1):</b>\n").arg(tasks.count());
+
+        for (const QJsonValue& val : tasks) {
+            QJsonObject issue = val.toObject();
+            int id = issue["id"].toInt();
+            QString subject = issue["subject"].toString();
+            QString status = issue["status"].toObject()["name"].toString();
+
+            QString redmineUrl = AppParams::instance().getParam("Global", "RedmineBaseUrl").toString();
+            // Створюємо HTML посилання
+            QString issueUrl = redmineUrl + "/issues/" + QString::number(id);
+
+            // Формат: [#1234] [Статус] Назва задачі (Посилання)
+            // Використовуємо HTML: <b> для жирного, <a href=""> для посилання
+            // Примітка: HTML-екранування тексту (subject) має бути забезпечено
+            // вашим клієнтом або перед додаванням, щоб уникнути помилок.
+            message += QString("\n[#%1] [<b>%2</b>] %3\n<a href=\"%4\">Подробиці</a>")
+                           .arg(id)
+                           .arg(status)
+                           .arg(subject.simplified())
+                           .arg(issueUrl);
+        }
+    }
+
+    // !!! ВИКОРИСТОВУЄМО ІСНУЮЧИЙ РОБОЧИЙ МЕТОД БЕЗ БУДЬ-ЯКИХ ДОДАТКОВИХ ПАРАМЕТРІВ !!!
+    m_telegramClient->sendMessage(telegramId, message);
+}
+
+/**
+ * @brief Обробляє помилку завантаження задач.
+ */
+void Bot::onRedmineTasksFetchFailed(const ApiError& error, qint64 telegramId, int /*userId*/)
+{
+    if (telegramId == 0) return; // Забезпечення, що це був запит від бота
+
+    QString errorMessage = QString("❌ Помилка завантаження задач Redmine: %1\n"
+                                   "HTTP Status: %2. Можливо, не налаштовано ключ API Redmine або URL.")
+                               .arg(error.errorString)
+                               .arg(error.httpStatusCode);
+
+    m_telegramClient->sendMessage(telegramId, errorMessage);
 }
