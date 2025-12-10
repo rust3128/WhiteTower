@@ -111,6 +111,8 @@ private:
     void handleCallbackStationPos(const QJsonObject& query, const QStringList& parts);
     void handleCallbackStationTanks(const QJsonObject& query, const QStringList& parts);
     void handleCallbackStationDisp(const QJsonObject& query, const QStringList& parts);
+
+    void handleZaglushka(const QJsonObject& message);
 private:
     enum class UserState { None, WaitingForStationNumber };
     QMap<qint64, UserState> m_userState; // <telegramId, State>

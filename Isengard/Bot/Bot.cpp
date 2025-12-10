@@ -98,7 +98,7 @@ void Bot::setupCommandHandlers()
     m_userCommandHandlers["❓ Допомога"] = &Bot::handleUserHelp;
     m_userCommandHandlers["/help"] = &Bot::handleUserHelp;
     m_userCommandHandlers["📋 Мої задачі"] = &Bot::handleMyTasks;
-    m_userCommandHandlers["📊 Створити звіт"] = &Bot::handleMyTasks;
+    m_userCommandHandlers["📊 Створити звіт"] = &Bot::handleZaglushka;
     m_userCommandHandlers["👥 Клієнти"] = &Bot::handleClientsCommand;
 
 
@@ -280,7 +280,7 @@ void Bot::handleUserHelp(const QJsonObject& message)
     qint64 chatId = message["from"].toObject()["id"].toVariant().toLongLong();
     logInfo() << "User (ACTIVE_USER) called /help.";
     QString text = "<b>Допомога:</b>\n\n"
-                   "<b>📋 Мої задачі:</b> <i>(в розробці)</i>\n"
+                   "<b>📋 Мої задачі:</b> <i>Відкриті призначені задачі</i>\n"
                    "<b>📊 Створити звіт:</b> <i>(в розробці)</i>\n";
     m_telegramClient->sendMessage(chatId, text);
 }
@@ -290,10 +290,10 @@ void Bot::handleAdminHelp(const QJsonObject& message)
     qint64 chatId = message["from"].toObject()["id"].toVariant().toLongLong();
     logInfo() << "User (ACTIVE_ADMIN) called /help.";
     QString text = "<b>Допомога (Адміністратор):</b>\n\n"
-                   "<b>📋 Мої задачі:</b> <i>(в розробці)</i>\n"
+                   "<b>📋 Мої задачі:</b> <i>Відкриті призначені задачі</i>\n"
                    "<b>📊 Створити звіт:</b> <i>(в розробці)</i>\n"
-                   "<b>👑 Адмін: Запити:</b> <i>(в розробці)</i>\n"
-                   "<b>👑 Адмін: Користувачі:</b> <i>(в розробці)</i>\n";
+                   "<b>👑 Адмін: Запити:</b> <i>Запити на регістрацію в боті</i>\n"
+                   "<b>👑 Адмін: Користувачі:</b> <i>Зареестровані користувачі</i>\n";
     m_telegramClient->sendMessage(chatId, text);
 }
 
@@ -1527,4 +1527,17 @@ void Bot::onRedmineTasksFetchFailed(const ApiError& error, qint64 telegramId, in
                                .arg(error.httpStatusCode);
 
     m_telegramClient->sendMessage(telegramId, errorMessage);
+}
+
+
+void Bot::handleZaglushka(const QJsonObject& message)
+
+{
+
+    qint64 chatId = message["from"].toObject()["id"].toVariant().toLongLong();
+
+    logInfo() << "User called 'Zaglushka'.";
+
+    m_telegramClient->sendMessage(chatId, "Функція наразі в розробці.");
+
 }
