@@ -142,6 +142,9 @@ void Bot::setupCallbackHandlers()
     m_stationHandlers["tanks"] = &Bot::handleCallbackStationTanks;
     m_stationHandlers["disp"] = &Bot::handleCallbackStationDisp;
 
+    // Оброблятиме: tasks:show
+    m_tasksHandlers["show"] = &Bot::handleTaskTrackerSelection;
+
     logInfo() << "Callback query handlers registered.";
 }
 
@@ -297,17 +300,50 @@ void Bot::handleAdminHelp(const QJsonObject& message)
     m_telegramClient->sendMessage(chatId, text);
 }
 
+// void Bot::handleMyTasks(const QJsonObject& message)
+// {
+//     qint64 telegramId = message["from"].toObject()["id"].toVariant().toLongLong();
+//     logInfo() << "Bot: User called 'Мої задачі' (" << telegramId << ").";
+
+//     // 1. Надсилаємо повідомлення про очікування
+//     m_telegramClient->sendMessage(telegramId, "Завантажую ваші відкриті задачі Redmine...");
+
+//     // 2. Викликаємо метод для ініціації запиту до нашого Вебсервера
+//     // Використовуємо ApiClient::instance(), оскільки ApiClient був правильно доданий до контексту Bot::Bot
+//     ApiClient::instance().fetchRedmineTasks(telegramId);
+// }
+
+
 void Bot::handleMyTasks(const QJsonObject& message)
 {
-    qint64 telegramId = message["from"].toObject()["id"].toVariant().toLongLong();
-    logInfo() << "Bot: User called 'Мої задачі' (" << telegramId << ").";
+    qint64 chatId = message["from"].toObject()["id"].toVariant().toLongLong();
+    logInfo() << "User called 'Мої задачі' (" << chatId << "). Launching task hub menu.";
 
-    // 1. Надсилаємо повідомлення про очікування
-    m_telegramClient->sendMessage(telegramId, "Завантажую ваші відкриті задачі Redmine...");
+    // --- 1. Створення Inline-клавіатури ---
+    QJsonObject keyboard;
+    QJsonArray rows;
+    QJsonArray row1;
 
-    // 2. Викликаємо метод для ініціації запиту до нашого Вебсервера
-    // Використовуємо ApiClient::instance(), оскільки ApiClient був правильно доданий до контексту Bot::Bot
-    ApiClient::instance().fetchRedmineTasks(telegramId);
+    // Кнопка 1: Redmine (Callback: tasks:show:redmine)
+    row1.append(QJsonObject{
+        {"text", "🔴 Redmine"},
+        {"callback_data", "tasks:show:redmine"}
+    });
+
+    // Кнопка 2: Jira (Заглушка, Callback: tasks:show:jira)
+    row1.append(QJsonObject{
+        {"text", "🔵 Jira"},
+        {"callback_data", "tasks:show:jira"}
+    });
+
+    rows.append(row1);
+    keyboard["inline_keyboard"] = rows;
+
+    // --- 2. Відправка повідомлення ---
+    QString messageText = "Оберіть систему управління задачами, з якої бажаєте отримати список завдань:";
+
+    // Використовуємо sendMessageWithInlineKeyboard (замість sendMessage та fetchRedmineTasks)
+    m_telegramClient->sendMessageWithInlineKeyboard(chatId, messageText, keyboard);
 }
 
 //
@@ -598,6 +634,8 @@ void Bot::handleCallbackQuery(const QJsonObject& callbackQuery)
         handler = m_stationsHandlers.value(action, &Bot::handleCallbackUnknown);
     } else if (prefix == "station") {
         handler = m_stationHandlers.value(action, &Bot::handleCallbackUnknown);
+    } else if (prefix == "tasks") {
+        handler = m_tasksHandlers.value(action, &Bot::handleCallbackUnknown);
     } else {
         // Якщо префікс невідомий (напр., "noop")
         handler = &Bot::handleCallbackUnknown;
@@ -1540,4 +1578,54 @@ void Bot::handleZaglushka(const QJsonObject& message)
 
     m_telegramClient->sendMessage(chatId, "Функція наразі в розробці.");
 
+}
+
+
+/**
+ * @brief Обробляє вибір трекера (Redmine/Jira) з Inline-меню.
+ * Callback-формат: tasks:show:<tracker>
+ */
+void Bot::handleTaskTrackerSelection(const QJsonObject& query, const QStringList& parts)
+{
+    qint64 chatId = query["message"].toObject()["chat"].toObject()["id"].toVariant().toLongLong();
+    // Використовуємо .toLongLong(), оскільки message_id може бути великим числом
+    qint64 messageId = query["message"].toObject()["message_id"].toVariant().toLongLong();
+    QString queryId = query["id"].toString();
+
+    if (parts.size() < 3) {
+        m_telegramClient->answerCallbackQuery(queryId, "Некоректний запит.");
+        return;
+    }
+
+    QString tracker = parts.at(2); // "redmine" або "jira"
+
+    // 1. Початкове повідомлення про завантаження (редагуємо оригінальне меню)
+    QString loadingMessage = QString("Завантажую задачі з %1...").arg(tracker == "redmine" ? "Redmine" : "Jira");
+
+    // [Виправлено: Передаємо 4 аргументи, 4-й - порожня клавіатура]
+    m_telegramClient->editMessageText(chatId, messageId, loadingMessage, QJsonObject());
+
+
+    if (tracker == "redmine") {
+        // --- Redmine: Запуск існуючого, робочого функціоналу ---
+        logInfo() << "Bot: Starting Redmine tasks fetch for user" << chatId;
+        m_apiClient.fetchRedmineTasks(chatId);
+
+    } else if (tracker == "jira") {
+        // --- Jira: Заглушка ---
+        logInfo() << "Bot: Jira tasks requested, showing stub for user" << chatId;
+
+        QString failureMessage = "❌ <b>Jira:</b> Функціонал Jira наразі в розробці. Спробуйте пізніше.";
+
+        // [Виправлено: Передаємо 4 аргументи, 4-й - порожня клавіатура]
+        m_telegramClient->editMessageText(chatId, messageId, failureMessage, QJsonObject());
+
+        // [Виправлено: Тільки 2 аргументи]
+        m_telegramClient->answerCallbackQuery(queryId, "Функціонал не доступний.");
+        return;
+    }
+
+    // Відповідь Telegram (для Redmine, щоб зникло "годинник")
+    // [Виправлено: Тільки 2 аргументи]
+    m_telegramClient->answerCallbackQuery(queryId, "Завантаження розпочато...");
 }

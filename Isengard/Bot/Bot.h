@@ -113,6 +113,8 @@ private:
     void handleCallbackStationDisp(const QJsonObject& query, const QStringList& parts);
 
     void handleZaglushka(const QJsonObject& message);
+
+    void handleTaskTrackerSelection(const QJsonObject& query, const QStringList& parts);
 private:
     enum class UserState { None, WaitingForStationNumber };
     QMap<qint64, UserState> m_userState; // <telegramId, State>
@@ -124,6 +126,7 @@ private:
     QMap<QString, CallbackHandler> m_clientHandlers;  // "client:select"
     QMap<QString, CallbackHandler> m_stationsHandlers; // "stations:list", "stations:page", etc.
     QMap<QString, CallbackHandler> m_stationHandlers;  // "station:map", "station:stub"
+    QMap<QString, CallbackHandler> m_tasksHandlers;    // МАПА ДЛЯ ОБРОБКИ ЗАПИТІВ ЗАДАЧ (tasks:show)
 
     QMap<QString, CommandHandler> m_userCommandHandlers;
     QMap<QString, CommandHandler> m_adminCommandHandlers;
