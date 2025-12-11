@@ -91,6 +91,7 @@ void Bot::setupConnections()
     connect(&ApiClient::instance(), &ApiClient::jiraTasksFetchFailed,
             this, &Bot::onJiraTasksFetchFailed);
 
+
     logInfo() << "Signal-slot connections established.";
 }
 
@@ -104,7 +105,7 @@ void Bot::setupCommandHandlers()
     m_userCommandHandlers["❓ Допомога"] = &Bot::handleUserHelp;
     m_userCommandHandlers["/help"] = &Bot::handleUserHelp;
     m_userCommandHandlers["📋 Мої задачі"] = &Bot::handleMyTasks;
-    m_userCommandHandlers["📊 Створити звіт"] = &Bot::handleZaglushka;
+    m_userCommandHandlers["📊 Створити звіт"] = &Bot::handleCreateReport;
     m_userCommandHandlers["👥 Клієнти"] = &Bot::handleClientsCommand;
 
 
@@ -150,6 +151,11 @@ void Bot::setupCallbackHandlers()
 
     // Оброблятиме: tasks:show
     m_tasksHandlers["show"] = &Bot::handleTaskTrackerSelection;
+    m_reportHandlers["select"] = &Bot::handleReportTrackerSelection;
+
+    // !!! НОВІ РЕЄСТРАЦІЇ ДЛЯ ФАЗИ ВИБОРУ ЗАДАЧІ !!!
+    m_reportHandlers["select_task"] = &Bot::handleCallbackReportSelectTask;
+    m_reportHandlers["manual_id"] = &Bot::handleCallbackReportManualId;
 
     logInfo() << "Callback query handlers registered.";
 }
@@ -177,10 +183,25 @@ void Bot::onUpdatesReceived(const QJsonArray& updates)
             QJsonObject message = update["message"].toObject();
             qint64 telegramId = message["from"].toObject()["id"].toVariant().toLongLong();
 
-            if (m_userState.value(telegramId) == UserState::WaitingForStationNumber) {
+            // Отримуємо поточний стан користувача
+            UserState currentState = m_userState.value(telegramId);
+
+            // 2.1. Стан очікування номера АЗС
+            if (currentState == UserState::WaitingForStationNumber) {
                 handleStationNumberInput(message);
                 continue; // Обробка завершена
             }
+
+            // 2.2. !!! НОВИЙ БЛОК: СТАНИ ЗВІТУ !!!
+            if (currentState == UserState::WaitingForManualTaskId ||
+                currentState == UserState::WaitingForComment ||
+                currentState == UserState::WaitingForAttachment)
+            {
+                // Делегуємо обробку текстового введення або файлів
+                handleReportInput(message);
+                continue; // Обробка завершена
+            }
+            // !!! КІНЕЦЬ НОВОГО БЛОКУ !!!
 
             // --- 3. ЗВИЧАЙНА ОБРОБКА КОМАНДИ ---
             // (Якщо не кнопка і не стан, перевіряємо статус)
@@ -642,6 +663,8 @@ void Bot::handleCallbackQuery(const QJsonObject& callbackQuery)
         handler = m_stationHandlers.value(action, &Bot::handleCallbackUnknown);
     } else if (prefix == "tasks") {
         handler = m_tasksHandlers.value(action, &Bot::handleCallbackUnknown);
+    } else if (prefix == "report") {
+        handler = m_reportHandlers.value(action, &Bot::handleCallbackUnknown);
     } else {
         // Якщо префікс невідомий (напр., "noop")
         handler = &Bot::handleCallbackUnknown;
@@ -1473,6 +1496,14 @@ void Bot::onRedmineTasksFetched(const QJsonArray& tasks, qint64 telegramId, int 
 {
     if (telegramId == 0) return;
 
+    // !!! НОВА ЛОГІКА: МАРШРУТИЗАЦІЯ ЗА СТАНОМ !!!
+    if (m_userState.value(telegramId) == UserState::WaitingForTaskSelection) {
+        // Якщо користувач очікує вибору задачі для звіту, викликаємо спеціальний обробник меню
+        handleRedmineTaskSelectionForReport(tasks, telegramId);
+        return;
+    }
+    // !!! КІНЕЦЬ НОВОЇ ЛОГІКИ !!!
+
     QString message;
 
     // Отримуємо URL Redmine (він вже гарантовано завантажений)
@@ -1629,7 +1660,6 @@ void Bot::handleTaskTrackerSelection(const QJsonObject& query, const QStringList
 }
 
 
-// ... у Bot/Bot.cpp (додайте у кінці файлу, поруч з іншими слотами)
 
 /**
  * @brief (НОВИЙ) Обробляє успішне отримання задач Jira.
@@ -1742,4 +1772,251 @@ void Bot::onJiraTasksFetchFailed(const ApiError& error, qint64 telegramId)
                                .arg(error.httpStatusCode);
 
     m_telegramClient->sendMessage(telegramId, errorMessage);
+}
+
+
+/**
+ * @brief (НОВИЙ) Обробляє команду "📊 Створити звіт".
+ * Запускає Inline-меню для вибору трекера.
+ */
+void Bot::handleCreateReport(const QJsonObject& message)
+{
+    qint64 chatId = message["from"].toObject()["id"].toVariant().toLongLong();
+    logInfo() << "User called 'Створити звіт' (" << chatId << "). Launching report hub menu.";
+
+    // --- 1. Створення Inline-клавіатури ---
+    QJsonObject keyboard;
+    QJsonArray rows;
+    QJsonArray row1;
+
+    // Кнопка 1: Redmine (Callback: report:select:redmine)
+    row1.append(QJsonObject{
+        {"text", "🔴 Redmine"},
+        {"callback_data", "report:select:redmine"}
+    });
+
+    // Кнопка 2: Jira (Callback: report:select:jira)
+    row1.append(QJsonObject{
+        {"text", "🔵 Jira"},
+        {"callback_data", "report:select:jira"}
+    });
+
+    rows.append(row1);
+    keyboard["inline_keyboard"] = rows;
+
+    // --- 2. Відправка повідомлення ---
+    QString messageText = "Оберіть систему управління задачами, для якої бажаєте створити звіт:";
+
+    m_telegramClient->sendMessageWithInlineKeyboard(chatId, messageText, keyboard);
+
+    // !!! ТУТ БУДЕ ДОДАНО ЗБЕРЕЖЕННЯ СТАНУ: WAITING_FOR_REPORT_INIT !!!
+    // m_userState[chatId] = UserState::WaitingForReportInit;
+    // Але поки ми не визначили новий стан у Bot.h, ми це пропускаємо.
+}
+
+/**
+ * @brief (НОВИЙ) Обробляє вибір трекера (Redmine/Jira) для створення звіту.
+ * Callback-формат: report:select:<tracker>
+ */
+void Bot::handleReportTrackerSelection(const QJsonObject& query, const QStringList& parts)
+{
+    qint64 chatId = query["message"].toObject()["chat"].toObject()["id"].toVariant().toLongLong();
+    // qint64 messageId = query["message"].toObject()["message_id"].toVariant().toLongLong(); // ВИДАЛЕНО
+    QString queryId = query["id"].toString();
+
+    if (parts.size() < 3) {
+        m_telegramClient->answerCallbackQuery(queryId, "Некоректний запит.");
+        return;
+    }
+
+    QString tracker = parts.at(2); // "redmine" або "jira"
+
+    // 1. Фіксуємо контекст та встановлюємо стан очікування
+    m_userState[chatId] = UserState::WaitingForTaskSelection;
+    // Використовуємо m_userClientContext для тимчасового зберігання TrackerType (1=Redmine, 2=Jira)
+    m_userClientContext[chatId] = (tracker == "redmine") ? 1 : 2;
+
+    // 2. API-виклик для завантаження призначених задач
+    QString loadingMessage = QString("Завантажую ваші призначені задачі %1...").arg(tracker);
+
+    if (tracker == "redmine") {
+        // Ми не редагуємо, а надсилаємо нове повідомлення
+        m_telegramClient->sendMessage(chatId, loadingMessage);
+        m_apiClient.fetchRedmineTasks(chatId); // ВИКЛИК ІСНУЮЧОГО МЕТОДУ
+
+    } else if (tracker == "jira") {
+        m_telegramClient->sendMessage(chatId, loadingMessage);
+        m_apiClient.fetchJiraTasks(chatId); // ВИКЛИК ІСНУЮЧОГО МЕТОДУ
+    }
+
+    m_telegramClient->answerCallbackQuery(queryId, "Завантаження задач...");
+}
+
+// Bot.cpp (handleRedmineTaskSelectionForReport)
+
+/**
+ * @brief (НОВИЙ ПРИВАТНИЙ МЕТОД) Формує меню вибору задачі Redmine, додаючи опцію ручного вводу.
+ * Викликається, коли стан користувача WaitingForTaskSelection.
+ */
+void Bot::handleRedmineTaskSelectionForReport(const QJsonArray& tasks, qint64 telegramId)
+{
+    // Поточний клієнт, збережений у контексті: 1=Redmine, 2=Jira
+    int trackerType = m_userClientContext.value(telegramId);
+    QString trackerPrefix = (trackerType == 1) ? "redmine" : "jira";
+
+    QJsonObject keyboard;
+    QJsonArray rows;
+
+    QString messageText;
+
+    // --- 1. Формування кнопок із призначеними задачами (якщо вони є) ---
+    if (!tasks.isEmpty()) {
+        messageText = QString("✅ Знайдено %1 задач. Оберіть одну зі списку або натисніть 'Ввести ID вручну':\n\n")
+                          .arg(tasks.count());
+
+        // --- НОВИЙ БЛОК: ФОРМУВАННЯ КНОПОК ОДНИМ СТОВПЦЕМ ---
+        const int maxButtons = qMin(tasks.count(), 10); // Обмежимо, наприклад, першими 10
+        const int maxSummaryLength = 40; // Максимальна довжина теми
+
+        for (int k = 0; k < maxButtons; ++k) {
+            QJsonObject task = tasks.at(k).toObject();
+            int taskId = task["id"].toInt();
+            QString summary = task["subject"].toString().trimmed();
+
+            // Форматування тексту кнопки: [#ID] Тема...
+            QString buttonText = QString("[#%1] %2").arg(taskId).arg(summary);
+
+            if (summary.length() > maxSummaryLength) {
+                summary = summary.left(maxSummaryLength) + "...";
+            }
+            buttonText += " " + summary;
+
+            // Створення кнопки в окремому ряду
+            QJsonArray taskRow;
+            taskRow.append(QJsonObject{
+                {"text", buttonText},
+                // Callback: report:select_task:redmine:12345
+                {"callback_data", QString("report:select_task:%1:%2").arg(trackerPrefix).arg(taskId)}
+            });
+            rows.append(taskRow);
+        }
+        // -----------------------------------------------------------------
+
+        m_userState[telegramId] = UserState::WaitingForTaskSelection;
+    }
+
+    // --- 2. ДОДАВАННЯ КНОПКИ "ВВЕСТИ ВРУЧНУ" ---
+    QJsonArray manualRow;
+    manualRow.append(QJsonObject{
+        {"text", "⌨️ Ввести ID вручну"},
+        // Callback: report:manual_id:redmine
+        {"callback_data", QString("report:manual_id:%1").arg(trackerPrefix)}
+    });
+    rows.append(manualRow);
+
+    keyboard["inline_keyboard"] = rows;
+
+    // --- 3. ВІДПРАВКА ЄДИНОГО ПОВІДОМЛЕННЯ З КЛАВІАТУРОЮ ---
+    m_telegramClient->sendMessageWithInlineKeyboard(telegramId, messageText, keyboard);
+}
+
+// Bot.cpp (Додайте у кінець файлу)
+
+/**
+ * @brief (НОВИЙ) Обробляє вибір задачі за Inline-кнопкою.
+ * Переходить до вибору типу звіту.
+ * Callback-формат: report:select_task:<tracker>:<taskId>
+ */
+void Bot::handleCallbackReportSelectTask(const QJsonObject& query, const QStringList& parts)
+{
+    qint64 chatId = query["message"].toObject()["chat"].toObject()["id"].toVariant().toLongLong();
+    QString queryId = query["id"].toString();
+
+    if (parts.size() < 4) {
+        m_telegramClient->answerCallbackQuery(queryId, "Некоректний запит.");
+        return;
+    }
+
+    QString tracker = parts.at(2); // redmine або jira
+    QString taskId = parts.at(3);  // 117740 або AZS-46490
+
+    logInfo() << "Report: Task selected via button:" << tracker << "ID:" << taskId;
+
+    // --- ЛОГІКА НАСТУПНОГО КРОКУ ---
+    // 1. Фіксуємо вибраний ID (потрібен новий контекст, наприклад, m_reportContext)
+    // 2. Переходимо до вибору типу звіту (Фаза 3, Крок 9)
+    m_telegramClient->answerCallbackQuery(queryId, QString("Обрано задачу %1. Оберіть дію.").arg(taskId));
+
+    // !!! НАСТУПНИЙ КРОК: Реалізувати меню вибору дії (Коментар/Закрити) !!!
+}
+
+/**
+ * @brief (НОВИЙ) Обробляє натискання кнопки "Ввести ID вручну".
+ * Переводить користувача у стан очікування тексту.
+ * Callback-формат: report:manual_id:<tracker>
+ */
+void Bot::handleCallbackReportManualId(const QJsonObject& query, const QStringList& parts)
+{
+    qint64 chatId = query["message"].toObject()["chat"].toObject()["id"].toVariant().toLongLong();
+    qint64 messageId = query["message"].toObject()["message_id"].toVariant().toLongLong();
+    QString queryId = query["id"].toString();
+
+    if (parts.size() < 3) {
+        m_telegramClient->answerCallbackQuery(queryId, "Некоректний запит.");
+        return;
+    }
+
+    QString tracker = parts.at(2); // redmine або jira
+
+    // --- ЛОГІКА НАСТУПНОГО КРОКУ ---
+    // 1. Встановлюємо стан очікування ручного введення
+    m_userState[chatId] = UserState::WaitingForManualTaskId;
+
+    // 2. Редагуємо повідомлення, щоб прибрати кнопки і попросити ID
+    QString messageText = QString("🔢 <b>Введіть, будь ласка, повний ID задачі (%1):</b>")
+                              .arg(tracker == "redmine" ? "#ID" : "KEY-XXXX");
+
+    // Редагуємо повідомлення, щоб прибрати кнопки
+    m_telegramClient->editMessageText(chatId, messageId, messageText, QJsonObject(), false);
+    m_telegramClient->answerCallbackQuery(queryId, "Режим ручного вводу активовано.");
+
+    logInfo() << "Report: Manual ID mode enabled for" << tracker;
+}
+
+
+/**
+ * @brief (НОВИЙ) Єдиний обробник для текстового введення та файлів у режимі звіту.
+ */
+void Bot::handleReportInput(const QJsonObject& message)
+{
+    qint64 chatId = message["from"].toObject()["id"].toVariant().toLongLong();
+    QString text = message["text"].toString().trimmed();
+    UserState currentState = m_userState.value(chatId);
+
+    // --- ЗАГЛУШКА ДЛЯ ВВЕДЕННЯ ID ---
+    if (currentState == UserState::WaitingForManualTaskId) {
+        logInfo() << "Report: Received manual Task ID input:" << text;
+
+        // Очищуємо стан після введення
+        m_userState.remove(chatId);
+
+        if (text.isEmpty()) {
+            m_telegramClient->sendMessage(chatId, "❌ ID задачі не може бути порожнім. Спробуйте ще раз.");
+            // Повертаємо у попередній стан
+            m_userState[chatId] = UserState::WaitingForManualTaskId;
+            return;
+        }
+
+        // !!! ЗАГЛУШКА ПРОГРЕСУ !!!
+        QString selectedTracker = (m_userClientContext.value(chatId) == 1) ? "Redmine" : "Jira";
+        QString response = QString("✅ Обрано ID задачі: <b>%1</b> (%2). \n"
+                                   "❌ Наразі логіка валідації та призначення в розробці.")
+                               .arg(text)
+                               .arg(selectedTracker);
+
+        m_telegramClient->sendMessage(chatId, response);
+        return;
+    }
+
+    // ... (тут будуть інші обробники: WaitingForComment, WaitingForAttachment)
 }

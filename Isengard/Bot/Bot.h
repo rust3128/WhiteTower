@@ -63,6 +63,9 @@ private slots:
     void onJiraTasksFetched(const QJsonArray& tasks, qint64 telegramId);
     void onJiraTasksFetchFailed(const ApiError& error, qint64 telegramId);
 
+
+
+
 private:
     // Тип-вказівник на метод-обробник
     using CommandHandler = void (Bot::*)(const QJsonObject& message);
@@ -118,18 +121,41 @@ private:
     void handleZaglushka(const QJsonObject& message);
 
     void handleTaskTrackerSelection(const QJsonObject& query, const QStringList& parts);
+
+    void handleReportTrackerSelection(const QJsonObject& callbackQuery, const QStringList& parts);
+    void handleCreateReport(const QJsonObject& message);
+
+    void handleRedmineTaskSelectionForReport(const QJsonArray& tasks, qint64 telegramId);
+
+    void handleCallbackReportSelectTask(const QJsonObject& query, const QStringList& parts);
+    void handleCallbackReportManualId(const QJsonObject& query, const QStringList& parts);
+
+    void handleReportInput(const QJsonObject& message);
+
 private:
-    enum class UserState { None, WaitingForStationNumber };
+    enum class UserState {
+        None,
+        WaitingForStationNumber,
+        WaitingForReportInit,          // Очікування вибору трекера (Redmine/Jira)
+        WaitingForTaskSelection,       // Очікування вибору задачі зі списку (або ручного введення)
+        WaitingForManualTaskId,        // Очікування ручного введення ID задачі
+        WaitingForReportType,          // Очікування вибору дії (Коментар/Закрити)
+        WaitingForComment,             // Очікування тексту коментаря
+        WaitingForAttachment,          // Очікування фотозвіту
+    };
     QMap<qint64, UserState> m_userState; // <telegramId, State>
+
     QMap<qint64, int> m_userClientContext; // <telegramId, clientId>
     QMap<qint64, QJsonArray> m_userStationCache; // <telegramId, Full_Stations_Array>
     QMap<qint64, QJsonArray> m_userClientCache; // <telegramId, Full_Clients_Array>
+
     // Мапи (карти) обробників
     QMap<QString, CallbackHandler> m_clientsHandlers; // "clients:main"
     QMap<QString, CallbackHandler> m_clientHandlers;  // "client:select"
     QMap<QString, CallbackHandler> m_stationsHandlers; // "stations:list", "stations:page", etc.
     QMap<QString, CallbackHandler> m_stationHandlers;  // "station:map", "station:stub"
     QMap<QString, CallbackHandler> m_tasksHandlers;    // МАПА ДЛЯ ОБРОБКИ ЗАПИТІВ ЗАДАЧ (tasks:show)
+    QMap<QString, CallbackHandler> m_reportHandlers;
 
     QMap<QString, CommandHandler> m_userCommandHandlers;
     QMap<QString, CommandHandler> m_adminCommandHandlers;
