@@ -105,6 +105,12 @@ public:
      */
     void fetchRedmineTasks(int userId);
 
+    /**
+     * @brief Запит Jira задач для користувача Telegram.
+     * @param telegramId ID користувача Telegram.
+     */
+    void fetchJiraTasks(qint64 telegramId);
+
 signals:
     // Сигнали для логіну
     void loginSuccess(User* user);
@@ -240,6 +246,12 @@ signals:
     void redmineTasksFetched(const QJsonArray& tasks, qint64 telegramId = 0, int userId = 0);
     void redmineTasksFetchFailed(const ApiError& error, qint64 telegramId = 0, int userId = 0);
 
+    /**
+     * @brief Сигнал успішного отримання Jira задач.
+     */
+    void jiraTasksFetched(const QJsonArray& tasks, qint64 telegramId = 0);
+    void jiraTasksFetchFailed(const ApiError& error, qint64 telegramId = 0);
+
 private slots:
     void onLoginReplyFinished();
     void onUsersReplyFinished();
@@ -293,6 +305,9 @@ private slots:
     void onStantionDispenserReplyFinished();
 
     void onRedmineTasksReplyFinished();
+
+    // СЛОТ ДЛЯ JIRA
+    void onJiraTasksReplyFinished();
 private:
     ApiClient(QObject* parent = nullptr);
     ~ApiClient() = default;
@@ -310,6 +325,7 @@ private:
     QString m_serverUrl;
     QString m_authToken;
     QString m_botApiKey;
+
 };
 
 #endif // APICLIENT_H

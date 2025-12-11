@@ -51,14 +51,17 @@ private slots:
     void onStationTanksReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId);
     void onStationTanksFailed(const ApiError& error, qint64 telegramId);
 
-    // Обробник для отримання конфігурації ТРК
-//----    void handleCallbackStationDisp(const QJsonObject& query, const QStringList& parts);
+
 
     void onDispenserConfigReceived(const QJsonArray& config, int clientId, int terminalId, qint64 telegramId);
     void onDispenserConfigFailed(const ApiError& error, qint64 telegramId);
 
     void onRedmineTasksFetched(const QJsonArray& tasks, qint64 telegramId, int userId);
     void onRedmineTasksFetchFailed(const ApiError& error, qint64 telegramId, int userId);
+
+    // !!! НОВІ СЛОТИ ДЛЯ JIRA !!!
+    void onJiraTasksFetched(const QJsonArray& tasks, qint64 telegramId);
+    void onJiraTasksFetchFailed(const ApiError& error, qint64 telegramId);
 
 private:
     // Тип-вказівник на метод-обробник

@@ -205,7 +205,7 @@ void TelegramClient::answerCallbackQuery(const QString &callbackQueryId, const Q
  * @param text Новий текст.
  * @param inlineMarkup Новий JSON кнопок.
  */
-void TelegramClient::editMessageText(qint64 chatId, int messageId, const QString &text, const QJsonObject &inlineMarkup)
+void TelegramClient::editMessageText(qint64 chatId, int messageId, const QString &text, const QJsonObject &inlineMarkup, bool disablePreview)
 {
     QUrl url("https://api.telegram.org/bot" + m_token + "/editMessageText");
 
@@ -216,13 +216,15 @@ void TelegramClient::editMessageText(qint64 chatId, int messageId, const QString
     jsonBody["reply_markup"] = inlineMarkup;
     jsonBody["parse_mode"] = "HTML";
 
+    // !!! КЛЮЧОВЕ ДОПОВНЕННЯ: ВИМКНЕННЯ PREVIEW !!!
+    if (disablePreview) {
+        jsonBody["disable_web_page_preview"] = true;
+    }
+
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
     QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(jsonBody).toJson());
-
-    // Ми не будемо обробляти помилки редагування (напр., якщо повідомлення застаріле),
-    // просто видалимо відповідь.
     connect(reply, &QNetworkReply::finished, reply, &QNetworkReply::deleteLater);
 }
 
@@ -244,6 +246,30 @@ void TelegramClient::sendLocation(qint64 chatId, double latitude, double longitu
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
     // "fire-and-forget"
+    QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(jsonBody).toJson());
+    connect(reply, &QNetworkReply::finished, reply, &QNetworkReply::deleteLater);
+}
+
+
+// TelegramClient.cpp (Додайте цей новий метод)
+
+void TelegramClient::sendMessage(qint64 chatId, const QString &text, bool disablePreview)
+{
+    QUrl url("https://api.telegram.org/bot" + m_token + "/sendMessage");
+
+    QJsonObject jsonBody;
+    jsonBody["chat_id"] = chatId;
+    jsonBody["text"] = text;
+    jsonBody["parse_mode"] = "HTML";
+
+    // !!! КЛЮЧОВЕ ДОПОВНЕННЯ: ВИМКНЕННЯ PREVIEW !!!
+    if (disablePreview) {
+        jsonBody["disable_web_page_preview"] = true;
+    }
+
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
     QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(jsonBody).toJson());
     connect(reply, &QNetworkReply::finished, reply, &QNetworkReply::deleteLater);
 }

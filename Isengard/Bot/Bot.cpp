@@ -85,6 +85,12 @@ void Bot::setupConnections()
     connect(&ApiClient::instance(), &ApiClient::redmineTasksFetchFailed,
             this, &Bot::onRedmineTasksFetchFailed);
 
+
+    connect(&ApiClient::instance(), &ApiClient::jiraTasksFetched,
+            this, &Bot::onJiraTasksFetched);
+    connect(&ApiClient::instance(), &ApiClient::jiraTasksFetchFailed,
+            this, &Bot::onJiraTasksFetchFailed);
+
     logInfo() << "Signal-slot connections established.";
 }
 
@@ -936,7 +942,7 @@ void Bot::sendPaginatedStations(qint64 telegramId, int clientId, int page, int m
         m_telegramClient->sendMessageWithInlineKeyboard(telegramId, messageBody, keyboard);
     } else {
         // Якщо messageId є - редагуємо існуюче
-        m_telegramClient->editMessageText(telegramId, messageId, messageBody, keyboard);
+        m_telegramClient->editMessageText(telegramId, messageId, messageBody, keyboard, false);
     }
 }
 
@@ -994,7 +1000,7 @@ void Bot::handleCallbackClientSelect(const QJsonObject& query, const QStringList
     rows.append(row2);
     keyboard["inline_keyboard"] = rows;
 
-    m_telegramClient->editMessageText(chatId, messageId, "<b>Оберіть дію:</b>", keyboard);
+    m_telegramClient->editMessageText(chatId, messageId, "<b>Оберіть дію:</b>", keyboard, false);
     m_telegramClient->answerCallbackQuery(callbackQueryId);
 }
 
@@ -1083,7 +1089,7 @@ void Bot::handleCallbackStationsClose(const QJsonObject& query, const QStringLis
     int messageId = query["message"].toObject()["message_id"].toInt();
     QString callbackQueryId = query["id"].toString();
 
-    m_telegramClient->editMessageText(chatId, messageId, "<i>Список АЗС закрито.</i>", QJsonObject());
+    m_telegramClient->editMessageText(chatId, messageId, "<i>Список АЗС закрито.</i>", QJsonObject(), false);
     m_userStationCache.remove(chatId); // Чистимо кеш
     m_telegramClient->answerCallbackQuery(callbackQueryId);
 }
@@ -1546,7 +1552,7 @@ void Bot::onRedmineTasksFetched(const QJsonArray& tasks, qint64 telegramId, int 
         }
     }
 
-    m_telegramClient->sendMessage(telegramId, message);
+    m_telegramClient->sendMessage(telegramId, message, true);
 }
 
 
@@ -1603,7 +1609,7 @@ void Bot::handleTaskTrackerSelection(const QJsonObject& query, const QStringList
     QString loadingMessage = QString("Завантажую задачі з %1...").arg(tracker == "redmine" ? "Redmine" : "Jira");
 
     // [Виправлено: Передаємо 4 аргументи, 4-й - порожня клавіатура]
-    m_telegramClient->editMessageText(chatId, messageId, loadingMessage, QJsonObject());
+    m_telegramClient->editMessageText(chatId, messageId, loadingMessage, QJsonObject(), false);
 
 
     if (tracker == "redmine") {
@@ -1612,20 +1618,128 @@ void Bot::handleTaskTrackerSelection(const QJsonObject& query, const QStringList
         m_apiClient.fetchRedmineTasks(chatId);
 
     } else if (tracker == "jira") {
-        // --- Jira: Заглушка ---
-        logInfo() << "Bot: Jira tasks requested, showing stub for user" << chatId;
-
-        QString failureMessage = "❌ <b>Jira:</b> Функціонал Jira наразі в розробці. Спробуйте пізніше.";
-
-        // [Виправлено: Передаємо 4 аргументи, 4-й - порожня клавіатура]
-        m_telegramClient->editMessageText(chatId, messageId, failureMessage, QJsonObject());
-
-        // [Виправлено: Тільки 2 аргументи]
-        m_telegramClient->answerCallbackQuery(queryId, "Функціонал не доступний.");
+        logInfo() << "Bot: Starting Jira tasks fetch for user" << chatId;
+        m_apiClient.fetchJiraTasks(chatId); // Тільки цей рядок
         return;
     }
 
     // Відповідь Telegram (для Redmine, щоб зникло "годинник")
     // [Виправлено: Тільки 2 аргументи]
     m_telegramClient->answerCallbackQuery(queryId, "Завантаження розпочато...");
+}
+
+
+// ... у Bot/Bot.cpp (додайте у кінці файлу, поруч з іншими слотами)
+
+/**
+ * @brief (НОВИЙ) Обробляє успішне отримання задач Jira.
+ * Реалізує групування за проєктами, але БЕЗ АКТИВНИХ ПОСИЛАНЬ.
+ */
+void Bot::onJiraTasksFetched(const QJsonArray& tasks, qint64 telegramId)
+{
+    if (telegramId == 0) return;
+
+    // 1. ОТРИМАННЯ JIRA BASE URL
+    const QString jiraUrl = AppParams::instance().getParam("Global", "JiraBaseUrl").toString();
+    // Визначаємо, чи доступний URL, щоб уникнути зайвої логіки всередині циклу
+    const bool urlIsAvailable = !jiraUrl.isEmpty();
+
+    QString message;
+
+    if (tasks.isEmpty()) {
+        message = "✅ <b>У вас немає відкритих задач Jira, призначених вам.</b>";
+    } else {
+        // --- ГРУПУВАННЯ ЗАДАЧ ЗА ПРОЄКТАМИ ---
+        QMap<QString, QJsonArray> tasksByProject;
+
+        for (const QJsonValue& val : tasks) {
+            QJsonObject issue = val.toObject();
+            // Назва проєкту в Jira API знаходиться в об'єкті "fields"
+            QString projectName = issue["fields"].toObject()["project"].toObject()["name"].toString();
+            tasksByProject[projectName].append(val);
+        }
+
+        // Заголовок загального повідомлення
+        message = QString("📝 <b>Ваші відкриті задачі Jira (%1):</b>\n\n").arg(tasks.count());
+
+        // --- ФОРМУВАННЯ ВИВОДУ ---
+        QMapIterator<QString, QJsonArray> i(tasksByProject);
+        while (i.hasNext()) {
+            i.next();
+            const QString projectName = i.key();
+            const QJsonArray projectTasks = i.value();
+
+            // Заголовок Проєкту
+            message += QString("📁 <b>Проєкт: %1 (%2)</b>\n")
+                           .arg(projectName)
+                           .arg(projectTasks.count());
+
+            for (const QJsonValue& val : projectTasks) {
+                QJsonObject issue = val.toObject();
+                QJsonObject fields = issue["fields"].toObject();
+
+                QString key = issue["key"].toString(); // Напр., "JIRA-123"
+                QString summary = fields["summary"].toString();
+                QString status = fields["status"].toObject()["name"].toString();
+
+                // Вибір емодзі (поки що проста логіка, оскільки немає ID)
+                QString statusEmoji;
+                if (status.contains("Open", Qt::CaseInsensitive)) {
+                    statusEmoji = "🟢";
+                } else if (status.contains("Progress", Qt::CaseInsensitive)) {
+                    statusEmoji = "🛠️";
+                } else {
+                    statusEmoji = "🔵";
+                }
+
+                // Екрануємо тему
+                const QString escapedSummary = escapeHtml(summary.simplified());
+
+                // --- НОВИЙ БЛОК: СТВОРЕННЯ АКТИВНОГО ПОСИЛАННЯ ---
+                if (urlIsAvailable) {
+                    // Формуємо повний URL завдання
+                    const QString issueUrl = jiraUrl + "/browse/" + key;
+
+                    // Використовуємо <a> тег для створення активного посилання на ключ задачі
+                    message += QString("  %1 <b><a href=\"%2\">[%3]</a> [%4]</b> %5\n")
+                                   .arg(statusEmoji)     // %1: 🟢/🛠️/🔵
+                                   .arg(issueUrl)        // %2: URL для тегу <a>
+                                   .arg(key)             // %3: [AZS-46490] (текст посилання)
+                                   .arg(status)          // %4: [Статус]
+                                   .arg(escapedSummary); // %5: Тема
+                } else {
+                    // Резервний варіант, якщо URL Jira не налаштований
+                    message += QString("  %1 <b>[%2] [%3]</b> %4\n")
+                                   .arg(statusEmoji)     // %1
+                                   .arg(key)             // %2
+                                   .arg(status)          // %3
+                                   .arg(escapedSummary); // %4
+                }
+                // --- КІНЕЦЬ НОВОГО БЛОКУ ---
+
+                // Прибрано: message += "\n"; з внутрішнього циклу
+            }
+            // Додаємо один перенос рядка для розділення проєктів
+            message += "\n";
+        }
+    }
+
+    // Надсилаємо фінальне повідомлення
+    m_telegramClient->sendMessage(telegramId, message);
+}
+
+
+/**
+ * @brief (НОВИЙ) Обробляє помилку завантаження задач Jira.
+ */
+void Bot::onJiraTasksFetchFailed(const ApiError& error, qint64 telegramId)
+{
+    if (telegramId == 0) return;
+
+    QString errorMessage = QString("❌ Помилка завантаження задач Jira: %1\n"
+                                   "HTTP Status: %2. Можливо, не налаштовано ключ API Jira.")
+                               .arg(error.errorString)
+                               .arg(error.httpStatusCode);
+
+    m_telegramClient->sendMessage(telegramId, errorMessage);
 }

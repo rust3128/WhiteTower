@@ -37,6 +37,17 @@ public:
      */
     void editMessageText(qint64 chatId, int messageId, const QString& text, const QJsonObject& inlineMarkup);
 
+    /**
+     * @brief Надсилає текстове повідомлення з опцією вимкнення веб-прев'ю.
+     */
+    void sendMessage(qint64 chatId, const QString& text, bool disablePreview);
+
+    /**
+     * @brief Редагує існуюче повідомлення з опцією вимкнення веб-прев'ю.
+     * (Це потрібно, щоб уникнути появи прев'ю при редагуванні, якщо ми додамо URL)
+     */
+    void editMessageText(qint64 chatId, int messageId, const QString& text, const QJsonObject& inlineMarkup, bool disablePreview);
+
     void sendLocation(qint64 chatId, double latitude, double longitude);
 
 signals:

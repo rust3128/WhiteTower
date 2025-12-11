@@ -1922,3 +1922,62 @@ void ApiClient::onRedmineTasksReplyFinished()
 
     reply->deleteLater();
 }
+
+
+/**
+ * @brief (НОВИЙ) Запит Jira задач для користувача Telegram.
+ * @param telegramId ID користувача Telegram.
+ */
+void ApiClient::fetchJiraTasks(qint64 telegramId)
+{
+    logInfo() << "ApiClient: Fetching Jira tasks for Telegram ID" << telegramId;
+
+    // Формуємо URL до НОВОГО маршруту на нашому Вебсервері
+    QUrl url(m_serverUrl + "/api/bot/jira/tasks");
+
+    // Використовуємо існуючий шаблон для створення запиту з авторизацією бота
+    QNetworkRequest request = createBotRequest(url, telegramId);
+
+    QNetworkReply* reply = m_networkManager->get(request);
+
+    // Зберігаємо контекст для обробки відповіді
+    reply->setProperty("telegramId", telegramId);
+
+    // Підключаємо новий слот для обробки відповіді
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onJiraTasksReplyFinished);
+}
+
+
+
+/**
+ * @brief (НОВИЙ СЛОТ) Обробляє відповідь від НАШОГО СЕРВЕРА з Jira-задачами.
+ */
+void ApiClient::onJiraTasksReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    qint64 telegramId = reply->property("telegramId").toLongLong();
+    ApiError error = parseReply(reply);
+
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200)
+    {
+        QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
+        if (doc.isArray()) {
+            QJsonArray tasksArray = doc.array();
+            // Успіх: емітуємо сигнал з масивом задач
+            emit jiraTasksFetched(tasksArray, telegramId);
+            logInfo() << "Jira tasks fetched successfully. Count:" << tasksArray.count();
+        } else {
+            error.errorString = "Invalid response from server: expected a JSON array of tasks.";
+            emit jiraTasksFetchFailed(error, telegramId);
+        }
+    }
+    else
+    {
+        // Помилка: мережева або від нашого сервера
+        emit jiraTasksFetchFailed(error, telegramId);
+    }
+
+    reply->deleteLater();
+}

@@ -31,6 +31,8 @@ add_library(Oracle STATIC
   ApiClient.cpp
   RedmineClient.h
   RedmineClient.cpp
+  JiraClient.h
+  JiraClient.cpp
 )
 
 target_link_libraries(Oracle PRIVATE Qt${QT_VERSION_MAJOR}::Core

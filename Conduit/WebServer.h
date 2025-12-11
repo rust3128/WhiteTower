@@ -107,6 +107,12 @@ private:
      */
     QHttpServerResponse handleGetRedmineTasks(const QHttpServerRequest& request);
 
+    /**
+     * @brief Обробляє запит бота на отримання списку відкритих Jira задач.
+     * Маршрут: GET /api/bot/jira/tasks
+     */
+    QHttpServerResponse handleGetJiraTasks(const QHttpServerRequest& request);
+
 private:
     QHttpServer* m_httpServer;
     quint16 m_port;
