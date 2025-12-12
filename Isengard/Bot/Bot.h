@@ -63,6 +63,8 @@ private slots:
     void onJiraTasksFetched(const QJsonArray& tasks, qint64 telegramId);
     void onJiraTasksFetchFailed(const ApiError& error, qint64 telegramId);
 
+    void onTaskDetailsFetched(const QJsonObject& taskDetails, qint64 telegramId);
+    void onTaskDetailsFetchFailed(const ApiError& error, qint64 telegramId);
 
 
 
@@ -142,12 +144,15 @@ private:
         WaitingForReportType,          // Очікування вибору дії (Коментар/Закрити)
         WaitingForComment,             // Очікування тексту коментаря
         WaitingForAttachment,          // Очікування фотозвіту
+        ValidatingTask,                // Очікування відповіді API на валідацію ID
+        WaitingForAssignment,
     };
     QMap<qint64, UserState> m_userState; // <telegramId, State>
 
     QMap<qint64, int> m_userClientContext; // <telegramId, clientId>
     QMap<qint64, QJsonArray> m_userStationCache; // <telegramId, Full_Stations_Array>
     QMap<qint64, QJsonArray> m_userClientCache; // <telegramId, Full_Clients_Array>
+    QMap<qint64, QVariantMap> m_reportContext; // <telegramId, { "tracker": "redmine", "taskId": 12345, "reportType": "close" }>
 
     // Мапи (карти) обробників
     QMap<QString, CallbackHandler> m_clientsHandlers; // "clients:main"

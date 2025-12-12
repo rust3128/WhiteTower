@@ -1993,30 +1993,106 @@ void Bot::handleReportInput(const QJsonObject& message)
     QString text = message["text"].toString().trimmed();
     UserState currentState = m_userState.value(chatId);
 
-    // --- ЗАГЛУШКА ДЛЯ ВВЕДЕННЯ ID ---
+    // --- ОБРОБКА ВВЕДЕННЯ ID ЗАДАЧІ (Фаза 2.Б) ---
     if (currentState == UserState::WaitingForManualTaskId) {
         logInfo() << "Report: Received manual Task ID input:" << text;
 
-        // Очищуємо стан після введення
-        m_userState.remove(chatId);
-
         if (text.isEmpty()) {
-            m_telegramClient->sendMessage(chatId, "❌ ID задачі не може бути порожнім. Спробуйте ще раз.");
-            // Повертаємо у попередній стан
-            m_userState[chatId] = UserState::WaitingForManualTaskId;
+            m_telegramClient->sendMessage(chatId, "? ID задачі не може бути порожнім. Введіть, будь ласка, ID.");
             return;
         }
 
-        // !!! ЗАГЛУШКА ПРОГРЕСУ !!!
-        QString selectedTracker = (m_userClientContext.value(chatId) == 1) ? "Redmine" : "Jira";
-        QString response = QString("✅ Обрано ID задачі: <b>%1</b> (%2). \n"
-                                   "❌ Наразі логіка валідації та призначення в розробці.")
+        // 1. Зберігаємо ID задачі в контексті
+        // !!! ВИПРАВЛЕНО: Використовуємо m_reportContext !!!
+        m_reportContext[chatId]["taskId"] = text;
+
+        // 2. Встановлюємо стан очікування відповіді API
+        // !!! ВИПРАВЛЕНО: Використовуємо новий, коректний стан ValidatingTask !!!
+        m_userState[chatId] = UserState::ValidatingTask;
+
+        // 3. Визначаємо трекер
+        int trackerType = m_userClientContext.value(chatId);
+
+        // 4. API-виклик для валідації (поки що заглушка)
+
+        QString selectedTracker = (trackerType == 1) ? "redmine" : "jira";
+        QString response = QString("Проводиться валідація задачі <b>%1</b> (%2)...")
                                .arg(text)
                                .arg(selectedTracker);
 
         m_telegramClient->sendMessage(chatId, response);
+
+        // !!! ТУТ МАЄ БУТИ ВИКЛИК API:
+        // m_apiClient.fetchTaskDetails(selectedTracker, text, chatId);
+        // !!!
+
         return;
     }
 
-    // ... (тут будуть інші обробники: WaitingForComment, WaitingForAttachment)
+    // ... (інші обробники станів)
+}
+
+
+// Bot.cpp (Нові слоти для обробки деталей/валідації задачі)
+
+/**
+ * @brief (НОВИЙ СЛОТ) Успішно отримано деталі задачі (валідація пройшла успішно).
+ * Завдання: Підтвердити валідацію, виконати призначення на себе і перейти до вибору дії.
+ */
+void Bot::onTaskDetailsFetched(const QJsonObject& taskDetails, qint64 telegramId)
+{
+    if (telegramId == 0) return;
+
+    // 1. Отримуємо ID задачі з контексту
+    QString taskId = m_reportContext[telegramId]["taskId"].toString();
+    int trackerType = m_userClientContext.value(telegramId);
+    QString trackerPrefix = (trackerType == 1) ? "Redmine" : "Jira";
+
+    // 2. Встановлюємо стан очікування призначення
+    m_userState[telegramId] = UserState::WaitingForAssignment; // Новий тимчасовий стан
+
+    // 3. Формуємо повідомлення
+    QString subject = taskDetails.contains("subject") ? taskDetails["subject"].toString() : taskDetails["summary"].toString();
+    QString status = taskDetails["status"].toObject()["name"].toString();
+
+    QString messageText = QString("? Задача <b>%1</b> (%2) знайдена:\n"
+                                  "   Тема: %3\n"
+                                  "   Статус: %4\n"
+                                  "   <b>Проводиться призначення на вас...</b>")
+                              .arg(taskId)
+                              .arg(trackerPrefix)
+                              .arg(escapeHtml(subject.simplified()))
+                              .arg(status);
+
+    m_telegramClient->sendMessage(telegramId, messageText);
+
+    // !!! НАСТУПНИЙ КРОК: API-виклик для призначення на себе !!!
+    // m_apiClient.assignTaskToSelf(trackerPrefix, taskId, telegramId);
+    // !!!
+}
+
+/**
+ * @brief (НОВИЙ СЛОТ) Помилка отримання деталей задачі (валідація провалилася).
+ * Завдання: Повідомити про помилку і повернути у стан ручного введення ID.
+ */
+void Bot::onTaskDetailsFetchFailed(const ApiError& error, qint64 telegramId)
+{
+    if (telegramId == 0) return;
+
+    // 1. Скидаємо стан до очікування нового ID
+    m_userState[telegramId] = UserState::WaitingForManualTaskId;
+
+    QString selectedTracker = (m_userClientContext.value(telegramId) == 1) ? "Redmine" : "Jira";
+
+    QString errorMessage = QString("? Помилка валідації задачі %1:\n"
+                                   "   %2 (HTTP %3).\n"
+                                   "   Введіть коректний ID задачі ще раз.")
+                               .arg(selectedTracker)
+                               .arg(error.errorString)
+                               .arg(error.httpStatusCode);
+
+    m_telegramClient->sendMessage(telegramId, errorMessage);
+
+    // Очищуємо кеш задачі
+    m_reportContext.remove(telegramId);
 }
