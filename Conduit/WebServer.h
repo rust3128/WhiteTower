@@ -113,6 +113,24 @@ private:
      */
     QHttpServerResponse handleGetJiraTasks(const QHttpServerRequest& request);
 
+    /**
+     * @brief Обробляє запит на деталі задачі Redmine/Jira (для валідації).
+     * Маршрут: GET /api/bot/tasks/details?tracker=...&id=...
+     */
+    QHttpServerResponse handleGetTaskDetails(const QHttpServerRequest& request);
+
+    /**
+     * @brief Обробляє запит на призначення задачі на себе.
+     * Маршрут: POST /api/bot/tasks/assign
+     */
+    QHttpServerResponse handleAssignTaskToSelf(const QHttpServerRequest& request);
+
+    /**
+     * @brief Обробляє запит на фінальне звітування (коментар, закриття).
+     */
+    QHttpServerResponse handleReportTask(const QHttpServerRequest& request);
+
+
 private:
     QHttpServer* m_httpServer;
     quint16 m_port;

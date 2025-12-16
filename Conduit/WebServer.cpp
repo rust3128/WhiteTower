@@ -203,6 +203,22 @@ void WebServer::setupRoutes()
                             return handleGetJiraTasks(request);
                         });
 
+    // !!!  МАРШРУТ: GET /api/bot/tasks/details (Валідація задачі) !!!
+    m_httpServer->route("/api/bot/tasks/details", QHttpServerRequest::Method::Get,
+                        [this](const QHttpServerRequest& request) {
+                            return handleGetTaskDetails(request);
+                        });
+
+    // !!!  МАРШРУТ: POST /api/bot/tasks/assign (Призначення на себе) !!!
+    m_httpServer->route("/api/bot/tasks/assign", QHttpServerRequest::Method::Post,
+                        [this](const QHttpServerRequest& request) {
+                            return handleAssignTaskToSelf(request);
+                        });
+
+    m_httpServer->route("/api/bot/tasks/report", [this](const QHttpServerRequest& request) {
+        return handleReportTask(request);
+    });
+
 }
 
 void WebServer::logRequest(const QHttpServerRequest &request)
@@ -1427,16 +1443,11 @@ QHttpServerResponse WebServer::handleGetRedmineTasks(const QHttpServerRequest& r
     }
 }
 
-// WebServer.cpp
-// ... (додайте після handleGetRedmineTasks)
 
 /**
  * @brief Обробляє запит бота на отримання списку відкритих Jira задач.
  * Маршрут: GET /api/bot/jira/tasks
  */
-// WebServer.cpp
-// ... у WebServer::handleGetJiraTasks
-
 QHttpServerResponse WebServer::handleGetJiraTasks(const QHttpServerRequest &request)
 {
     logRequest(request);
@@ -1529,4 +1540,282 @@ QHttpServerResponse WebServer::handleGetJiraTasks(const QHttpServerRequest &requ
         // Успіх (навіть якщо список завдань порожній)
         return createJsonResponse(tasksArray, QHttpServerResponse::StatusCode::Ok);
     }
+}
+
+
+// WebServer.cpp (handleGetTaskDetails)
+
+QHttpServerResponse WebServer::handleGetTaskDetails(const QHttpServerRequest& request)
+{
+    logRequest(request);
+    User* user = authenticateRequest(request);
+    if (!user) { return createTextResponse("Unauthorized", QHttpServerResponse::StatusCode::Unauthorized); }
+
+    QUrlQuery query(request.url());
+    QString tracker = query.queryItemValue("tracker").toLower();
+    QString taskId = query.queryItemValue("id").trimmed();
+
+    const QString redmineBaseUrl = AppParams::instance().getParam("Global", "RedmineBaseUrl").toString();
+
+    if (tracker.isEmpty() || taskId.isEmpty()) {
+        delete user;
+        return createTextResponse("Missing tracker or task ID.", QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    QJsonObject taskDetails;
+    ApiError clientError;
+
+    if (tracker == "redmine") {
+        if (redmineBaseUrl.isEmpty()) {
+            delete user;
+            return createTextResponse("Redmine Base URL not configured.", QHttpServerResponse::StatusCode::InternalServerError);
+        }
+
+        // --- Redmine Логіка ---
+        QString tokenEncrypted = user->redmineToken();
+        QString token = CriptPass::instance().decriptPass(tokenEncrypted);
+        RedmineClient client;
+
+        QNetworkReply* reply = client.fetchIssueDetails(redmineBaseUrl, taskId, token);
+
+        if (reply) {
+            QEventLoop loop;
+            connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+            loop.exec();
+
+            if (reply->property("success").toBool()) {
+                // !!! ВИПРАВЛЕНО: Використовуємо toMap, якщо toJsonObject недоступний !!!
+                taskDetails = QJsonObject::fromVariantMap(reply->property("issueDetails").toMap());
+
+                // Перевірка, чи задача не "Закрита" (StatusId 5 або вище)
+                int statusId = taskDetails.value("status").toObject().value("id").toInt();
+                if (statusId >= 5) { // 5=Закритий, 6=Відмова, 7=Відкладена
+                    delete user;
+                    return createTextResponse("Task is already closed, rejected, or deferred.", QHttpServerResponse::StatusCode::BadRequest);
+                }
+            } else {
+                clientError = reply->property("errorDetails").value<ApiError>();
+            }
+            reply->deleteLater();
+        }
+    }
+    // !!! БЛОК JIRA ВИДАЛЕНО !!!
+    else {
+        delete user;
+        return createTextResponse("Invalid tracker specified or Jira functionality not yet implemented.", QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    delete user;
+
+    if (taskDetails.isEmpty() && clientError.httpStatusCode != 0) {
+        return createJsonResponse(QJsonObject{{"error", clientError.errorString}},
+                                  (QHttpServerResponse::StatusCode)clientError.httpStatusCode);
+    } else if (taskDetails.isEmpty()) {
+        return createTextResponse("Task not found or response was empty.", QHttpServerResponse::StatusCode::NotFound);
+    }
+
+    return createJsonResponse(taskDetails, QHttpServerResponse::StatusCode::Ok);
+}
+
+
+
+// WebServer.cpp
+
+QHttpServerResponse WebServer::handleAssignTaskToSelf(const QHttpServerRequest& request)
+{
+    logRequest(request);
+    User* user = authenticateRequest(request);
+    if (!user) { return createTextResponse("Unauthorized", QHttpServerResponse::StatusCode::Unauthorized); }
+
+    const QString redmineBaseUrl = AppParams::instance().getParam("Global", "RedmineBaseUrl").toString();
+
+    QJsonDocument doc = QJsonDocument::fromJson(request.body());
+    if (!doc.isObject()) {
+        delete user;
+        return createTextResponse("Invalid JSON body.", QHttpServerResponse::StatusCode::BadRequest);
+    }
+    QJsonObject body = doc.object();
+
+    QString tracker = body["tracker"].toString().toLower();
+    QString taskId = body["id"].toString().trimmed();
+
+    if (tracker.isEmpty() || taskId.isEmpty()) {
+        delete user;
+        return createTextResponse("Missing tracker or task ID.", QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    ApiError clientError;
+
+    if (tracker == "redmine") {
+        if (redmineBaseUrl.isEmpty()) {
+            delete user;
+            return createTextResponse("Redmine Base URL not configured.", QHttpServerResponse::StatusCode::InternalServerError);
+        }
+
+        // --- Redmine Логіка ---
+        QString tokenEncrypted = user->redmineToken();
+        QString token = CriptPass::instance().decriptPass(tokenEncrypted);
+
+        if (token.isEmpty()) {
+            delete user;
+            return createTextResponse("Redmine API Token is empty after decryption.", QHttpServerResponse::StatusCode::Forbidden);
+        }
+
+        int redmineUserId = user->redmineUserId(); // 1. Читаємо поточний ID з об'єкта User
+
+        // --- 2. ПЕРЕВІРКА ТА АВТОМАТИЧНЕ ОТРИМАННЯ ID ---
+        if (redmineUserId <= 0)
+        {
+            logInfo() << "Redmine User ID is missing (ID=" << redmineUserId << "). Fetching from Redmine API...";
+
+            RedmineClient client;
+            // Синхронний запит на /users/current.json для визначення ID
+            QNetworkReply* detailsReply = client.fetchCurrentUserId(redmineBaseUrl, token);
+
+            if (detailsReply) {
+                QEventLoop detailLoop;
+                QObject::connect(detailsReply, &QNetworkReply::finished, &detailLoop, &QEventLoop::quit);
+                detailLoop.exec();
+
+                if (detailsReply->property("success").toBool()) {
+                    redmineUserId = detailsReply->property("redmineId").toInt();
+
+                    // !!! 3. ЗБЕРЕЖЕННЯ ID У БД, якщо він знайдений !!!
+                    if (redmineUserId > 0) {
+                        DbManager::instance().updateRedmineUserId(user->id(), redmineUserId);
+                    }
+                } else {
+                    ApiError idError = detailsReply->property("errorDetails").value<ApiError>();
+                    logCritical() << "Failed to fetch Redmine user ID for assignment:" << idError.errorString;
+                    delete user; detailsReply->deleteLater();
+                    return createTextResponse(QString("Failed to verify Redmine user ID: %1").arg(idError.errorString).toUtf8(),
+                                               QHttpServerResponse::StatusCode::Forbidden);
+                }
+                detailsReply->deleteLater();
+            } else {
+                logCritical() << "Failed to initialize Redmine user ID fetch (QNetworkReply is null).";
+            }
+        }
+
+        // --- 4. ВИКОНАННЯ ПРИЗНАЧЕННЯ НА КОНКРЕТНИЙ REDMINE ID ---
+        if (redmineUserId <= 0) {
+            delete user;
+            return createTextResponse("Could not determine valid Redmine User ID for assignment.",
+                                      QHttpServerResponse::StatusCode::Forbidden);
+        }
+
+        logInfo() << "Assigning task to determined Redmine ID:" << redmineUserId;
+
+        // Призначення задачі (ВИКОРИСТОВУЄМО ПРАВИЛЬНИЙ redmineUserId)
+        RedmineClient client;
+        // !!! ТУТ ЗМІНА: Передаємо коректний ID Redmine !!!
+        QNetworkReply* reply = client.assignIssue(redmineBaseUrl, taskId, token, redmineUserId);
+
+        if (reply) {
+            QEventLoop loop;
+            connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+            loop.exec(); // Синхронне очікування відповіді на призначення
+
+            if (!reply->property("success").toBool()) {
+                clientError = reply->property("errorDetails").value<ApiError>();
+            }
+            reply->deleteLater();
+        }
+    }
+    else {
+        delete user;
+        return createTextResponse("Invalid tracker specified or functionality not yet implemented.", QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    delete user;
+
+    if (clientError.httpStatusCode != 0) {
+        return createJsonResponse(QJsonObject{{"error", clientError.errorString}},
+                                  (QHttpServerResponse::StatusCode)clientError.httpStatusCode);
+    }
+
+    return createJsonResponse(QJsonObject{{"status", "assigned"}}, QHttpServerResponse::StatusCode::Ok);
+}
+
+QHttpServerResponse WebServer::handleReportTask(const QHttpServerRequest& request)
+{
+    logRequest(request);
+    User* user = authenticateRequest(request);
+    if (!user) { return createTextResponse("Unauthorized", QHttpServerResponse::StatusCode::Unauthorized); }
+
+    QJsonDocument doc = QJsonDocument::fromJson(request.body());
+    if (!doc.isObject()) {
+        delete user;
+        return createTextResponse("Invalid JSON body.", QHttpServerResponse::StatusCode::BadRequest);
+    }
+    QJsonObject body = doc.object();
+
+    QString tracker = body["tracker"].toString().toLower(); // redmine або jira
+    QString taskId = body["taskId"].toString().trimmed();
+    QString action = body["action"].toString().toLower();   // comment або close
+    QString comment = body["comment"].toString();
+
+    // !!! 1. ЗЧИТУВАННЯ МАСИВУ ВКЛАДЕНЬ !!!
+    QJsonArray attachments = body["attachments"].toArray();
+
+    if (tracker.isEmpty() || taskId.isEmpty() || action.isEmpty()) {
+        delete user;
+        return createTextResponse("Missing tracker, task ID, or action.", QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    ApiError clientError;
+
+    if (tracker == "redmine") {
+        QString redmineBaseUrl = AppParams::instance().getParam("Global", "RedmineBaseUrl").toString();
+        if (redmineBaseUrl.isEmpty()) {
+            delete user;
+            return createTextResponse("Redmine Base URL not configured.", QHttpServerResponse::StatusCode::InternalServerError);
+        }
+
+        QString tokenEncrypted = user->redmineToken();
+        QString token = CriptPass::instance().decriptPass(tokenEncrypted);
+        int redmineUserId = user->redmineUserId(); // Використовуємо ЗБЕРЕЖЕНИЙ ID
+
+        if (redmineUserId <= 0) {
+            delete user;
+            return createTextResponse("Redmine User ID is not defined in DB. Cannot report task.", QHttpServerResponse::StatusCode::Forbidden);
+        }
+
+        // --- 2. ЛОГІКА ІГНОРУВАННЯ ВКЛАДЕНЬ ---
+        if (!attachments.isEmpty()) {
+            // Це повідомлення з'явиться у логах Conduit, коли користувач відправить фото.
+            logWarning() << "Received" << attachments.count() << "attachments for Redmine. Skipping file upload (multi-step logic not implemented).";
+        }
+        // --- КІНЕЦЬ ЛОГІКИ ІГНОРУВАННЯ ---
+
+        RedmineClient client;
+        // !!! 3. ВИКЛИКАЄМО РОБОЧИЙ МЕТОД (6 аргументів) !!!
+        QNetworkReply* reply = client.reportTask(redmineBaseUrl, taskId, token, redmineUserId, action, comment);
+
+        if (reply) {
+            QEventLoop loop;
+            connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+            loop.exec();
+
+            if (!reply->property("success").toBool()) {
+                clientError = reply->property("errorDetails").value<ApiError>();
+            }
+            reply->deleteLater();
+        }
+    }
+    else {
+        // ... (Тут буде логіка Jira, поки що заглушка)
+        delete user;
+        return createTextResponse("Tracker not supported or functionality not implemented.", QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    delete user;
+
+    if (clientError.httpStatusCode != 0) {
+        return createJsonResponse(QJsonObject{{"error", clientError.errorString}},
+                                  (QHttpServerResponse::StatusCode)clientError.httpStatusCode);
+    }
+
+    // Успішне виконання
+    return createJsonResponse(QJsonObject{{"status", "reported"}}, QHttpServerResponse::StatusCode::Ok);
 }

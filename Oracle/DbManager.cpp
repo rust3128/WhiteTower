@@ -128,8 +128,8 @@ User* DbManager::loadUser(int userId)
     }
 
     QSqlQuery userQuery(m_db);
-    // !!! ОНОВЛЕНО: ДОДАНО REDMINE_TOKEN до SELECT !!!
-    userQuery.prepare("SELECT u.USER_LOGIN, u.USER_FIO, u.IS_ACTIVE, b.TELEGRAM_ID, u.JIRA_TOKEN, u.REDMINE_TOKEN "
+    // !!! ОНОВЛЕНО: ДОДАНО REDMINE_USER_ID до SELECT !!!
+    userQuery.prepare("SELECT u.USER_LOGIN, u.USER_FIO, u.IS_ACTIVE, b.TELEGRAM_ID, u.JIRA_TOKEN, u.REDMINE_TOKEN, u.REDMINE_USER_ID "
                       "FROM USERS u "
                       "LEFT JOIN BOT_PENDING_REQUESTS b ON u.BOT_REQUEST_ID = b.REQUEST_ID "
                       "WHERE u.USER_ID = :id");
@@ -156,6 +156,9 @@ User* DbManager::loadUser(int userId)
     // 2. Читання REDMINE_TOKEN (зашифрований)
     QString redmineToken = userQuery.value(5).toString();
 
+    // !!! НОВЕ: ЧИТАННЯ REDMINE_USER_ID !!!
+    int redmineUserId = userQuery.value("REDMINE_USER_ID").toInt();
+
     // Запит для отримання ролей (існуючий код)
     QStringList roles;
     QSqlQuery rolesQuery(m_db);
@@ -169,8 +172,8 @@ User* DbManager::loadUser(int userId)
         }
     }
 
-    // !!! ОНОВЛЕНО: ВИКЛИК КОНСТРУКТОРА З REDMINE_TOKEN !!!
-    return new User(userId, login, fio, isActive, roles, telegramId, jiraToken, redmineToken);
+    // !!! ОНОВЛЕНО: ВИКЛИК КОНСТРУКТОРА З REDMINE_USER_ID !!!
+    return new User(userId, login, fio, isActive, roles, telegramId, jiraToken, redmineToken, redmineUserId);
 }
 
 
@@ -238,17 +241,21 @@ bool DbManager::updateUser(int userId, const QJsonObject& userData)
 
     // 1. Оновлюємо основні дані в таблиці USERS
     QSqlQuery updateQuery(m_db);
-    // !!! ОНОВЛЕНО: ДОДАНО REDMINE_TOKEN до UPDATE !!!
+    // !!! ОНОВЛЕНО: ДОДАНО REDMINE_TOKEN та REDMINE_USER_ID до UPDATE !!!
     updateQuery.prepare("UPDATE USERS SET "
                         "USER_FIO = :fio, "
                         "IS_ACTIVE = :isActive, "
                         "JIRA_TOKEN = :jiraToken, "
-                        "REDMINE_TOKEN = :redmineToken "
+                        "REDMINE_TOKEN = :redmineToken, "
+                        "REDMINE_USER_ID = :redmineUserId " // <-- ДОДАНО
                         "WHERE USER_ID = :id");
 
     // 2. Обробка та прив'язка токенів (БЕЗ ШИФРУВАННЯ)
     updateQuery.bindValue(":jiraToken", userData["jira_token"].toString());
     updateQuery.bindValue(":redmineToken", userData["redmine_token"].toString());
+
+    // !!! НОВЕ: БІНДИМО REDMINE_USER_ID (якщо воно є в JSON, інакше 0) !!!
+    updateQuery.bindValue(":redmineUserId", userData["redmine_user_id"].toInt());
 
     // Прив'язка існуючих полів
     updateQuery.bindValue(":fio", userData["fio"].toString());
@@ -257,16 +264,6 @@ bool DbManager::updateUser(int userId, const QJsonObject& userData)
 
     if (!updateQuery.exec()) {
         logCritical() << "Failed to update USERS table:" << updateQuery.lastError().text();
-        m_db.rollback();
-        return false;
-    }
-
-    // 3. Оновлення ролей (існуючий код)
-    QSqlQuery deleteRolesQuery(m_db);
-    deleteRolesQuery.prepare("DELETE FROM USER_ROLES WHERE USER_ID = :id");
-    deleteRolesQuery.bindValue(":id", userId);
-    if (!deleteRolesQuery.exec()) {
-        logCritical() << "Failed to delete old roles:" << deleteRolesQuery.lastError().text();
         m_db.rollback();
         return false;
     }
@@ -2479,4 +2476,27 @@ QJsonArray DbManager::getDispenserConfigByTerminal(int clientId, int terminalId)
     }
 
     return finalArray;
+}
+
+/**
+ * @brief Оновлює лише Redmine User ID для існуючого користувача.
+ */
+bool DbManager::updateRedmineUserId(int localUserId, int redmineId)
+{
+    if (!isConnected()) {
+        logCritical() << "Cannot update Redmine ID: no DB connection";
+        return false;
+    }
+
+    QSqlQuery query(m_db);
+    query.prepare("UPDATE USERS SET REDMINE_USER_ID = :redmineId WHERE USER_ID = :localUserId");
+    query.bindValue(":redmineId", redmineId);
+    query.bindValue(":localUserId", localUserId);
+
+    if (!query.exec()) {
+        logCritical() << "DbManager: Failed to update REDMINE_USER_ID for user" << localUserId << ":" << query.lastError().text();
+        return false;
+    }
+    logInfo() << "DbManager: Successfully updated REDMINE_USER_ID to" << redmineId << "for user" << localUserId;
+    return true;
 }

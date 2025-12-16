@@ -1981,3 +1981,136 @@ void ApiClient::onJiraTasksReplyFinished()
 
     reply->deleteLater();
 }
+
+// ApiClient.cpp
+
+// --- РЕАЛІЗАЦІЯ МЕТОДІВ (використовуються Bot'ом) ---
+
+/**
+ * @brief Запит деталей будь-якої задачі (для валідації).
+ */
+void ApiClient::fetchTaskDetails(const QString& tracker, const QString& taskId, qint64 telegramId)
+{
+    logInfo() << "ApiClient: Fetching details for" << tracker << "task ID" << taskId;
+
+    // URL: /api/bot/tasks/details?tracker=redmine&id=12345
+    QUrl url(m_serverUrl + "/api/bot/tasks/details");
+    QUrlQuery query;
+    query.addQueryItem("tracker", tracker);
+    query.addQueryItem("id", taskId);
+    url.setQuery(query);
+
+    QNetworkRequest request = createBotRequest(url, telegramId);
+    QNetworkReply* reply = m_networkManager->get(request);
+
+    reply->setProperty("telegramId", telegramId);
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onTaskDetailsReplyFinished);
+}
+
+/**
+ * @brief Призначає задачу на поточного користувача (Assign-to-Self).
+ */
+void ApiClient::assignTaskToSelf(const QString& tracker, const QString& taskId, qint64 telegramId)
+{
+    logInfo() << "ApiClient: Assigning" << tracker << "task ID" << taskId << "to self.";
+    logDebug() << "API CALL STARTING for details:" << tracker << taskId;
+
+    // URL: /api/bot/tasks/assign
+    QUrl url(m_serverUrl + "/api/bot/tasks/assign");
+    QNetworkRequest request = createBotRequest(url, telegramId);
+
+    // Тіло запиту: {"tracker": "redmine", "id": "12345"}
+    QJsonObject jsonBody;
+    jsonBody["tracker"] = tracker;
+    jsonBody["id"] = taskId;
+
+    QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(jsonBody).toJson());
+
+    reply->setProperty("telegramId", telegramId);
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onAssignTaskReplyFinished);
+
+    logDebug() << "API CALL SUCCESSFULY SENT.";
+}
+
+
+// --- РЕАЛІЗАЦІЯ СЛОТІВ (обробка відповідей) ---
+
+void ApiClient::onTaskDetailsReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    qint64 telegramId = reply->property("telegramId").toLongLong();
+    ApiError error = parseReply(reply);
+
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200) {
+        QJsonObject taskDetails = QJsonDocument::fromJson(error.responseBody).object();
+        // !!! КОРИГОВАНИЙ СИГНАЛ !!!
+        emit taskDetailsFetched(taskDetails, telegramId);
+    } else {
+        emit taskDetailsFetchFailed(error, telegramId);
+    }
+    reply->deleteLater();
+}
+
+void ApiClient::onAssignTaskReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    qint64 telegramId = reply->property("telegramId").toLongLong();
+    ApiError error = parseReply(reply);
+
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200) {
+        QJsonObject response = QJsonDocument::fromJson(error.responseBody).object();
+        // !!! КОРИГОВАНИЙ СИГНАЛ !!!
+        emit assignTaskSuccess(response, telegramId);
+    } else {
+        emit assignTaskFailed(error, telegramId);
+    }
+    reply->deleteLater();
+}
+
+
+/**
+ * @brief Відправляє фінальний звіт (коментар/закриття) по задачі.
+ */
+void ApiClient::reportTask(const QJsonObject& payload, qint64 telegramId)
+{
+    // 1. Формуємо URL
+    QUrl url(m_serverUrl + "/api/bot/tasks/report"); // !!! КОРЕКТНИЙ МАРШРУТ
+
+    // 2. Створюємо авторизований запит для бота
+    QNetworkRequest request = createBotRequest(url, telegramId);
+
+    // 3. Відправляємо POST-запит
+    QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(payload).toJson(QJsonDocument::Compact));
+
+    // Зберігаємо telegramId у властивості відповіді для повернення
+    reply->setProperty("telegramId", telegramId);
+
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onReportTaskReplyFinished);
+}
+
+// ApiClient.cpp (Реалізація нового слота)
+
+void ApiClient::onReportTaskReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    qint64 telegramId = reply->property("telegramId").toLongLong();
+    ApiError error = parseReply(reply);
+
+    QJsonObject response;
+
+    // Успіхом вважаємо 200 OK
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200) {
+        response = QJsonDocument::fromJson(error.responseBody).object();
+        emit reportTaskSuccess(response, telegramId);
+    } else {
+        emit reportTaskFailed(error, telegramId);
+    }
+
+    reply->deleteLater();
+}

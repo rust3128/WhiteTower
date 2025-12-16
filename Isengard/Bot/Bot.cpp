@@ -92,6 +92,19 @@ void Bot::setupConnections()
             this, &Bot::onJiraTasksFetchFailed);
 
 
+    connect(&m_apiClient, &ApiClient::taskDetailsFetched,
+            this, &Bot::onTaskDetailsFetched);
+    connect(&m_apiClient, &ApiClient::taskDetailsFetchFailed,
+            this, &Bot::onTaskDetailsFetchFailed);
+
+    connect(&m_apiClient, &ApiClient::assignTaskSuccess,
+            this, &Bot::onAssignTaskSuccess);
+    connect(&m_apiClient, &ApiClient::assignTaskFailed,
+            this, &Bot::onAssignTaskFailed);
+
+    connect(&m_apiClient, &ApiClient::reportTaskSuccess, this, &Bot::onReportTaskSuccess);
+    connect(&m_apiClient, &ApiClient::reportTaskFailed, this, &Bot::onReportTaskFailed);
+
     logInfo() << "Signal-slot connections established.";
 }
 
@@ -157,6 +170,9 @@ void Bot::setupCallbackHandlers()
     m_reportHandlers["select_task"] = &Bot::handleCallbackReportSelectTask;
     m_reportHandlers["manual_id"] = &Bot::handleCallbackReportManualId;
 
+    m_reportHandlers["type"] = &Bot::handleCallbackReportSelectType;
+//    m_reportHandlers["attach"] = &Bot::handleCallbackReportDone;
+
     logInfo() << "Callback query handlers registered.";
 }
 
@@ -194,8 +210,7 @@ void Bot::onUpdatesReceived(const QJsonArray& updates)
 
             // 2.2. !!! НОВИЙ БЛОК: СТАНИ ЗВІТУ !!!
             if (currentState == UserState::WaitingForManualTaskId ||
-                currentState == UserState::WaitingForComment ||
-                currentState == UserState::WaitingForAttachment)
+                currentState == UserState::WaitingForComment) // <<< СТАН WaitingForAttachment ВИДАЛЕНО
             {
                 // Делегуємо обробку текстового введення або файлів
                 handleReportInput(message);
@@ -209,7 +224,6 @@ void Bot::onUpdatesReceived(const QJsonArray& updates)
         }
     }
 }
-
 /**
  * @brief "МОЗОК". Отримує статус та повідомлення.
  * НЕ обробляє команди, а лише МАРШРУТИЗУЄ за СТАНОМ.
@@ -1500,9 +1514,10 @@ void Bot::onRedmineTasksFetched(const QJsonArray& tasks, qint64 telegramId, int 
     if (m_userState.value(telegramId) == UserState::WaitingForTaskSelection) {
         // Якщо користувач очікує вибору задачі для звіту, викликаємо спеціальний обробник меню
         handleRedmineTaskSelectionForReport(tasks, telegramId);
+        // !!! ДУЖЕ ВАЖЛИВО: СКИДАЄМО СТАН ПІСЛЯ ВИКОНАННЯ !!!
+        m_userState.remove(telegramId);
         return;
     }
-    // !!! КІНЕЦЬ НОВОЇ ЛОГІКИ !!!
 
     QString message;
 
@@ -1584,6 +1599,7 @@ void Bot::onRedmineTasksFetched(const QJsonArray& tasks, qint64 telegramId, int 
     }
 
     m_telegramClient->sendMessage(telegramId, message, true);
+    m_userState.remove(telegramId);
 }
 
 
@@ -1920,16 +1936,14 @@ void Bot::handleRedmineTaskSelectionForReport(const QJsonArray& tasks, qint64 te
     m_telegramClient->sendMessageWithInlineKeyboard(telegramId, messageText, keyboard);
 }
 
-// Bot.cpp (Додайте у кінець файлу)
-
 /**
- * @brief (НОВИЙ) Обробляє вибір задачі за Inline-кнопкою.
- * Переходить до вибору типу звіту.
+ * @brief Обробляє вибір задачі за Inline-кнопкою зі списку призначених.
  * Callback-формат: report:select_task:<tracker>:<taskId>
  */
 void Bot::handleCallbackReportSelectTask(const QJsonObject& query, const QStringList& parts)
 {
     qint64 chatId = query["message"].toObject()["chat"].toObject()["id"].toVariant().toLongLong();
+    qint64 messageId = query["message"].toObject()["message_id"].toVariant().toLongLong();
     QString queryId = query["id"].toString();
 
     if (parts.size() < 4) {
@@ -1942,12 +1956,11 @@ void Bot::handleCallbackReportSelectTask(const QJsonObject& query, const QString
 
     logInfo() << "Report: Task selected via button:" << tracker << "ID:" << taskId;
 
-    // --- ЛОГІКА НАСТУПНОГО КРОКУ ---
-    // 1. Фіксуємо вибраний ID (потрібен новий контекст, наприклад, m_reportContext)
-    // 2. Переходимо до вибору типу звіту (Фаза 3, Крок 9)
     m_telegramClient->answerCallbackQuery(queryId, QString("Обрано задачу %1. Оберіть дію.").arg(taskId));
 
-    // !!! НАСТУПНИЙ КРОК: Реалізувати меню вибору дії (Коментар/Закрити) !!!
+    // 1. !!! УНІФІКАЦІЯ: ВИКЛИКАЄМО showReportMenu !!!
+    // isEdit=true, messageId - редагуємо повідомлення зі списком задач
+    showReportMenu(chatId, taskId, tracker, true, messageId);
 }
 
 /**
@@ -1968,9 +1981,9 @@ void Bot::handleCallbackReportManualId(const QJsonObject& query, const QStringLi
 
     QString tracker = parts.at(2); // redmine або jira
 
-    // --- ЛОГІКА НАСТУПНОГО КРОКУ ---
     // 1. Встановлюємо стан очікування ручного введення
     m_userState[chatId] = UserState::WaitingForManualTaskId;
+    startSessionTimeout(chatId);
 
     // 2. Редагуємо повідомлення, щоб прибрати кнопки і попросити ID
     QString messageText = QString("🔢 <b>Введіть, будь ласка, повний ID задачі (%1):</b>")
@@ -1989,11 +2002,46 @@ void Bot::handleCallbackReportManualId(const QJsonObject& query, const QStringLi
  */
 void Bot::handleReportInput(const QJsonObject& message)
 {
+
+
     qint64 chatId = message["from"].toObject()["id"].toVariant().toLongLong();
+    stopSessionTimeout(chatId);
+    // Використовуємо message["text"].toString().trimmed() лише для текстових вводів
     QString text = message["text"].toString().trimmed();
     UserState currentState = m_userState.value(chatId);
 
-    // --- ОБРОБКА ВВЕДЕННЯ ID ЗАДАЧІ (Фаза 2.Б) ---
+
+    // --- УНІВЕРСАЛЬНА ПЕРЕВІРКА І СКИДАННЯ СТАНУ ---
+    if (currentState == UserState::WaitingForManualTaskId ||
+        currentState == UserState::WaitingForComment)
+    {
+        // Перевіряємо, чи це команда або кнопка головного меню
+        bool isCommand = text.startsWith("/") ||
+                         text.contains("Допомога") ||
+                         text.contains("Мої задачі") ||
+                         text.contains("Створити звіт") ||
+                         text.contains("Клієнти") ||
+                         text.contains("Адмін:");
+
+        if (isCommand) {
+            logWarning() << "Report: Command detected (" << text << ") while waiting for input. Resetting dialogue.";
+
+            // 1. Скидаємо стан
+            m_userState.remove(chatId);
+            m_reportContext.remove(chatId);
+
+            // 2. Інформуємо користувача
+            m_telegramClient->sendMessage(chatId, "⚠️ Діалог звітування скасовано.");
+
+            // 3. НЕГАЙНО ПЕРЕХОДИМО ДО ОБРОБКИ КОМАНДИ (Етап 3 у onUpdatesReceived)
+            // Викликаємо перевірку статусу, що призведе до виконання команди.
+            m_apiClient.checkBotUserStatus(message);
+
+            return; // Виходимо, щоб уникнути подальшої обробки
+        }
+    }
+
+    // --- 1. ОБРОБКА ВВЕДЕННЯ ID ЗАДАЧІ ---
     if (currentState == UserState::WaitingForManualTaskId) {
         logInfo() << "Report: Received manual Task ID input:" << text;
 
@@ -2003,96 +2051,425 @@ void Bot::handleReportInput(const QJsonObject& message)
         }
 
         // 1. Зберігаємо ID задачі в контексті
-        // !!! ВИПРАВЛЕНО: Використовуємо m_reportContext !!!
         m_reportContext[chatId]["taskId"] = text;
 
         // 2. Встановлюємо стан очікування відповіді API
-        // !!! ВИПРАВЛЕНО: Використовуємо новий, коректний стан ValidatingTask !!!
         m_userState[chatId] = UserState::ValidatingTask;
 
-        // 3. Визначаємо трекер
+        // 3. Визначаємо трекер (трекер вже має бути збережений у m_userClientContext)
         int trackerType = m_userClientContext.value(chatId);
-
-        // 4. API-виклик для валідації (поки що заглушка)
-
         QString selectedTracker = (trackerType == 1) ? "redmine" : "jira";
+
+        // 4. API-виклик для валідації
+        m_apiClient.fetchTaskDetails(selectedTracker, text, chatId);
+
+        // 5. Надсилаємо користувачеві підтвердження
         QString response = QString("Проводиться валідація задачі <b>%1</b> (%2)...")
                                .arg(text)
                                .arg(selectedTracker);
 
         m_telegramClient->sendMessage(chatId, response);
 
-        // !!! ТУТ МАЄ БУТИ ВИКЛИК API:
-        // m_apiClient.fetchTaskDetails(selectedTracker, text, chatId);
-        // !!!
-
         return;
     }
 
-    // ... (інші обробники станів)
+    // --- 2. ОБРОБКА ВВЕДЕННЯ КОМЕНТАРЯ/РІШЕННЯ ---
+    if (currentState == UserState::WaitingForComment) {
+        logInfo() << "Report: Received comment text, finalizing report.";
+
+        // У цьому стані очікується ТЕКСТ.
+        if (text.isEmpty()) {
+            m_telegramClient->sendMessage(chatId, "❌ Текст коментаря/рішення не може бути порожнім. Введіть, будь ласка, текст.");
+            return; // Залишаємо у поточному стані
+        }
+
+        // 1. Фіксуємо текст у контексті
+        m_reportContext[chatId]["commentText"] = text;
+
+        // 2. Збираємо фінальний JSON для API
+        QVariantMap reportData = m_reportContext[chatId];
+        QString taskId = reportData["taskId"].toString();
+        QString tracker = reportData["tracker"].toString();
+        QString reportType = reportData["reportType"].toString();
+
+        QJsonObject payload;
+        payload["tracker"] = tracker;
+        payload["taskId"] = taskId;
+        payload["action"] = reportType;
+        payload["comment"] = text;
+        // payload["attachments"] - НЕ ВКЛЮЧАЄМО, Оскільки вони не підтримуються
+
+        // 3. Інформуємо користувача та викликаємо API
+        QString actionName = (reportType == "close") ? "закриття" : "коментар";
+        m_telegramClient->sendMessage(chatId,
+                                      QString("🚀 Відправляю звіт (%1) по задачі <b>%2</b>...").arg(actionName, taskId));
+
+        // !!! ВИКЛИК API ДЛЯ ВІДПРАВКИ ЗВІТУ !!!
+        m_apiClient.reportTask(payload, chatId);
+
+        // 4. Встановлюємо стан очікування відповіді від сервера
+        m_userState[chatId] = UserState::ValidatingTask;
+        return;
+    }
+
+    // --- 3. ОБРОБКА НЕОЧІКУВАНИХ ВВЕДЕНЬ/ФАЙЛІВ ---
+    // Якщо користувач надсилає фото, коли очікується команда
+    if (message.contains("photo") || message.contains("document")) {
+        m_telegramClient->sendMessage(chatId, "❌ Обробка вкладень не підтримується. Будь ласка, оберіть команду з меню.");
+        return;
+    }
 }
 
 
-// Bot.cpp (Нові слоти для обробки деталей/валідації задачі)
+// Bot.cpp (onTaskDetailsFetched)
 
 /**
- * @brief (НОВИЙ СЛОТ) Успішно отримано деталі задачі (валідація пройшла успішно).
- * Завдання: Підтвердити валідацію, виконати призначення на себе і перейти до вибору дії.
+ * @brief Успішно отримано деталі задачі (валідація пройшла успішно).
  */
 void Bot::onTaskDetailsFetched(const QJsonObject& taskDetails, qint64 telegramId)
 {
     if (telegramId == 0) return;
 
-    // 1. Отримуємо ID задачі з контексту
+
+
+    // 1. Отримуємо ID задачі та трекер з контексту
     QString taskId = m_reportContext[telegramId]["taskId"].toString();
     int trackerType = m_userClientContext.value(telegramId);
-    QString trackerPrefix = (trackerType == 1) ? "Redmine" : "Jira";
+    QString selectedTracker = (trackerType == 1) ? "redmine" : "jira"; // Використовуємо нижній регістр для API
 
-    // 2. Встановлюємо стан очікування призначення
-    m_userState[telegramId] = UserState::WaitingForAssignment; // Новий тимчасовий стан
-
-    // 3. Формуємо повідомлення
+    // 2. Формуємо повідомлення про початок призначення
     QString subject = taskDetails.contains("subject") ? taskDetails["subject"].toString() : taskDetails["summary"].toString();
-    QString status = taskDetails["status"].toObject()["name"].toString();
+    QString statusName = taskDetails["status"].toObject()["name"].toString();
 
-    QString messageText = QString("? Задача <b>%1</b> (%2) знайдена:\n"
+    QString messageText = QString("✅ Задача <b>%1</b> (%2) знайдена:\n"
                                   "   Тема: %3\n"
                                   "   Статус: %4\n"
-                                  "   <b>Проводиться призначення на вас...</b>")
+                                  "   <b>Проводиться призначення задачі на вас...</b>")
                               .arg(taskId)
-                              .arg(trackerPrefix)
+                              .arg(selectedTracker.toUpper())
                               .arg(escapeHtml(subject.simplified()))
-                              .arg(status);
+                              .arg(statusName);
 
     m_telegramClient->sendMessage(telegramId, messageText);
 
-    // !!! НАСТУПНИЙ КРОК: API-виклик для призначення на себе !!!
-    // m_apiClient.assignTaskToSelf(trackerPrefix, taskId, telegramId);
-    // !!!
+    // 3. Змінюємо стан на очікування призначення
+    m_userState[telegramId] = UserState::WaitingForAssignment;
+    stopSessionTimeout(telegramId);
+    // 4. !!! API-виклик для призначення на себе !!!
+    m_apiClient.assignTaskToSelf(selectedTracker, taskId, telegramId);
 }
 
 /**
- * @brief (НОВИЙ СЛОТ) Помилка отримання деталей задачі (валідація провалилася).
- * Завдання: Повідомити про помилку і повернути у стан ручного введення ID.
+ * @brief Помилка отримання деталей задачі (валідація провалилася).
  */
 void Bot::onTaskDetailsFetchFailed(const ApiError& error, qint64 telegramId)
 {
     if (telegramId == 0) return;
 
+    QString taskId = m_reportContext[telegramId]["taskId"].toString();
     // 1. Скидаємо стан до очікування нового ID
     m_userState[telegramId] = UserState::WaitingForManualTaskId;
+    startSessionTimeout(telegramId);
 
     QString selectedTracker = (m_userClientContext.value(telegramId) == 1) ? "Redmine" : "Jira";
+    QString trackerPrefix = (selectedTracker == "Redmine") ? "redmine" : "jira";
 
-    QString errorMessage = QString("? Помилка валідації задачі %1:\n"
-                                   "   %2 (HTTP %3).\n"
-                                   "   Введіть коректний ID задачі ще раз.")
-                               .arg(selectedTracker)
+    // --- ФОРМУВАННЯ ПОВІДОМЛЕННЯ ТА КЛАВІАТУРИ ---
+
+    QString errorMessage;
+
+    // --- ПРИХОВУЄМО ТЕХНІЧНІ ДЕТАЛІ (ВИПРАВЛЕННЯ ТУТ) ---
+
+    // Сценарій 1: Найбільш ймовірно, задача закрита, неіснує або доступ заборонено
+    if (error.httpStatusCode == 400 || error.httpStatusCode == 403 || error.httpStatusCode == 404) {
+
+        // Використовуємо лише зрозумілий текст помилки, який прийшов від сервера (error.errorString)
+        // Якщо errorString містить технічні деталі (Network error), ми його просто ігноруємо
+
+        QString userFriendlyError = "Задача не знайдена, вже закрита або у вас немає доступу.";
+
+        // Якщо сервер повернув більш детальну помилку у errorString (що очікується)
+        if (!error.errorString.isEmpty() && !error.errorString.contains("Network error", Qt::CaseInsensitive)) {
+            userFriendlyError = error.errorString;
+        }
+
+        errorMessage = QString("❌ Задача <b>%1</b> (%2) не може бути взята в роботу:\n"
+                               "   %3 (HTTP %4).\n"
+                               "   Можливо, вона вже закрита або не призначена на вас.")
+                           .arg(taskId)
+                           .arg(selectedTracker.toUpper())
+                           .arg(userFriendlyError)
+                           .arg(error.httpStatusCode);
+
+    } else {
+        // Сценарій 2: Загальна помилка сервера (наприклад, 5xx)
+        errorMessage = QString("❌ Виникла помилка на сервері при валідації задачі %1:\n"
+                               "   %2 (HTTP %3).")
+                           .arg(selectedTracker)
+                           .arg(error.errorString) // Тут можна залишити errorString для діагностики 5хх
+                           .arg(error.httpStatusCode);
+    }
+
+    errorMessage += "\n\nВведіть коректний ID задачі ще раз.";
+
+    // --- КНОПКА З ПОСИЛАННЯМ НА ЗАДАЧУ ---
+
+    QJsonObject keyboard;
+    QJsonArray rows;
+    QJsonArray row1;
+
+    // Визначення базового URL для посилання
+    QString baseUrl;
+    if (trackerPrefix == "redmine") {
+        baseUrl = AppParams::instance().getParam("Global", "RedmineBaseUrl").toString();
+    }
+
+    if (!baseUrl.isEmpty()) {
+        QString issueUrl = (trackerPrefix == "redmine")
+        ? baseUrl + "/issues/" + taskId
+        : baseUrl;
+
+        row1.append(QJsonObject{
+            {"text", QString("➡️ Перейти до задачі %1").arg(taskId)},
+            {"url", issueUrl} // Кнопка-посилання (url button)
+        });
+        rows.append(row1);
+        keyboard["inline_keyboard"] = rows;
+
+        m_telegramClient->sendMessageWithInlineKeyboard(telegramId, errorMessage, keyboard);
+    } else {
+        // Якщо URL не налаштований, шлемо повідомлення без кнопки
+        m_telegramClient->sendMessage(telegramId, errorMessage);
+    }
+
+    // Очищуємо кеш задачі
+    m_reportContext.remove(telegramId);
+}
+
+
+/**
+ * @brief Успішне призначення задачі на себе.
+ * Перехід до вибору типу звіту (Коментар/Закрити).
+ */
+void Bot::onAssignTaskSuccess(const QJsonObject& response, qint64 telegramId)
+{
+    QString taskId = m_reportContext[telegramId]["taskId"].toString();
+    QString tracker = m_reportContext[telegramId]["tracker"].toString();
+
+    // 1. Повідомляємо про успіх
+    m_telegramClient->sendMessage(telegramId,
+                                  QString("✅ Задачу <b>%1</b> успішно взято в роботу!").arg(taskId));
+
+    // 2. !!! УНІФІКАЦІЯ: ВИКЛИКАЄМО showReportMenu !!!
+    // isEdit=false, messageId=0 - надсилаємо нове повідомлення
+    showReportMenu(telegramId, taskId, tracker, false, 0);
+}
+
+/**
+ * @brief Помилка призначення задачі на себе.
+ * Скидаємо стан.
+ */
+void Bot::onAssignTaskFailed(const ApiError& error, qint64 telegramId)
+{
+    if (telegramId == 0) return;
+
+    stopSessionTimeout(telegramId);
+    // Скидаємо стан, оскільки процес застопорився
+    m_userState.remove(telegramId);
+    m_reportContext.remove(telegramId);
+
+    QString errorMessage = QString("❌ Помилка призначення задачі на себе:\n"
+                                   "   %1 (HTTP %2). Скидання діалогу.")
                                .arg(error.errorString)
                                .arg(error.httpStatusCode);
 
     m_telegramClient->sendMessage(telegramId, errorMessage);
+}
 
-    // Очищуємо кеш задачі
+
+/**
+ * @brief Показує меню звіту (Коментар / Закрити) і фіксує контекст.
+ * @param isEdit Якщо true, редагує messageId (для callback'ів).
+ */
+void Bot::showReportMenu(qint64 chatId, const QString& taskId, const QString& tracker, bool isEdit, qint64 messageId)
+{
+    // 1. Встановлюємо стан очікування типу звіту (повертаємося до WaitingForTaskSelection)
+    // або використовуємо TaskValidated, якщо він існує.
+    m_userState[chatId] = UserState::WaitingForTaskSelection;
+
+    // 2. Фіксуємо контекст звіту, якщо ще не зафіксовано/не оновлено
+    m_reportContext[chatId]["taskId"] = taskId;
+    m_reportContext[chatId]["tracker"] = tracker;
+
+    QJsonObject keyboard;
+    QJsonArray rows;
+
+    // Кнопки звітування. Callback-формат: report:type:<type>:<id>
+    rows.append(QJsonArray{
+        QJsonObject{{"text", "💬 Додати коментар"}, {"callback_data", QString("report:type:comment:%1").arg(taskId)}}
+    });
+
+    rows.append(QJsonArray{
+        QJsonObject{{"text", "✅ Закрити з рішенням"}, {"callback_data", QString("report:type:close:%1").arg(taskId)}}
+    });
+
+    keyboard["inline_keyboard"] = rows;
+
+    QString messageText = QString("<b>Оберіть тип звіту для задачі %1:</b>").arg(taskId);
+
+    if (isEdit) {
+        // Редагуємо повідомлення, яке відображало список задач або статус
+        m_telegramClient->editMessageText(chatId, messageId, messageText, keyboard, false);
+    } else {
+        // Надсилаємо нове повідомлення (як після onAssignTaskSuccess)
+        m_telegramClient->sendMessageWithInlineKeyboard(chatId, messageText, keyboard);
+    }
+}
+
+/**
+ * @brief Обробляє вибір типу звіту (Коментар / Закрити).
+ * Callback-формат: report:type:<type>:<id>
+ */
+void Bot::handleCallbackReportSelectType(const QJsonObject& query, const QStringList& parts)
+{
+    qint64 chatId = query["message"].toObject()["chat"].toObject()["id"].toVariant().toLongLong();
+    qint64 messageId = query["message"].toObject()["message_id"].toVariant().toLongLong();
+    QString queryId = query["id"].toString();
+
+    if (parts.size() < 4) {
+        m_telegramClient->answerCallbackQuery(queryId, "Некоректний запит.");
+        return;
+    }
+
+    QString reportType = parts.at(2); // "comment" або "close"
+    QString taskId = parts.at(3); // ID з callback
+
+    // 1. Фіксуємо тип звіту в контексті
+    m_reportContext[chatId]["reportType"] = reportType;
+
+    // 2. Встановлюємо стан очікування коментаря
+    m_userState[chatId] = UserState::WaitingForComment;
+    startSessionTimeout(chatId);
+
+    // 3. Редагуємо повідомлення та просимо ввести коментар
+    QString actionName = (reportType == "close") ? "рішення" : "коментаря";
+    QString messageText = QString("✍️ Введіть, будь ласка, текст %1 для задачі <b>%2</b>.")
+                              .arg(actionName)
+                              .arg(taskId);
+
+    // Видаляємо inline клавіатуру, оскільки очікуємо текст
+    m_telegramClient->editMessageText(chatId, messageId, messageText, QJsonObject(), false);
+    m_telegramClient->answerCallbackQuery(queryId, QString("Обрано %1.").arg(reportType));
+}
+
+
+
+
+/**
+ * @brief Успішно відправлено звіт (коментар/закриття).
+ */
+void Bot::onReportTaskSuccess(const QJsonObject& response, qint64 telegramId)
+{
+    QString taskId = m_reportContext[telegramId]["taskId"].toString();
+    QString action = m_reportContext[telegramId]["reportType"].toString();
+
+    QString statusMessage = (action == "close")
+                                ? QString("✅ Задача <b>%1</b> успішно закрита!").arg(taskId)
+                                : QString("✅ Коментар до задачі <b>%1</b> успішно додано!").arg(taskId);
+
+    m_telegramClient->sendMessage(telegramId, statusMessage);
+    stopSessionTimeout(telegramId);
+    // Очищаємо контекст та скидаємо стан
+    m_userState.remove(telegramId);
     m_reportContext.remove(telegramId);
+}
+
+/**
+ * @brief Помилка відправки звіту.
+ */
+void Bot::onReportTaskFailed(const ApiError& error, qint64 telegramId)
+{
+    QString taskId = m_reportContext[telegramId]["taskId"].toString();
+
+    QString errorMessage = QString("❌ Помилка відправки звіту по задачі <b>%1</b>:\n"
+                                   "   %2 (HTTP %3).")
+                               .arg(taskId)
+                               .arg(error.errorString)
+                               .arg(error.httpStatusCode);
+
+    m_telegramClient->sendMessage(telegramId, errorMessage);
+    stopSessionTimeout(telegramId);
+    // Після помилки очищаємо контекст
+    m_userState.remove(telegramId);
+    m_reportContext.remove(telegramId);
+}
+
+
+// Bot.cpp (Додайте в кінець файлу або в розділ приватних методів)
+
+/**
+ * @brief Запускає 5-хвилинний таймер для сесії користувача.
+ */
+void Bot::startSessionTimeout(qint64 telegramId)
+{
+    stopSessionTimeout(telegramId); // Зупиняємо попередній, якщо він був
+
+    QTimer* timer = new QTimer(this);
+    // Встановлюємо таймаут на 5 хвилин (300 000 мілісекунд)
+    const int TIMEOUT_MS = 300000;
+    timer->setInterval(TIMEOUT_MS);
+    timer->setSingleShot(true); // Таймер спрацює лише один раз
+
+    // Зберігаємо ID користувача у властивості таймера, щоб ідентифікувати його в слоті
+    timer->setProperty("telegramId", telegramId);
+
+    // Підключаємо до нашого загального обробника
+    connect(timer, &QTimer::timeout, this, &Bot::handleSessionTimeout);
+
+    m_sessionTimers[telegramId] = timer;
+    timer->start();
+    logDebug() << "Session timeout started for user:" << telegramId;
+}
+
+/**
+ * @brief Зупиняє та видаляє таймер сесії користувача.
+ */
+void Bot::stopSessionTimeout(qint64 telegramId)
+{
+    if (m_sessionTimers.contains(telegramId)) {
+        QTimer* timer = m_sessionTimers.take(telegramId);
+        timer->stop();
+        timer->deleteLater();
+        logDebug() << "Session timeout stopped and deleted for user:" << telegramId;
+    }
+}
+
+/**
+ * @brief Скидає стан користувача, очищує контекст та повідомляє його.
+ */
+void Bot::resetSession(qint64 telegramId, const QString& reason)
+{
+    stopSessionTimeout(telegramId);
+    m_userState.remove(telegramId);
+    m_reportContext.remove(telegramId);
+
+    // Надсилаємо повідомлення користувачеві
+    m_telegramClient->sendMessage(telegramId,
+                                  QString("❌ Сесія звітування скасована. Причина: <b>%1</b>.").arg(reason));
+
+    logInfo() << "Session reset for user:" << telegramId << "due to:" << reason;
+}
+
+/**
+ * @brief Слот, який спрацьовує, коли час очікування вичерпано.
+ */
+void Bot::handleSessionTimeout()
+{
+    QTimer* timer = qobject_cast<QTimer*>(sender());
+    if (!timer) return;
+
+    qint64 telegramId = timer->property("telegramId").toLongLong();
+
+    // Скидаємо сесію
+    resetSession(telegramId, "Таймаут неактивності (5 хвилин)");
 }

@@ -2,8 +2,9 @@
 #define BOT_H
 
 #include <QObject>
-#include "Oracle/ApiClient.h" // Включаємо для ApiError
-#include <QMap>               // <-- ДОДАНО (для QMap)
+#include "Oracle/ApiClient.h"
+#include <QMap>
+#include <QTimer>
 
 class TelegramClient;
 class ApiClient;
@@ -66,7 +67,13 @@ private slots:
     void onTaskDetailsFetched(const QJsonObject& taskDetails, qint64 telegramId);
     void onTaskDetailsFetchFailed(const ApiError& error, qint64 telegramId);
 
+    void onAssignTaskSuccess(const QJsonObject& response, qint64 telegramId);
+    void onAssignTaskFailed(const ApiError& error, qint64 telegramId);
 
+    void onReportTaskSuccess(const QJsonObject& response, qint64 telegramId);
+    void onReportTaskFailed(const ApiError& error, qint64 telegramId);
+
+    void handleSessionTimeout();
 
 private:
     // Тип-вказівник на метод-обробник
@@ -134,6 +141,18 @@ private:
 
     void handleReportInput(const QJsonObject& message);
 
+    /**
+     * @brief Показує меню звіту (Коментар / Закрити) і фіксує контекст.
+     */
+    void showReportMenu(qint64 chatId, const QString& taskId, const QString& tracker, bool isEdit = false, qint64 messageId = 0);
+    void handleCallbackReportSelectType(const QJsonObject& query, const QStringList& parts);
+
+//    void handleCallbackReportDone(const QJsonObject& query, const QStringList& parts);
+
+    void startSessionTimeout(qint64 telegramId);
+    void stopSessionTimeout(qint64 telegramId);
+    void resetSession(qint64 telegramId, const QString& reason);
+
 private:
     enum class UserState {
         None,
@@ -141,9 +160,9 @@ private:
         WaitingForReportInit,          // Очікування вибору трекера (Redmine/Jira)
         WaitingForTaskSelection,       // Очікування вибору задачі зі списку (або ручного введення)
         WaitingForManualTaskId,        // Очікування ручного введення ID задачі
-        WaitingForReportType,          // Очікування вибору дії (Коментар/Закрити)
+//        WaitingForReportType,          // Очікування вибору дії (Коментар/Закрити)
         WaitingForComment,             // Очікування тексту коментаря
-        WaitingForAttachment,          // Очікування фотозвіту
+//        WaitingForAttachment,          // Очікування фотозвіту
         ValidatingTask,                // Очікування відповіді API на валідацію ID
         WaitingForAssignment,
     };
@@ -161,6 +180,8 @@ private:
     QMap<QString, CallbackHandler> m_stationHandlers;  // "station:map", "station:stub"
     QMap<QString, CallbackHandler> m_tasksHandlers;    // МАПА ДЛЯ ОБРОБКИ ЗАПИТІВ ЗАДАЧ (tasks:show)
     QMap<QString, CallbackHandler> m_reportHandlers;
+    // QMap<telegramId, QTimer*> - зберігає таймер для кожного активного користувача
+    QMap<qint64, QTimer*> m_sessionTimers;
 
     QMap<QString, CommandHandler> m_userCommandHandlers;
     QMap<QString, CommandHandler> m_adminCommandHandlers;

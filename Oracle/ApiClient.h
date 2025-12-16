@@ -87,10 +87,7 @@ public:
 
     // Запит на отримання резервуарів
     void fetchStationTanks(int clientId, int terminalId, qint64 telegramId = 0);
-///////////////////////////////////
-    // Новий  бредовий метод для отримання конфігурації ТРК
- //   void dispenserConfigReceived(const QJsonArray& config, int clientId, int terminalId, qint64 telegramId);
-    // для ПРК
+
     void fetchDispenserConfig(int clientId, int terminalId, qint64 telegramId = 0);
 
     /**
@@ -110,6 +107,27 @@ public:
      * @param telegramId ID користувача Telegram.
      */
     void fetchJiraTasks(qint64 telegramId);
+
+    /**
+     * @brief Запит деталей будь-якої задачі (для валідації).
+     * @param tracker 'redmine' або 'jira'.
+     * @param taskId ID або ключ задачі.
+     */
+    void fetchTaskDetails(const QString& tracker, const QString& taskId, qint64 telegramId);
+
+    /**
+     * @brief Призначає задачу на поточного користувача ( Assign-to-Self ).
+     * @param tracker 'redmine' або 'jira'.
+     * @param taskId ID або ключ задачі.
+     */
+    void assignTaskToSelf(const QString& tracker, const QString& taskId, qint64 telegramId);
+
+    /**
+     * @brief Відправляє фінальний звіт (коментар/закриття) по задачі.
+     * @param payload QJsonObject із даними (tracker, taskId, action, comment, attachments).
+     * @param telegramId ID користувача для X-Telegram-ID.
+     */
+    void reportTask(const QJsonObject& payload, qint64 telegramId);
 
 signals:
     // Сигнали для логіну
@@ -252,6 +270,16 @@ signals:
     void jiraTasksFetched(const QJsonArray& tasks, qint64 telegramId = 0);
     void jiraTasksFetchFailed(const ApiError& error, qint64 telegramId = 0);
 
+
+    void taskDetailsFetched(const QJsonObject& taskDetails, qint64 telegramId);
+    void taskDetailsFetchFailed(const ApiError& error, qint64 telegramId);
+
+    void assignTaskSuccess(const QJsonObject& response, qint64 telegramId);
+    void assignTaskFailed(const ApiError& error, qint64 telegramId);
+
+    void reportTaskSuccess(const QJsonObject& response, qint64 telegramId);
+    void reportTaskFailed(const ApiError& error, qint64 telegramId);
+
 private slots:
     void onLoginReplyFinished();
     void onUsersReplyFinished();
@@ -308,6 +336,11 @@ private slots:
 
     // СЛОТ ДЛЯ JIRA
     void onJiraTasksReplyFinished();
+
+    void onTaskDetailsReplyFinished();
+    void onAssignTaskReplyFinished();
+
+    void onReportTaskReplyFinished();
 private:
     ApiClient(QObject* parent = nullptr);
     ~ApiClient() = default;

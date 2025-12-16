@@ -3,9 +3,11 @@
 #include <QJsonArray>
 
 User::User(int id, QString login, QString fio, bool isActive, QStringList roles,
-           qint64 telegramId, const QString& jiraToken, const QString& redmineToken)
+           qint64 telegramId, const QString& jiraToken, const QString& redmineToken,
+           int redmineUserId) // ДОДАНО redmineUserId
     : m_id(id), m_login(login), m_fio(fio), m_isActive(isActive), m_roles(roles),
-    m_telegramId(telegramId), m_jiraToken(jiraToken), m_redmineToken(redmineToken)
+    m_telegramId(telegramId), m_jiraToken(jiraToken), m_redmineToken(redmineToken),
+    m_redmineUserId(redmineUserId) // Ініціалізація нового поля
 {
 }
 
@@ -17,6 +19,8 @@ const QStringList& User::roles() const { return m_roles; }
 qint64 User::telegramId() const { return m_telegramId; }
 const QString& User::jiraToken() const { return m_jiraToken; }
 const QString& User::redmineToken() const { return m_redmineToken; }
+int User::redmineUserId() const { return m_redmineUserId; }
+void User::setRedmineUserId(int id) { m_redmineUserId = id; }
 
 bool User::isAdmin() const
 {
@@ -39,6 +43,7 @@ QJsonObject User::toJson() const
     json["telegram_id"] = m_telegramId; // Додано
     json["jira_token"] = m_jiraToken;   // Додано
     json["redmine_token"] = m_redmineToken;
+    json["redmine_user_id"] = m_redmineUserId;
     return json;
 }
 
@@ -54,6 +59,7 @@ User* User::fromJson(const QJsonObject& json)
     qint64 telegranId = json["telegram_id"].toInt();
     QString jiraToken = json["jira_token"].toString();
     QString redmineToken = json["redmine_token"].toString();
+    int redmineUserId = json.value("redmine_user_id").toInt();
 
     QStringList roles;
     if (json.contains("roles") && json["roles"].isArray()) {
@@ -61,5 +67,5 @@ User* User::fromJson(const QJsonObject& json)
             roles.append(val.toString());
         }
     }
-    return new User(id, login, fio, isActive, roles, telegranId, jiraToken, redmineToken);
+    return new User(id, login, fio, isActive, roles, telegranId, jiraToken, redmineToken, redmineUserId);
 }

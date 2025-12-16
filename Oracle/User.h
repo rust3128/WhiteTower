@@ -9,7 +9,8 @@ class User
 {
 public:
     User(int id, QString login, QString fio, bool isActive, QStringList roles,
-         qint64 telegramId, const QString& jiraToken, const QString& redmineToken);
+         qint64 telegramId, const QString& jiraToken, const QString& redmineToken,
+         int redmineUserId = 0); // ДОДАНО redmineUserId, за замовчуванням 0
 
     int id() const;
     const QString& login() const;
@@ -23,6 +24,8 @@ public:
     const QString& jiraToken() const;
     const QString& redmineToken() const;
     bool isAdmin() const;
+    int redmineUserId() const;
+    void setRedmineUserId(int id);
 private:
     int m_id;
     QString m_login;
@@ -32,6 +35,7 @@ private:
     qint64 m_telegramId;
     QString m_jiraToken;
     QString m_redmineToken;
+    int m_redmineUserId;
 };
 
 #endif // USER_H

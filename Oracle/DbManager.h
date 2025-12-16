@@ -84,6 +84,13 @@ public:
 
     // Отримати конфігурацію ПРК
     QJsonArray getDispenserConfigByTerminal(int clientId, int terminalId);
+    /**
+     * @brief Оновлює лише Redmine User ID для існуючого користувача.
+     * @param localUserId Локальний ID користувача (з нашої БД).
+     * @param redmineId Справжній числовий ID Redmine.
+     * @return true у разі успіху.
+     */
+    bool updateRedmineUserId(int localUserId, int redmineId);
 
 private:
     DbManager(); // Конструктор тепер приватний
