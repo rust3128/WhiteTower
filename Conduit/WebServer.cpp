@@ -1452,10 +1452,9 @@ QHttpServerResponse WebServer::handleGetJiraTasks(const QHttpServerRequest &requ
 {
     logRequest(request);
 
-    // --- 1. АУТЕНТИФІКАЦІЯ БОТА ---
+    // --- 1. АУТЕНТИФІКАЦІЯ БОТА (Без змін) ---
     User* user = authenticateRequest(request);
     if (!user) {
-        delete user;
         return createTextResponse("Unauthorized", QHttpServerResponse::StatusCode::Unauthorized);
     }
 
@@ -1465,13 +1464,14 @@ QHttpServerResponse WebServer::handleGetJiraTasks(const QHttpServerRequest &requ
         return createTextResponse("Invalid bot request context (missing telegramId).", QHttpServerResponse::StatusCode::BadRequest);
     }
 
-    // --- 2. ОТРИМАННЯ ПАРАМЕТРІВ ПІДКЛЮЧЕННЯ ---
+    // --- ДОДАНО: Перевірка наявності terminalId у запиті ---
+    QUrlQuery query(request.url());
+    int terminalId = query.queryItemValue("terminalId").toInt();
+    // ----------------------------------------------------
+
+    // --- 2. ОТРИМАННЯ ПАРАМЕТРІВ ПІДКЛЮЧЕННЯ (Без змін) ---
     const QString jiraBaseUrl = AppParams::instance().getParam("Global", "JiraBaseUrl").toString();
-
-    // ВИКОРИСТОВУЄМО КОРЕКТНИЙ МЕТОД З User.h: jiraToken()
     const QString jiraTokenEncrypted = user->jiraToken();
-
-    // ВИКОРИСТОВУЄМО ЛОКАЛЬНИЙ ЛОГІН (login()) ДЛЯ ФІЛЬТРАЦІЇ В JQL
     const QString jiraLogin = user->login();
 
     if (jiraBaseUrl.isEmpty() || jiraTokenEncrypted.isEmpty() || jiraLogin.isEmpty()) {
@@ -1482,68 +1482,62 @@ QHttpServerResponse WebServer::handleGetJiraTasks(const QHttpServerRequest &requ
         return createJsonResponse(errorBody, QHttpServerResponse::StatusCode::Forbidden);
     }
 
-    // Розшифровуємо токен
+    // Розшифровуємо токен (Без змін)
     QString jiraUserToken;
     try {
         jiraUserToken = CriptPass::instance().decriptPass(jiraTokenEncrypted);
     } catch (const std::exception& e) {
         logCritical() << "Failed to decrypt Jira API Token for user" << user->id() << ". Error:" << e.what();
         delete user;
-        QJsonObject errorBody;
-        errorBody["error"] = "Failed to decrypt Jira API Token.";
-        return createJsonResponse(errorBody, QHttpServerResponse::StatusCode::InternalServerError);
+        return createJsonResponse(QJsonObject{{"error", "Failed to decrypt Jira API Token."}}, QHttpServerResponse::StatusCode::InternalServerError);
     }
 
     // --- 3. ЗАПИТ ДО ЗОВНІШНЬОГО API (JIRA) ---
     QJsonArray tasksArray;
     ApiError clientError;
-
-    // Використовуємо існуючий JiraClient з Oracle/
     JiraClient jiraClient;
+    QNetworkReply* reply = nullptr;
 
-    // Викликаємо метод, який здійснює прямий запит до Jira API
-    // Передаємо BaseUrl, Логін (для JQL) та Розшифрований Токен (для Bearer Auth)
-    // !!! JIRA CLIENT ТЕПЕР ПОВИНЕН ФОРМУВАТИ POST-ЗАПИТ З BEARER TOKEN !!!
-    QNetworkReply* reply = jiraClient.fetchIssues(jiraBaseUrl, jiraLogin, jiraUserToken);
+    // --- РОЗГАЛУЖЕННЯ: Пошук по АЗС або список призначених задач ---
+    if (terminalId > 0) {
+        logInfo() << "Server: Searching Jira issues for terminal:" << terminalId;
+        // Викликаємо ваш новий метод пошуку
+        reply = jiraClient.searchIssuesByTerminal(jiraBaseUrl, terminalId, jiraUserToken);
+    } else {
+        logInfo() << "Server: Fetching assigned issues for user:" << jiraLogin;
+        // Викликаємо стандартний метод отримання призначених задач
+        reply = jiraClient.fetchIssues(jiraBaseUrl, jiraLogin, jiraUserToken);
+    }
 
     if (reply) {
-        // Синхронне очікування відповіді
         QEventLoop loop;
         connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
         loop.exec();
 
-        // Перевіряємо властивості, встановлені у JiraClient::onIssuesReplyFinished
         if (reply->property("success").toBool()) {
             tasksArray = reply->property("tasksArray").toJsonArray();
             logInfo() << "Successfully fetched" << tasksArray.count() << "tasks from Jira.";
         } else {
-            // Помилка була оброблена в JiraClient
             clientError = reply->property("errorDetails").value<ApiError>();
             logCritical() << "Jira API failed during sync call. Error:" << clientError.errorString;
         }
-
         reply->deleteLater();
     } else {
-        // Помилка ініціалізації запиту
-        clientError.errorString = "JiraClient failed to initiate fetch (check URL/Token).";
+        clientError.errorString = "JiraClient failed to initiate fetch.";
         clientError.httpStatusCode = 500;
     }
 
-    // --- 4. ФІНАЛЬНА ВІДПОВІДЬ ---
+    // --- 4. ФІНАЛЬНА ВІДПОВІДЬ (Без змін) ---
     delete user;
 
     if (tasksArray.isEmpty() && clientError.httpStatusCode != 0 && clientError.httpStatusCode != 404) {
-        // Помилка
         return createJsonResponse(QJsonObject{{"error", clientError.errorString}},
                                   (QHttpServerResponse::StatusCode)clientError.httpStatusCode);
     } else {
-        // Успіх (навіть якщо список завдань порожній)
         return createJsonResponse(tasksArray, QHttpServerResponse::StatusCode::Ok);
     }
 }
 
-
-// WebServer.cpp (handleGetTaskDetails)
 
 QHttpServerResponse WebServer::handleGetTaskDetails(const QHttpServerRequest& request)
 {
@@ -1555,8 +1549,6 @@ QHttpServerResponse WebServer::handleGetTaskDetails(const QHttpServerRequest& re
     QString tracker = query.queryItemValue("tracker").toLower();
     QString taskId = query.queryItemValue("id").trimmed();
 
-    const QString redmineBaseUrl = AppParams::instance().getParam("Global", "RedmineBaseUrl").toString();
-
     if (tracker.isEmpty() || taskId.isEmpty()) {
         delete user;
         return createTextResponse("Missing tracker or task ID.", QHttpServerResponse::StatusCode::BadRequest);
@@ -1566,16 +1558,15 @@ QHttpServerResponse WebServer::handleGetTaskDetails(const QHttpServerRequest& re
     ApiError clientError;
 
     if (tracker == "redmine") {
+        const QString redmineBaseUrl = AppParams::instance().getParam("Global", "RedmineBaseUrl").toString();
         if (redmineBaseUrl.isEmpty()) {
             delete user;
             return createTextResponse("Redmine Base URL not configured.", QHttpServerResponse::StatusCode::InternalServerError);
         }
 
-        // --- Redmine Логіка ---
         QString tokenEncrypted = user->redmineToken();
         QString token = CriptPass::instance().decriptPass(tokenEncrypted);
         RedmineClient client;
-
         QNetworkReply* reply = client.fetchIssueDetails(redmineBaseUrl, taskId, token);
 
         if (reply) {
@@ -1584,13 +1575,11 @@ QHttpServerResponse WebServer::handleGetTaskDetails(const QHttpServerRequest& re
             loop.exec();
 
             if (reply->property("success").toBool()) {
-                // !!! ВИПРАВЛЕНО: Використовуємо toMap, якщо toJsonObject недоступний !!!
                 taskDetails = QJsonObject::fromVariantMap(reply->property("issueDetails").toMap());
-
-                // Перевірка, чи задача не "Закрита" (StatusId 5 або вище)
                 int statusId = taskDetails.value("status").toObject().value("id").toInt();
-                if (statusId >= 5) { // 5=Закритий, 6=Відмова, 7=Відкладена
+                if (statusId >= 5) {
                     delete user;
+                    reply->deleteLater();
                     return createTextResponse("Task is already closed, rejected, or deferred.", QHttpServerResponse::StatusCode::BadRequest);
                 }
             } else {
@@ -1598,19 +1587,45 @@ QHttpServerResponse WebServer::handleGetTaskDetails(const QHttpServerRequest& re
             }
             reply->deleteLater();
         }
-    }
-    // !!! БЛОК JIRA ВИДАЛЕНО !!!
-    else {
+    } else if (tracker == "jira") {
+        const QString jiraBaseUrl = AppParams::instance().getParam("Global", "JiraBaseUrl").toString();
+        QString tokenEncrypted = user->jiraToken();
+        QString token = CriptPass::instance().decriptPass(tokenEncrypted);
+
+        if (jiraBaseUrl.isEmpty() || token.isEmpty()) {
+            delete user;
+            return createTextResponse("Jira configuration missing.", QHttpServerResponse::StatusCode::InternalServerError);
+        }
+
+        JiraClient client;
+        QNetworkReply* reply = client.fetchIssueDetails(jiraBaseUrl, taskId, token);
+
+        if (reply) {
+            QEventLoop loop;
+            connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+            loop.exec();
+
+            if (reply->property("success").toBool()) {
+                // Отримуємо об'єкт taskDetails, який зберіг JiraClient::onIssueDetailsReplyFinished
+                taskDetails = reply->property("taskDetails").toJsonObject();
+            } else {
+                clientError = reply->property("errorDetails").value<ApiError>();
+            }
+            reply->deleteLater();
+        }
+    } else {
         delete user;
-        return createTextResponse("Invalid tracker specified or Jira functionality not yet implemented.", QHttpServerResponse::StatusCode::BadRequest);
+        return createTextResponse("Invalid tracker specified.", QHttpServerResponse::StatusCode::BadRequest);
     }
 
     delete user;
 
-    if (taskDetails.isEmpty() && clientError.httpStatusCode != 0) {
-        return createJsonResponse(QJsonObject{{"error", clientError.errorString}},
-                                  (QHttpServerResponse::StatusCode)clientError.httpStatusCode);
-    } else if (taskDetails.isEmpty()) {
+    // Перевірка результату
+    if (taskDetails.isEmpty()) {
+        if (clientError.httpStatusCode != 0) {
+            return createJsonResponse(QJsonObject{{"error", clientError.errorString}},
+                                      (QHttpServerResponse::StatusCode)clientError.httpStatusCode);
+        }
         return createTextResponse("Task not found or response was empty.", QHttpServerResponse::StatusCode::NotFound);
     }
 

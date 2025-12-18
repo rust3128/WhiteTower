@@ -129,6 +129,8 @@ public:
      */
     void reportTask(const QJsonObject& payload, qint64 telegramId);
 
+    void fetchJiraTasksByTerminal(qint64 telegramId, int terminalId);
+
 signals:
     // Сигнали для логіну
     void loginSuccess(User* user);

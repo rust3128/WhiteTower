@@ -25,6 +25,10 @@ public:
      */
     QNetworkReply* fetchIssues(const QString& baseUrl, const QString& userLogin, const QString& userApiToken);
 
+    QNetworkReply* fetchIssueDetails(const QString& baseUrl, const QString& issueKey, const QString& userApiToken);
+
+    QNetworkReply* searchIssuesByTerminal(const QString& baseUrl, int terminalID, const QString& userApiToken);
+
 signals:
     // Сигнал, що емітується при успішному отриманні задач
     void issuesFetched(const QJsonArray& tasks);
@@ -33,6 +37,7 @@ signals:
 
 private slots:
     void onIssuesReplyFinished();
+    void onIssueDetailsReplyFinished();
 
 private:
     QNetworkAccessManager* m_networkManager;

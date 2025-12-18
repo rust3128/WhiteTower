@@ -2114,3 +2114,23 @@ void ApiClient::onReportTaskReplyFinished()
 
     reply->deleteLater();
 }
+
+
+void ApiClient::fetchJiraTasksByTerminal(qint64 telegramId, int terminalId)
+{
+    logInfo() << "ApiClient: Searching Jira tasks for Terminal ID" << terminalId;
+
+    // Формуємо URL з параметром: /api/bot/jira/tasks?terminalId=9037
+    QUrl url(m_serverUrl + "/api/bot/jira/tasks");
+    QUrlQuery query;
+    query.addQueryItem("terminalId", QString::number(terminalId));
+    url.setQuery(query);
+
+    QNetworkRequest request = createBotRequest(url, telegramId);
+    QNetworkReply* reply = m_networkManager->get(request);
+
+    reply->setProperty("telegramId", telegramId);
+
+    // Використовуємо існуючий слот — він уже вміє приймати масив задач Jira
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onJiraTasksReplyFinished);
+}

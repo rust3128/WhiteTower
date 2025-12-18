@@ -153,6 +153,14 @@ private:
     void stopSessionTimeout(qint64 telegramId);
     void resetSession(qint64 telegramId, const QString& reason);
 
+    void handleCallbackReportSearch(const QJsonObject& query, const QStringList& parts);
+
+    void showJiraTaskCard(qint64 chatId, const QJsonObject& issue);
+
+
+
+
+
 private:
     enum class UserState {
         None,
@@ -165,6 +173,8 @@ private:
 //        WaitingForAttachment,          // Очікування фотозвіту
         ValidatingTask,                // Очікування відповіді API на валідацію ID
         WaitingForAssignment,
+        WaitingForJiraTerminalID, // Стан очікування введення номера АЗС для пошуку
+        WaitingForJiraTaskId
     };
     QMap<qint64, UserState> m_userState; // <telegramId, State>
 

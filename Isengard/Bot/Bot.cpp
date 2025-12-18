@@ -171,7 +171,10 @@ void Bot::setupCallbackHandlers()
     m_reportHandlers["manual_id"] = &Bot::handleCallbackReportManualId;
 
     m_reportHandlers["type"] = &Bot::handleCallbackReportSelectType;
-//    m_reportHandlers["attach"] = &Bot::handleCallbackReportDone;
+
+    m_reportHandlers["search"] = &Bot::handleCallbackReportSearch;
+
+
 
     logInfo() << "Callback query handlers registered.";
 }
@@ -203,9 +206,15 @@ void Bot::onUpdatesReceived(const QJsonArray& updates)
             UserState currentState = m_userState.value(telegramId);
 
             // 2.1. Стан очікування номера АЗС
-            if (currentState == UserState::WaitingForStationNumber) {
-                handleStationNumberInput(message);
-                continue; // Обробка завершена
+            if (currentState == UserState::WaitingForStationNumber||
+                currentState == UserState::WaitingForJiraTerminalID||
+                currentState == UserState::WaitingForJiraTaskId) {
+                if (currentState == UserState::WaitingForStationNumber) {
+                    handleStationNumberInput(message);
+                } else {
+                    handleReportInput(message); // Оброблятимемо тут
+                }
+                continue;
             }
 
             // 2.2. !!! НОВИЙ БЛОК: СТАНИ ЗВІТУ !!!
@@ -1685,9 +1694,59 @@ void Bot::onJiraTasksFetched(const QJsonArray& tasks, qint64 telegramId)
 {
     if (telegramId == 0) return;
 
-    // 1. ОТРИМАННЯ JIRA BASE URL
+    // --- 1. ПЕРЕВІРКА СТАНУ: ЧИ ОЧІКУЄ КОРИСТУВАЧ ВИБОРУ ЗАДАЧІ ДЛЯ ЗВІТУ? ---
+    if (m_userState.value(telegramId) == UserState::WaitingForTaskSelection) {
+
+        QJsonObject keyboard;
+        QJsonArray rows;
+        QString messageText;
+
+        if (tasks.isEmpty()) {
+            messageText = "📭 <b>Призначених задач Jira не знайдено.</b>\nСкористайтеся пошуком нижче:";
+        } else {
+            messageText = QString("✅ Знайдено %1 задач. Оберіть задачу Jira для звіту або скористайтеся пошуком:").arg(tasks.size());
+
+            // Створюємо кнопки для кожної призначеної задачі
+            for (const QJsonValue& value : tasks) {
+                QJsonObject issue = value.toObject();
+                QString key = issue["key"].toString();
+                QString summary = issue["fields"].toObject()["summary"].toString();
+
+                // Обмежуємо довжину тексту на кнопці
+                if (summary.length() > 30) summary = summary.left(27) + "...";
+
+                QJsonArray row;
+                row.append(QJsonObject{
+                    {"text", QString("[%1] %2").arg(key, summary)},
+                    {"callback_data", QString("report:select_task:jira:%1").arg(key)}
+                });
+                rows.append(row);
+            }
+        }
+
+        // --- ДОДАВАННЯ КНОПОК ПОШУКУ (згідно з планом) ---
+        QJsonArray searchRow;
+        searchRow.append(QJsonObject{
+            {"text", "🔍 Пошук по АЗС"},
+            {"callback_data", "report:search:jira:terminal"}
+        });
+        searchRow.append(QJsonObject{
+            {"text", "🔢 Пошук по номеру"},
+            {"callback_data", "report:search:jira:id"}
+        });
+        rows.append(searchRow);
+
+        keyboard["inline_keyboard"] = rows;
+        m_telegramClient->sendMessageWithInlineKeyboard(telegramId, messageText, keyboard);
+
+        // Скидаємо стан, щоб наступні повідомлення не вважалися вибором задачі
+        m_userState.remove(telegramId);
+        return;
+    }
+
+    // --- 2. ВАШ ІСНУЮЧИЙ КОД ДЛЯ ТЕКСТОВОГО ВИВОДУ (/Мої задачі) ---
+
     const QString jiraUrl = AppParams::instance().getParam("Global", "JiraBaseUrl").toString();
-    // Визначаємо, чи доступний URL, щоб уникнути зайвої логіки всередині циклу
     const bool urlIsAvailable = !jiraUrl.isEmpty();
 
     QString message;
@@ -1695,27 +1754,23 @@ void Bot::onJiraTasksFetched(const QJsonArray& tasks, qint64 telegramId)
     if (tasks.isEmpty()) {
         message = "✅ <b>У вас немає відкритих задач Jira, призначених вам.</b>";
     } else {
-        // --- ГРУПУВАННЯ ЗАДАЧ ЗА ПРОЄКТАМИ ---
+        // Групування за проєктами
         QMap<QString, QJsonArray> tasksByProject;
 
         for (const QJsonValue& val : tasks) {
             QJsonObject issue = val.toObject();
-            // Назва проєкту в Jira API знаходиться в об'єкті "fields"
             QString projectName = issue["fields"].toObject()["project"].toObject()["name"].toString();
             tasksByProject[projectName].append(val);
         }
 
-        // Заголовок загального повідомлення
         message = QString("📝 <b>Ваші відкриті задачі Jira (%1):</b>\n\n").arg(tasks.count());
 
-        // --- ФОРМУВАННЯ ВИВОДУ ---
         QMapIterator<QString, QJsonArray> i(tasksByProject);
         while (i.hasNext()) {
             i.next();
             const QString projectName = i.key();
             const QJsonArray projectTasks = i.value();
 
-            // Заголовок Проєкту
             message += QString("📁 <b>Проєкт: %1 (%2)</b>\n")
                            .arg(projectName)
                            .arg(projectTasks.count());
@@ -1724,11 +1779,10 @@ void Bot::onJiraTasksFetched(const QJsonArray& tasks, qint64 telegramId)
                 QJsonObject issue = val.toObject();
                 QJsonObject fields = issue["fields"].toObject();
 
-                QString key = issue["key"].toString(); // Напр., "JIRA-123"
+                QString key = issue["key"].toString();
                 QString summary = fields["summary"].toString();
                 QString status = fields["status"].toObject()["name"].toString();
 
-                // Вибір емодзі (поки що проста логіка, оскільки немає ID)
                 QString statusEmoji;
                 if (status.contains("Open", Qt::CaseInsensitive)) {
                     statusEmoji = "🟢";
@@ -1738,42 +1792,23 @@ void Bot::onJiraTasksFetched(const QJsonArray& tasks, qint64 telegramId)
                     statusEmoji = "🔵";
                 }
 
-                // Екрануємо тему
                 const QString escapedSummary = escapeHtml(summary.simplified());
 
-                // --- НОВИЙ БЛОК: СТВОРЕННЯ АКТИВНОГО ПОСИЛАННЯ ---
                 if (urlIsAvailable) {
-                    // Формуємо повний URL завдання
                     const QString issueUrl = jiraUrl + "/browse/" + key;
-
-                    // Використовуємо <a> тег для створення активного посилання на ключ задачі
                     message += QString("  %1 <b><a href=\"%2\">[%3]</a> [%4]</b> %5\n")
-                                   .arg(statusEmoji)     // %1: 🟢/🛠️/🔵
-                                   .arg(issueUrl)        // %2: URL для тегу <a>
-                                   .arg(key)             // %3: [AZS-46490] (текст посилання)
-                                   .arg(status)          // %4: [Статус]
-                                   .arg(escapedSummary); // %5: Тема
+                                   .arg(statusEmoji, issueUrl, key, status, escapedSummary);
                 } else {
-                    // Резервний варіант, якщо URL Jira не налаштований
                     message += QString("  %1 <b>[%2] [%3]</b> %4\n")
-                                   .arg(statusEmoji)     // %1
-                                   .arg(key)             // %2
-                                   .arg(status)          // %3
-                                   .arg(escapedSummary); // %4
+                    .arg(statusEmoji, key, status, escapedSummary);
                 }
-                // --- КІНЕЦЬ НОВОГО БЛОКУ ---
-
-                // Прибрано: message += "\n"; з внутрішнього циклу
             }
-            // Додаємо один перенос рядка для розділення проєктів
             message += "\n";
         }
     }
 
-    // Надсилаємо фінальне повідомлення
     m_telegramClient->sendMessage(telegramId, message);
 }
-
 
 /**
  * @brief (НОВИЙ) Обробляє помилку завантаження задач Jira.
@@ -1836,10 +1871,11 @@ void Bot::handleCreateReport(const QJsonObject& message)
  */
 void Bot::handleReportTrackerSelection(const QJsonObject& query, const QStringList& parts)
 {
+    // Отримуємо ID чату та ID callback-запиту
     qint64 chatId = query["message"].toObject()["chat"].toObject()["id"].toVariant().toLongLong();
-    // qint64 messageId = query["message"].toObject()["message_id"].toVariant().toLongLong(); // ВИДАЛЕНО
     QString queryId = query["id"].toString();
 
+    // Перевірка наявності параметрів у callback_data (очікуємо report:select:trackerName)
     if (parts.size() < 3) {
         m_telegramClient->answerCallbackQuery(queryId, "Некоректний запит.");
         return;
@@ -1847,25 +1883,38 @@ void Bot::handleReportTrackerSelection(const QJsonObject& query, const QStringLi
 
     QString tracker = parts.at(2); // "redmine" або "jira"
 
-    // 1. Фіксуємо контекст та встановлюємо стан очікування
+    // 1. ФІКСУЄМО КОНТЕКСТ ТА ВСТАНОВЛЮЄМО СТАН ОЧІКУВАННЯ
+    // Цей стан дозволить обробникам onRedmineTasksFetched / onJiraTasksFetched
+    // зрозуміти, що потрібно малювати кнопки, а не текстовий список.
     m_userState[chatId] = UserState::WaitingForTaskSelection;
-    // Використовуємо m_userClientContext для тимчасового зберігання TrackerType (1=Redmine, 2=Jira)
+
+    // Зберігаємо тип трекера (1 - Redmine, 2 - Jira) для подальшої валідації
     m_userClientContext[chatId] = (tracker == "redmine") ? 1 : 2;
 
-    // 2. API-виклик для завантаження призначених задач
-    QString loadingMessage = QString("Завантажую ваші призначені задачі %1...").arg(tracker);
+    // Також ініціалізуємо контекст звіту, щоб пізніше знати, який трекер обрано
+    m_reportContext[chatId]["tracker"] = tracker;
+
+    // 2. ІНФОРМУЄМО КОРИСТУВАЧА ТА ВИКЛИКАЄМО API
+    QString loadingMessage = QString("⌛ Завантажую ваші призначені задачі <b>%1</b>...").arg(tracker.toUpper());
+
+    // Надсилаємо нове повідомлення про процес завантаження
+    m_telegramClient->sendMessage(chatId, loadingMessage);
 
     if (tracker == "redmine") {
-        // Ми не редагуємо, а надсилаємо нове повідомлення
-        m_telegramClient->sendMessage(chatId, loadingMessage);
-        m_apiClient.fetchRedmineTasks(chatId); // ВИКЛИК ІСНУЮЧОГО МЕТОДУ
-
+        logInfo() << "Bot: Initiating Redmine tasks fetch for reporting flow. User:" << chatId;
+        m_apiClient.fetchRedmineTasks(chatId); // Виклик існуючого методу
     } else if (tracker == "jira") {
-        m_telegramClient->sendMessage(chatId, loadingMessage);
-        m_apiClient.fetchJiraTasks(chatId); // ВИКЛИК ІСНУЮЧОГО МЕТОДУ
+        logInfo() << "Bot: Initiating Jira tasks fetch for reporting flow. User:" << chatId;
+        m_apiClient.fetchJiraTasks(chatId);    // Виклик існуючого методу
+    } else {
+        logWarning() << "Bot: Unknown tracker selected:" << tracker;
+        m_userState.remove(chatId); // Скидаємо стан, якщо трекер невідомий
+        m_telegramClient->answerCallbackQuery(queryId, "Помилка: невідомий трекер.");
+        return;
     }
 
-    m_telegramClient->answerCallbackQuery(queryId, "Завантаження задач...");
+    // Прибираємо стан завантаження ("годинник") на кнопці в Telegram
+    m_telegramClient->answerCallbackQuery(queryId);
 }
 
 // Bot.cpp (handleRedmineTaskSelectionForReport)
@@ -1946,23 +1995,30 @@ void Bot::handleCallbackReportSelectTask(const QJsonObject& query, const QString
     qint64 messageId = query["message"].toObject()["message_id"].toVariant().toLongLong();
     QString queryId = query["id"].toString();
 
-    if (parts.size() < 4) {
-        m_telegramClient->answerCallbackQuery(queryId, "Некоректний запит.");
-        return;
+    if (parts.size() < 4) return;
+
+    QString tracker = parts.at(2); // "jira" або "redmine"
+    QString taskId = parts.at(3);  // Наприклад, "AZS-46937"
+
+    // 1. Обов'язково фіксуємо трекер та ID у контексті звіту
+    m_reportContext[chatId]["tracker"] = tracker;
+    m_reportContext[chatId]["taskId"] = taskId;
+
+    // 2. ВАЖЛИВО: Оновлюємо m_userClientContext, щоб onTaskDetailsFetched
+    // правильно розпізнав систему (1 - Redmine, 2 - Jira)
+    m_userClientContext[chatId] = (tracker == "redmine") ? 1 : 2;
+
+    m_telegramClient->answerCallbackQuery(queryId, "⌛ Завантажую деталі задачі...");
+
+    if (tracker == "jira") {
+        // Для Jira: запитуємо деталі, щоб показати універсальну картку (Етап 3 плану)
+        // Після отримання даних спрацює onTaskDetailsFetched
+        m_apiClient.fetchTaskDetails(tracker, taskId, chatId);
+    } else {
+        // Для Redmine: залишаємо старий флоу (перехід до вибору типу звіту)
+        showReportMenu(chatId, taskId, tracker, true, messageId);
     }
-
-    QString tracker = parts.at(2); // redmine або jira
-    QString taskId = parts.at(3);  // 117740 або AZS-46490
-
-    logInfo() << "Report: Task selected via button:" << tracker << "ID:" << taskId;
-
-    m_telegramClient->answerCallbackQuery(queryId, QString("Обрано задачу %1. Оберіть дію.").arg(taskId));
-
-    // 1. !!! УНІФІКАЦІЯ: ВИКЛИКАЄМО showReportMenu !!!
-    // isEdit=true, messageId - редагуємо повідомлення зі списком задач
-    showReportMenu(chatId, taskId, tracker, true, messageId);
 }
-
 /**
  * @brief (НОВИЙ) Обробляє натискання кнопки "Ввести ID вручну".
  * Переводить користувача у стан очікування тексту.
@@ -2112,6 +2168,32 @@ void Bot::handleReportInput(const QJsonObject& message)
         return;
     }
 
+    if (currentState == UserState::WaitingForJiraTaskId) {
+        QString cleanId = text.trimmed().toUpper();
+
+        // Додаємо префікс, якщо введені тільки цифри
+        if (!cleanId.startsWith("AZS-")) {
+            bool isNumeric;
+            cleanId.toInt(&isNumeric);
+            if (isNumeric) cleanId = "AZS-" + cleanId;
+        }
+
+        m_telegramClient->sendMessage(chatId, QString("🔎 Перевіряю задачу <b>%1</b>...").arg(cleanId));
+
+        // Фіксуємо контекст для Jira
+        m_reportContext[chatId]["tracker"] = "jira";
+        m_reportContext[chatId]["taskId"] = cleanId;
+
+        // Скидаємо стан ПЕРЕД запитом
+        m_userState.remove(chatId);
+
+        // Робимо запит до сервера (Крок 3 вашого плану)
+        m_apiClient.fetchTaskDetails("jira", cleanId, chatId);
+        return;
+    }
+
+
+
     // --- 3. ОБРОБКА НЕОЧІКУВАНИХ ВВЕДЕНЬ/ФАЙЛІВ ---
     // Якщо користувач надсилає фото, коли очікується команда
     if (message.contains("photo") || message.contains("document")) {
@@ -2130,33 +2212,49 @@ void Bot::onTaskDetailsFetched(const QJsonObject& taskDetails, qint64 telegramId
 {
     if (telegramId == 0) return;
 
-
-
-    // 1. Отримуємо ID задачі та трекер з контексту
+    // 1. Отримуємо дані з контексту звіту
+    // Переконуємося, що ми використовуємо актуальні дані, зафіксовані при натисканні кнопки
     QString taskId = m_reportContext[telegramId]["taskId"].toString();
-    int trackerType = m_userClientContext.value(telegramId);
-    QString selectedTracker = (trackerType == 1) ? "redmine" : "jira"; // Використовуємо нижній регістр для API
+    QString tracker = m_reportContext[telegramId]["tracker"].toString();
 
-    // 2. Формуємо повідомлення про початок призначення
+    logInfo() << "Bot: onTaskDetailsFetched context check - Tracker:" << tracker << "Task:" << taskId;
+
+    // --- ЛОГІКА ДЛЯ JIRA (Етап 3 плану) ---
+    if (tracker == "jira") {
+        logInfo() << "Bot: Jira task details successfully received. Showing universal card for:" << taskId;
+
+        // Викликаємо універсальний метод відображення картки (тема, статус, опис, кнопки)
+        showJiraTaskCard(telegramId, taskDetails);
+
+        // Скидаємо стан очікування валідації та зупиняємо таймер
+        m_userState.remove(telegramId);
+        stopSessionTimeout(telegramId);
+
+        // ВАЖЛИВО: Виходимо, щоб не ініціювати призначення assignTaskToSelf
+        return;
+    }
+
+    // --- ЛОГІКА ДЛЯ REDMINE (ЗАЛИШАЄТЬСЯ БЕЗ ЗМІН) ---
+    // Для Redmine ми продовжуємо старий флоу автоматичного призначення
     QString subject = taskDetails.contains("subject") ? taskDetails["subject"].toString() : taskDetails["summary"].toString();
     QString statusName = taskDetails["status"].toObject()["name"].toString();
 
-    QString messageText = QString("✅ Задача <b>%1</b> (%2) знайдена:\n"
-                                  "   Тема: %3\n"
-                                  "   Статус: %4\n"
+    QString messageText = QString("✅ Задача <b>%1</b> (REDMINE) знайдена:\n"
+                                  "   Тема: %2\n"
+                                  "   Статус: %3\n"
                                   "   <b>Проводиться призначення задачі на вас...</b>")
                               .arg(taskId)
-                              .arg(selectedTracker.toUpper())
                               .arg(escapeHtml(subject.simplified()))
                               .arg(statusName);
 
     m_telegramClient->sendMessage(telegramId, messageText);
 
-    // 3. Змінюємо стан на очікування призначення
+    // Змінюємо стан на очікування призначення та викликаємо API сервера
     m_userState[telegramId] = UserState::WaitingForAssignment;
     stopSessionTimeout(telegramId);
-    // 4. !!! API-виклик для призначення на себе !!!
-    m_apiClient.assignTaskToSelf(selectedTracker, taskId, telegramId);
+
+    // Викликаємо метод призначення саме для Redmine
+    m_apiClient.assignTaskToSelf("redmine", taskId, telegramId);
 }
 
 /**
@@ -2472,4 +2570,107 @@ void Bot::handleSessionTimeout()
 
     // Скидаємо сесію
     resetSession(telegramId, "Таймаут неактивності (5 хвилин)");
+}
+
+
+void Bot::handleCallbackReportSearch(const QJsonObject& query, const QStringList& parts)
+{
+    qint64 chatId = query["message"].toObject()["chat"].toObject()["id"].toVariant().toLongLong();
+    QString queryId = query["id"].toString();
+    if (parts.size() < 4) return;
+
+    QString searchType = parts.at(3); // "terminal" або "id"
+
+    if (searchType == "terminal") {
+        m_userState[chatId] = UserState::WaitingForJiraTerminalID;
+        m_telegramClient->sendMessage(chatId, "?? <b>Введіть номер АЗС:</b>");
+    }
+    else if (searchType == "id") {
+        // --- НОВИЙ БЛОК ---
+        m_userState[chatId] = UserState::WaitingForJiraTaskId;
+        m_telegramClient->sendMessage(chatId, "?? <b>Введіть номер задачі Jira:</b>\n<i>Наприклад: 46937 або AZS-46937</i>");
+    }
+
+    m_telegramClient->answerCallbackQuery(queryId);
+}
+void Bot::showJiraTaskCard(qint64 chatId, const QJsonObject& issue)
+{
+    QString key = issue["key"].toString();
+    QJsonObject fields = issue["fields"].toObject();
+
+    QString summary = fields["summary"].toString();
+    QString status = fields["status"].toObject()["name"].toString();
+    QString description = fields["description"].toString();
+
+    // --- 1. Визначення Типу запиту (Request Type) ---
+    // В Jira Service Desk це зазвичай customfield_10001
+    QJsonObject serviceField = fields["customfield_10001"].toObject();
+    QString requestType = serviceField["requestType"].toObject()["name"].toString();
+
+    if (requestType.isEmpty()) {
+        // Запасний варіант: взяти системне ім'я типу задачі
+        requestType = fields["issuetype"].toObject()["name"].toString();
+    }
+
+    // --- 2. Логіка визначення АЗС (залишається універсальною) ---
+    QString azsDisplay = fields["customfield_15803"].toString();
+    if (azsDisplay.isEmpty()) {
+        QJsonObject azsObj = fields["customfield_14108"].toObject();
+        if (!azsObj.isEmpty()) {
+            QString region = azsObj["value"].toString();
+            QString number = azsObj["child"].toObject()["value"].toString();
+            if (!region.isEmpty() && !number.isEmpty()) {
+                azsDisplay = QString("%1 - %2").arg(region, number);
+            } else if (!region.isEmpty()) {
+                azsDisplay = region;
+            }
+        }
+    }
+    if (azsDisplay.isEmpty()) azsDisplay = "<i>не вказано</i>";
+
+    // --- 3. Логіка визначення Ініціатора ---
+    QString initiator = fields["customfield_14101"].toString();
+    if (initiator.isEmpty()) {
+        initiator = fields["reporter"].toObject()["displayName"].toString();
+    }
+
+    QString phone = fields["customfield_10301"].toString();
+
+    // Форматування опису
+    if (description.isEmpty()) description = "<i>Опис відсутній</i>";
+    if (description.length() > 350) description = description.left(347) + "...";
+
+    // Формуємо текст картки з новим полем "Тип запиту"
+    QString message = QString(
+                          "📄 <b>Задача Jira: %1</b>\n"
+                          "━━━━━━━━━━━━━━━━━━\n"
+                          "<b>📋 Тип:</b> %2\n"         // Додано Тип запиту
+                          "<b>🏪 АЗС:</b> %3\n"
+                          "<b>👤 Ініціатор:</b> %4 %5\n"
+                          "<b>📝 Тема:</b> %6\n"
+                          "<b>⚙️ Статус:</b> %7\n\n"
+                          "<b>📖 Опис:</b>\n%8"
+                          ).arg(key)
+                          .arg(escapeHtml(requestType))   // Вивід типу запиту
+                          .arg(escapeHtml(azsDisplay))
+                          .arg(escapeHtml(initiator))
+                          .arg(phone.isEmpty() ? "" : "(" + phone + ")")
+                          .arg(escapeHtml(summary.simplified()))
+                          .arg(status)
+                          .arg(escapeHtml(description));
+
+    // Клавіатура дій
+    QJsonObject keyboard;
+    QJsonArray rows;
+    rows.append(QJsonArray{
+        QJsonObject{{"text", "💬 Коментар"}, {"callback_data", QString("report:action:jira:comment:%1").arg(key)}},
+        QJsonObject{{"text", "📸 Фото"}, {"callback_data", QString("report:action:jira:photo:%1").arg(key)}}
+    });
+    rows.append(QJsonArray{
+        QJsonObject{{"text", "✅ Закрити"}, {"callback_data", QString("report:action:jira:close:%1").arg(key)}},
+        QJsonObject{{"text", "❌ Відхилити"}, {"callback_data", QString("report:action:jira:reject:%1").arg(key)}}
+    });
+    keyboard["inline_keyboard"] = rows;
+
+    m_telegramClient->sendMessageWithInlineKeyboard(chatId, message, keyboard);
 }
