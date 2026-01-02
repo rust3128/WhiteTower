@@ -1538,12 +1538,15 @@ QJsonObject DbManager::getBotUserStatus(qint64 telegramId)
         // Визначаємо рівень доступу
         QJsonObject response;
         response["fio"] = user->fio();
+        response["user"] = user->toJson();
 
         if (user->hasRole("Адміністратор")) {
             response["status"] = "ACTIVE_ADMIN";
         } else {
             response["status"] = "ACTIVE_USER";
         }
+
+        logInfo() << "Bot user" << user->login() << "identified as" << response["status"].toString();
 
         delete user;
         return response;

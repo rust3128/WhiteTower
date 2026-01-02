@@ -26,6 +26,7 @@ Bot::Bot(const QString& botToken, QObject *parent)
 {
     m_telegramClient = new TelegramClient(botToken, this);
 
+    m_attachmentManager = new AttachmentManager(this);
     setupCommandHandlers();
     setupCallbackHandlers();
     setupConnections();
@@ -105,6 +106,15 @@ void Bot::setupConnections()
     connect(&m_apiClient, &ApiClient::reportTaskSuccess, this, &Bot::onReportTaskSuccess);
     connect(&m_apiClient, &ApiClient::reportTaskFailed, this, &Bot::onReportTaskFailed);
 
+    connect(m_attachmentManager, &AttachmentManager::fileDownloaded, this, [this](const QString &path) {
+        logInfo() << "File successfully saved to archive:" << path;
+        // ТУТ МИ БУДЕМО ВИКЛИКАТИ ApiClient::uploadFileToConduit(path)
+    });
+
+    connect(m_attachmentManager, &AttachmentManager::downloadError, this, [this](const QString &err) {
+        logCritical() << "Attachment download error:" << err;
+    });
+
     logInfo() << "Signal-slot connections established.";
 }
 
@@ -174,6 +184,7 @@ void Bot::setupCallbackHandlers()
 
     m_reportHandlers["search"] = &Bot::handleCallbackReportSearch;
 
+    m_reportHandlers["action"] = &Bot::handleCallbackReportAction;
 
 
     logInfo() << "Callback query handlers registered.";
@@ -190,49 +201,43 @@ void Bot::onUpdatesReceived(const QJsonArray& updates)
     for (const QJsonValue& updateVal : updates) {
         QJsonObject update = updateVal.toObject();
 
-        // --- 1. ПЕРЕВІРКА INLINE-КНОПКИ ---
+        // 1. Обробка кнопок (inline_keyboard)
         if (update.contains("callback_query")) {
-            QJsonObject callbackQuery = update["callback_query"].toObject();
-            handleCallbackQuery(callbackQuery);
-            continue; // Обробка завершена
+            handleCallbackQuery(update["callback_query"].toObject());
+            continue;
         }
 
-        // --- 2. ПЕРЕВІРКА СТАНУ (ОЧІКУВАННЯ ВВЕДЕННЯ) ---
+        // 2. Обробка повідомлень (текст або фото)
         if (update.contains("message")) {
             QJsonObject message = update["message"].toObject();
             qint64 telegramId = message["from"].toObject()["id"].toVariant().toLongLong();
-
-            // Отримуємо поточний стан користувача
             UserState currentState = m_userState.value(telegramId);
 
-            // 2.1. Стан очікування номера АЗС
-            if (currentState == UserState::WaitingForStationNumber||
-                currentState == UserState::WaitingForJiraTerminalID||
-                currentState == UserState::WaitingForJiraTaskId) {
-                if (currentState == UserState::WaitingForStationNumber) {
-                    handleStationNumberInput(message);
-                } else {
-                    handleReportInput(message); // Оброблятимемо тут
-                }
+            // --- КЛЮЧОВА ЗМІНА ТУТ ---
+            // Якщо повідомлення містить фото АБО користувач у стані очікування фото
+            if (message.contains("photo") || currentState == UserState::WaitingForJiraPhoto) {
+                handleReportInput(message);
+                continue; // Це не дозволить викликати checkBotUserStatus для фото
+            }
+            // -------------------------
+
+            // Обробка інших станів (АЗС, коментарі тощо)
+            if (currentState == UserState::WaitingForStationNumber ||
+                currentState == UserState::WaitingForJiraTerminalID ||
+                currentState == UserState::WaitingForJiraTaskId ||
+                currentState == UserState::WaitingForManualTaskId ||
+                currentState == UserState::WaitingForComment)
+            {
+                handleReportInput(message);
                 continue;
             }
 
-            // 2.2. !!! НОВИЙ БЛОК: СТАНИ ЗВІТУ !!!
-            if (currentState == UserState::WaitingForManualTaskId ||
-                currentState == UserState::WaitingForComment) // <<< СТАН WaitingForAttachment ВИДАЛЕНО
-            {
-                // Делегуємо обробку текстового введення або файлів
-                handleReportInput(message);
-                continue; // Обробка завершена
-            }
-            // !!! КІНЕЦЬ НОВОГО БЛОКУ !!!
-
-            // --- 3. ЗВИЧАЙНА ОБРОБКА КОМАНДИ ---
-            // (Якщо не кнопка і не стан, перевіряємо статус)
+            // Якщо це не стан і не фото — перевіряємо як звичайну команду
             m_apiClient.checkBotUserStatus(message);
         }
     }
 }
+
 /**
  * @brief "МОЗОК". Отримує статус та повідомлення.
  * НЕ обробляє команди, а лише МАРШРУТИЗУЄ за СТАНОМ.
@@ -241,6 +246,15 @@ void Bot::onUserStatusReceived(const QJsonObject& status, const QJsonObject& mes
 {
     QJsonObject fromData = message["from"].toObject();
     qint64 userId = fromData["id"].toVariant().toLongLong();
+    if (status.contains("user")) {
+        logInfo() << "✅ SUCCESS: User data received for ID:" << userId; // Додайте цей лог
+        if (m_users.contains(userId)) delete m_users.take(userId);
+        m_users[userId] = User::fromJson(status["user"].toObject());
+    } else {
+        // Якщо ви побачите це в консолі — значить сервер не дає дані профілю
+        logWarning() << "⚠️ WARNING: Server returned status, but NO 'user' object in JSON!";
+    }
+
     QString username = fromData["username"].toString();
     QString text = message["text"].toString();
 
@@ -2058,20 +2072,62 @@ void Bot::handleCallbackReportManualId(const QJsonObject& query, const QStringLi
  */
 void Bot::handleReportInput(const QJsonObject& message)
 {
-
-
     qint64 chatId = message["from"].toObject()["id"].toVariant().toLongLong();
     stopSessionTimeout(chatId);
-    // Використовуємо message["text"].toString().trimmed() лише для текстових вводів
+
+    // Отримуємо текст, якщо він є (у повідомленні з фото тексту може не бути)
     QString text = message["text"].toString().trimmed();
     UserState currentState = m_userState.value(chatId);
 
+    // --- 0. НОВИЙ БЛОК: ОБРОБКА ФОТО (ДЛЯ JIRA) ---
+    // Перевіряємо цей стан першим, щоб не пропустити медіа-повідомлення
+    if (currentState == UserState::WaitingForJiraPhoto) {
+        if (message.contains("photo")) {
+            QJsonArray photos = message["photo"].toArray();
+            QString fileId = photos.last().toObject()["file_id"].toString();
 
-    // --- УНІВЕРСАЛЬНА ПЕРЕВІРКА І СКИДАННЯ СТАНУ ---
+            // Використовуємо існуючу мапу m_users
+            User* user = m_users.value(chatId, nullptr);
+            QString taskId = m_reportContext[chatId]["taskId"].toString();
+
+            // ПРАВИЛЬНИЙ ПАРАМЕТР З ВАШОЇ БД
+            QString root = AppParams::instance().getParam("Global", "StorageRootPath").toString();
+
+            if (!user || root.isEmpty()) {
+                if (!user) logCritical() << "IDENTIFICATION ERROR: User object is NULL in m_users for chatId:" << chatId;
+                if (root.isEmpty()) logCritical() << "CONFIG ERROR: StorageRootPath is EMPTY from AppParams (Global/StorageRootPath)";
+                m_telegramClient->sendMessage(chatId, "❌ Помилка ідентифікації або налаштувань сховища.");
+                return;
+            }
+
+            QString saveDir = m_attachmentManager->prepareStoragePath(root, user, taskId);
+            if (saveDir.isEmpty()) {
+                m_telegramClient->sendMessage(chatId, "❌ Помилка створення папок на диску.");
+                return;
+            }
+
+            QString fileName = QString("photo_%1.jpg").arg(QDateTime::currentMSecsSinceEpoch());
+            QString fullPath = QDir(saveDir).absoluteFilePath(fileName);
+
+            m_telegramClient->sendMessage(chatId, "⌛ Завантажую фото у локальний архів...");
+
+            // ВИПРАВЛЕНО: Використовуємо метод getFile, який ми додали в TelegramClient
+            m_telegramClient->getFile(fileId, [this, chatId, fullPath](const QString& tgFilePath) {
+                // Беремо токен безпосередньо з клієнта, він там уже є з конструктора
+                QString token = m_telegramClient->token();
+
+                QUrl downloadUrl(QString("https://api.telegram.org/file/bot%1/%2").arg(token, tgFilePath));
+                m_attachmentManager->downloadFile(downloadUrl, fullPath);
+            });
+            return;
+        }
+    }
+
+    // --- УНІВЕРСАЛЬНА ПЕРЕВІРКА І СКИДАННЯ СТАНУ ПРИ ВВЕДЕННІ КОМАНД (БЕЗ ЗМІН) ---
     if (currentState == UserState::WaitingForManualTaskId ||
-        currentState == UserState::WaitingForComment)
+        currentState == UserState::WaitingForComment ||
+        currentState == UserState::WaitingForJiraPhoto) // Додано перевірку для нового стану
     {
-        // Перевіряємо, чи це команда або кнопка головного меню
         bool isCommand = text.startsWith("/") ||
                          text.contains("Допомога") ||
                          text.contains("Мої задачі") ||
@@ -2081,68 +2137,40 @@ void Bot::handleReportInput(const QJsonObject& message)
 
         if (isCommand) {
             logWarning() << "Report: Command detected (" << text << ") while waiting for input. Resetting dialogue.";
-
-            // 1. Скидаємо стан
             m_userState.remove(chatId);
             m_reportContext.remove(chatId);
-
-            // 2. Інформуємо користувача
             m_telegramClient->sendMessage(chatId, "⚠️ Діалог звітування скасовано.");
-
-            // 3. НЕГАЙНО ПЕРЕХОДИМО ДО ОБРОБКИ КОМАНДИ (Етап 3 у onUpdatesReceived)
-            // Викликаємо перевірку статусу, що призведе до виконання команди.
             m_apiClient.checkBotUserStatus(message);
-
-            return; // Виходимо, щоб уникнути подальшої обробки
+            return;
         }
     }
 
-    // --- 1. ОБРОБКА ВВЕДЕННЯ ID ЗАДАЧІ ---
+    // --- 1. ОБРОБКА ВВЕДЕННЯ ID ЗАДАЧІ REDMINE/JIRA (БЕЗ ЗМІН) ---
     if (currentState == UserState::WaitingForManualTaskId) {
         logInfo() << "Report: Received manual Task ID input:" << text;
-
         if (text.isEmpty()) {
             m_telegramClient->sendMessage(chatId, "? ID задачі не може бути порожнім. Введіть, будь ласка, ID.");
             return;
         }
-
-        // 1. Зберігаємо ID задачі в контексті
         m_reportContext[chatId]["taskId"] = text;
-
-        // 2. Встановлюємо стан очікування відповіді API
         m_userState[chatId] = UserState::ValidatingTask;
-
-        // 3. Визначаємо трекер (трекер вже має бути збережений у m_userClientContext)
         int trackerType = m_userClientContext.value(chatId);
         QString selectedTracker = (trackerType == 1) ? "redmine" : "jira";
-
-        // 4. API-виклик для валідації
         m_apiClient.fetchTaskDetails(selectedTracker, text, chatId);
 
-        // 5. Надсилаємо користувачеві підтвердження
-        QString response = QString("Проводиться валідація задачі <b>%1</b> (%2)...")
-                               .arg(text)
-                               .arg(selectedTracker);
-
+        QString response = QString("Проводиться валідація задачі <b>%1</b> (%2)...").arg(text).arg(selectedTracker);
         m_telegramClient->sendMessage(chatId, response);
-
         return;
     }
 
-    // --- 2. ОБРОБКА ВВЕДЕННЯ КОМЕНТАРЯ/РІШЕННЯ ---
+    // --- 2. ОБРОБКА ВВЕДЕННЯ КОМЕНТАРЯ REDMINE (БЕЗ ЗМІН) ---
     if (currentState == UserState::WaitingForComment) {
         logInfo() << "Report: Received comment text, finalizing report.";
-
-        // У цьому стані очікується ТЕКСТ.
         if (text.isEmpty()) {
-            m_telegramClient->sendMessage(chatId, "❌ Текст коментаря/рішення не може бути порожнім. Введіть, будь ласка, текст.");
-            return; // Залишаємо у поточному стані
+            m_telegramClient->sendMessage(chatId, "❌ Текст коментаря/рішення не може бути порожнім.");
+            return;
         }
-
-        // 1. Фіксуємо текст у контексті
         m_reportContext[chatId]["commentText"] = text;
-
-        // 2. Збираємо фінальний JSON для API
         QVariantMap reportData = m_reportContext[chatId];
         QString taskId = reportData["taskId"].toString();
         QString tracker = reportData["tracker"].toString();
@@ -2153,51 +2181,35 @@ void Bot::handleReportInput(const QJsonObject& message)
         payload["taskId"] = taskId;
         payload["action"] = reportType;
         payload["comment"] = text;
-        // payload["attachments"] - НЕ ВКЛЮЧАЄМО, Оскільки вони не підтримуються
 
-        // 3. Інформуємо користувача та викликаємо API
         QString actionName = (reportType == "close") ? "закриття" : "коментар";
-        m_telegramClient->sendMessage(chatId,
-                                      QString("🚀 Відправляю звіт (%1) по задачі <b>%2</b>...").arg(actionName, taskId));
+        m_telegramClient->sendMessage(chatId, QString("🚀 Відправляю звіт (%1) по задачі <b>%2</b>...").arg(actionName, taskId));
 
-        // !!! ВИКЛИК API ДЛЯ ВІДПРАВКИ ЗВІТУ !!!
         m_apiClient.reportTask(payload, chatId);
-
-        // 4. Встановлюємо стан очікування відповіді від сервера
         m_userState[chatId] = UserState::ValidatingTask;
         return;
     }
 
+    // --- 3. ОБРОБКА ПОШУКУ ЗА НОМЕРОМ JIRA (БЕЗ ЗМІН) ---
     if (currentState == UserState::WaitingForJiraTaskId) {
         QString cleanId = text.trimmed().toUpper();
-
-        // Додаємо префікс, якщо введені тільки цифри
         if (!cleanId.startsWith("AZS-")) {
             bool isNumeric;
             cleanId.toInt(&isNumeric);
             if (isNumeric) cleanId = "AZS-" + cleanId;
         }
-
         m_telegramClient->sendMessage(chatId, QString("🔎 Перевіряю задачу <b>%1</b>...").arg(cleanId));
-
-        // Фіксуємо контекст для Jira
         m_reportContext[chatId]["tracker"] = "jira";
         m_reportContext[chatId]["taskId"] = cleanId;
-
-        // Скидаємо стан ПЕРЕД запитом
         m_userState.remove(chatId);
-
-        // Робимо запит до сервера (Крок 3 вашого плану)
         m_apiClient.fetchTaskDetails("jira", cleanId, chatId);
         return;
     }
 
-
-
-    // --- 3. ОБРОБКА НЕОЧІКУВАНИХ ВВЕДЕНЬ/ФАЙЛІВ ---
-    // Якщо користувач надсилає фото, коли очікується команда
+    // --- 4. ЗАХИСТ ВІД НЕОЧІКУВАНИХ ВКЛАДЕНЬ (МОДИФІКОВАНО) ---
     if (message.contains("photo") || message.contains("document")) {
-        m_telegramClient->sendMessage(chatId, "❌ Обробка вкладень не підтримується. Будь ласка, оберіть команду з меню.");
+        // Якщо ми в стані очікування фото, цей блок не спрацює завдяки return вище
+        m_telegramClient->sendMessage(chatId, "❌ Обробка вкладень не підтримується для цього етапу. Оберіть команду з меню.");
         return;
     }
 }
@@ -2673,4 +2685,35 @@ void Bot::showJiraTaskCard(qint64 chatId, const QJsonObject& issue)
     keyboard["inline_keyboard"] = rows;
 
     m_telegramClient->sendMessageWithInlineKeyboard(chatId, message, keyboard);
+}
+
+
+void Bot::handleCallbackReportAction(const QJsonObject& query, const QStringList& parts)
+{
+    qint64 chatId = query["message"].toObject()["chat"].toObject()["id"].toVariant().toLongLong();
+    QString queryId = query["id"].toString();
+
+    // Структура вашої кнопки: report:action:jira:photo:AZS-46937
+    if (parts.count() < 5) {
+        m_telegramClient->answerCallbackQuery(queryId, "❌ Помилка: недостатньо даних.");
+        return;
+    }
+
+    QString action = parts.at(3); // photo
+    QString taskId = parts.at(4); // AZS-46937
+
+    if (action == "photo") {
+        // 1. Фіксуємо задачу в контексті
+        m_reportContext[chatId]["taskId"] = taskId;
+        m_reportContext[chatId]["tracker"] = "jira";
+
+        // 2. Переводимо бота в стан очікування фото
+        m_userState[chatId] = UserState::WaitingForJiraPhoto;
+
+        // 3. Відповідаємо Telegram, щоб прибрати "годинник" на кнопці
+        m_telegramClient->answerCallbackQuery(queryId);
+
+        // 4. Просимо користувача надіслати файл
+        m_telegramClient->sendMessage(chatId, QString("📸 Будь ласка, надішліть фото для задачі <b>%1</b>").arg(taskId));
+    }
 }

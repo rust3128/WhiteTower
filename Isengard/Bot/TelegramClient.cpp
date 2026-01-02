@@ -273,3 +273,50 @@ void TelegramClient::sendMessage(qint64 chatId, const QString &text, bool disabl
     QNetworkReply* reply = m_networkManager->post(request, QJsonDocument(jsonBody).toJson());
     connect(reply, &QNetworkReply::finished, reply, &QNetworkReply::deleteLater);
 }
+
+
+void TelegramClient::getFile(const QString& fileId, FilePathCallback callback)
+{
+    // Будуємо URL так само, як у методі sendMessage:
+    // https://api.telegram.org/bot<token>/getFile
+    QUrl url("https://api.telegram.org/bot" + m_token + "/getFile");
+
+    QUrlQuery query;
+    query.addQueryItem("file_id", fileId);
+    url.setQuery(query);
+
+    QNetworkRequest request(url);
+    QNetworkReply* reply = m_networkManager->get(request);
+
+    // Використовуємо лямбду для передачі callback у слот обробки
+    connect(reply, &QNetworkReply::finished, this, [this, reply, callback]() {
+        onGetFileFinished(reply, callback);
+    });
+}
+
+void TelegramClient::onGetFileFinished(QNetworkReply* reply, FilePathCallback callback)
+{
+    // Обов'язково видаляємо reply після завершення
+    reply->deleteLater();
+
+    if (reply->error() != QNetworkReply::NoError) {
+        qCritical() << "TelegramClient::getFile error:" << reply->errorString();
+        return;
+    }
+
+    // Читаємо відповідь від Telegram
+    QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+    QJsonObject root = doc.object();
+
+    if (root["ok"].toBool()) {
+        // Витягуємо відносний шлях до файлу (напр. "photos/file_1.jpg")
+        QString filePath = root["result"].toObject()["file_path"].toString();
+
+        if (!filePath.isEmpty() && callback) {
+            // Викликаємо лямбду, передану з Bot::handleReportInput
+            callback(filePath);
+        }
+    } else {
+        qWarning() << "Telegram API error in getFile:" << root["description"].toString();
+    }
+}

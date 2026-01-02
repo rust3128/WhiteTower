@@ -1,9 +1,11 @@
 #ifndef TELEGRAMCLIENT_H
 #define TELEGRAMCLIENT_H
 
+#include <functional>
 #include <QObject>
 #include <QString>
 #include <QJsonArray>
+#include <QNetworkReply>
 
 class QNetworkAccessManager;
 class QTimer;
@@ -50,6 +52,14 @@ public:
 
     void sendLocation(qint64 chatId, double latitude, double longitude);
 
+    // Тип для лямбда-функції, яка отримає шлях до файлу
+    using FilePathCallback = std::function<void(const QString&)>;
+
+    // Метод для запиту file_path за file_id
+    void getFile(const QString& fileId, FilePathCallback callback);
+
+    QString token() const { return m_token; }
+
 signals:
     void updatesReceived(const QJsonArray& updates);
     void errorOccurred(const QString& error);
@@ -57,6 +67,8 @@ signals:
 private slots:
     void getUpdates();
     void onUpdatesReplyFinished();
+    // Слот для обробки відповіді від getFile
+    void onGetFileFinished(QNetworkReply* reply, FilePathCallback callback);
 
 private:
     QString m_token;

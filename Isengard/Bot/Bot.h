@@ -1,6 +1,8 @@
 #ifndef BOT_H
 #define BOT_H
 
+#include "AttachmentManager.h"
+
 #include <QObject>
 #include "Oracle/ApiClient.h"
 #include <QMap>
@@ -157,7 +159,7 @@ private:
 
     void showJiraTaskCard(qint64 chatId, const QJsonObject& issue);
 
-
+    void handleCallbackReportAction(const QJsonObject& query, const QStringList& parts);
 
 
 
@@ -174,7 +176,8 @@ private:
         ValidatingTask,                // Очікування відповіді API на валідацію ID
         WaitingForAssignment,
         WaitingForJiraTerminalID, // Стан очікування введення номера АЗС для пошуку
-        WaitingForJiraTaskId
+        WaitingForJiraTaskId,
+        WaitingForJiraPhoto
     };
     QMap<qint64, UserState> m_userState; // <telegramId, State>
 
@@ -192,11 +195,13 @@ private:
     QMap<QString, CallbackHandler> m_reportHandlers;
     // QMap<telegramId, QTimer*> - зберігає таймер для кожного активного користувача
     QMap<qint64, QTimer*> m_sessionTimers;
+    QMap<qint64, User*> m_users;
 
     QMap<QString, CommandHandler> m_userCommandHandlers;
     QMap<QString, CommandHandler> m_adminCommandHandlers;
     TelegramClient* m_telegramClient;
     ApiClient& m_apiClient;
+    AttachmentManager *m_attachmentManager;
 };
 
 #endif // BOT_H
