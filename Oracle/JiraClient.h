@@ -29,6 +29,22 @@ public:
 
     QNetworkReply* searchIssuesByTerminal(const QString& baseUrl, int terminalID, const QString& userApiToken);
 
+    /**
+     * @brief Завантажує файл (вкладення) до задачі Jira.
+     * @param baseUrl Базова адреса Jira (напр. https://jira.company.com)
+     * @param issueKey Ключ задачі (напр. AZS-46937)
+     * @param userApiToken Токен користувача (Bearer)
+     * @param fileData Бінарні дані файлу
+     * @param fileName Ім'я файлу
+     */
+    QNetworkReply* uploadAttachment(const QString& baseUrl, const QString& issueKey,
+                                    const QString& userApiToken, const QByteArray& fileData,
+                                    const QString& fileName);
+
+
+    QNetworkReply* addComment(const QString& baseUrl, const QString& issueKey,
+                              const QString& userApiToken, const QString& commentBody);
+
 signals:
     // Сигнал, що емітується при успішному отриманні задач
     void issuesFetched(const QJsonArray& tasks);

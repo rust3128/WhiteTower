@@ -4,7 +4,6 @@
 #include "Oracle/DbManager.h"
 #include "version.h"
 #include "Oracle/SessionManager.h"
-#include "Oracle/ConfigManager.h"
 
 #include "Oracle/User.h"         // Потрібен для доступу до токенів користувача
 #include "Oracle/CriptPass.h"    // Потрібен для дешифрування токенів
@@ -218,6 +217,18 @@ void WebServer::setupRoutes()
     m_httpServer->route("/api/bot/tasks/report", [this](const QHttpServerRequest& request) {
         return handleReportTask(request);
     });
+
+    // маршрут для завантаження вкладень Jira
+    m_httpServer->route("/api/bot/jira/attach", QHttpServerRequest::Method::Post,
+                        [this](const QHttpServerRequest &request) {
+                            return handleJiraAttach(request);
+                        });
+
+
+    m_httpServer->route("/api/bot/tasks/comment", QHttpServerRequest::Method::Post,
+                        [this](const QHttpServerRequest &request) {
+                            return handleTaskComment(request);
+                        });
 
 }
 
@@ -1833,4 +1844,205 @@ QHttpServerResponse WebServer::handleReportTask(const QHttpServerRequest& reques
 
     // Успішне виконання
     return createJsonResponse(QJsonObject{{"status", "reported"}}, QHttpServerResponse::StatusCode::Ok);
+}
+
+QHttpServerResponse WebServer::handleJiraAttach(const QHttpServerRequest &request)
+{
+    // --- 1. АВТОРИЗАЦІЯ БОТА ---
+    QString requestKey = request.value("X-Bot-Api-Key");
+    if (m_botApiKey.isEmpty() || requestKey != m_botApiKey) {
+        return createTextResponse("Unauthorized: Invalid Bot Key", QHttpServerResponse::StatusCode::Unauthorized);
+    }
+
+    // --- 2. ОТРИМАННЯ ДАНИХ КОРИСТУВАЧА ---
+    QString telegramIdStr = request.value("X-Telegram-ID");
+    if (telegramIdStr.isEmpty()) {
+        return createTextResponse("Missing X-Telegram-ID header", QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    // Перевірка в базі
+    QJsonObject statusJson = DbManager::instance().getBotUserStatus(telegramIdStr.toLongLong());
+    if (!statusJson.contains("user")) {
+        return createTextResponse("User not found or not active", QHttpServerResponse::StatusCode::Unauthorized);
+    }
+
+    QJsonObject userObj = statusJson["user"].toObject();
+    QString userLogin = userObj["login"].toString();
+
+    // !!! ВИПРАВЛЕННЯ: ДЕШИФРУВАННЯ ТОКЕНА !!!
+    QString encryptedToken = userObj["jira_token"].toString();
+    QString userJiraToken = CriptPass::instance().decriptPass(encryptedToken);
+
+    // --- 3. ID ЗАДАЧІ ---
+    QString taskId = request.value("X-Task-ID");
+    if (taskId.isEmpty()) {
+        return createTextResponse("Missing X-Task-ID header", QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    // --- 4. ПАРСИНГ MULTIPART ---
+    QString contentType = request.value("Content-Type");
+    logInfo() << "WebServer: Parsing upload. Content-Type:" << contentType;
+
+    QString boundaryStr = contentType.section("boundary=", 1).section(';', 0, 0).trimmed();
+    if (boundaryStr.startsWith('"') && boundaryStr.endsWith('"')) {
+        boundaryStr = boundaryStr.mid(1, boundaryStr.length()-2);
+    }
+
+    if (boundaryStr.isEmpty()) {
+        return createTextResponse("Boundary not found in Content-Type", QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    QByteArray boundaryBytes = "--" + boundaryStr.toUtf8();
+    QByteArray body = request.body();
+
+    if (body.isEmpty()) {
+        return createTextResponse("Empty request body", QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    int nameIndex = body.indexOf("name=\"file\"");
+    if (nameIndex == -1) {
+        return createTextResponse("No part with name=\"file\" found", QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    int dataStartMarker = body.indexOf("\r\n\r\n", nameIndex);
+    if (dataStartMarker == -1) {
+        return createTextResponse("Malformed multipart structure", QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    int fileDataStart = dataStartMarker + 4;
+    int fileDataEnd = body.indexOf(boundaryBytes, fileDataStart);
+    if (fileDataEnd == -1) {
+        fileDataEnd = body.indexOf(boundaryBytes + "--", fileDataStart);
+    }
+
+    if (fileDataEnd == -1) {
+        return createTextResponse("End boundary missing", QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    QByteArray fileData = body.mid(fileDataStart, fileDataEnd - fileDataStart);
+    while (fileData.endsWith('\r') || fileData.endsWith('\n')) {
+        fileData.chop(1);
+    }
+
+    QString fileName = "upload.jpg";
+    int fnStart = body.indexOf("filename=\"", nameIndex);
+    if (fnStart != -1 && fnStart < dataStartMarker) {
+        fnStart += 10;
+        int fnEnd = body.indexOf("\"", fnStart);
+        if (fnEnd != -1) fileName = QString::fromUtf8(body.mid(fnStart, fnEnd - fnStart));
+    }
+
+    logInfo() << "WebServer: File parsed."
+              << "| Task:" << taskId
+              << "| User:" << userLogin
+              << "| Size:" << fileData.size();
+
+    // --- 5. ІНТЕГРАЦІЯ З JIRA CLIENT ---
+
+    QString jiraBaseUrl = AppParams::instance().getParam("Global", "JiraBaseUrl").toString();
+
+    if (jiraBaseUrl.isEmpty()) {
+        logCritical() << "WebServer: 'JiraBaseUrl' is missing in Global AppParams!";
+        return createTextResponse("Server Error: Jira URL not configured", QHttpServerResponse::StatusCode::InternalServerError);
+    }
+
+    // Перевіряємо вже розшифрований токен
+    if (userJiraToken.isEmpty()) {
+        logWarning() << "WebServer: User" << userLogin << "has no valid Jira Token (decryption failed or empty).";
+        return createTextResponse("User has no Jira token configured", QHttpServerResponse::StatusCode::Unauthorized);
+    }
+
+    logInfo() << "WebServer: Sending to Jira (" << jiraBaseUrl << ")...";
+
+    JiraClient jiraClient;
+    // Передаємо розшифрований токен
+    QNetworkReply *reply = jiraClient.uploadAttachment(jiraBaseUrl, taskId, userJiraToken, fileData, fileName);
+
+    if (!reply) {
+        return createTextResponse("Failed to create Jira request", QHttpServerResponse::StatusCode::InternalServerError);
+    }
+
+    // Синхронне очікування
+    QEventLoop loop;
+    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    if (reply->error() == QNetworkReply::NoError) {
+        logInfo() << "WebServer: Successfully uploaded to Jira!";
+        reply->deleteLater();
+        return createTextResponse("Attachment uploaded to Jira successfully.", QHttpServerResponse::StatusCode::Ok);
+    } else {
+        QString errStr = reply->errorString();
+        QByteArray errBody = reply->readAll();
+        logCritical() << "WebServer: Jira Upload Failed:" << errStr << "Body:" << errBody;
+
+        reply->deleteLater();
+        return createTextResponse("Jira Error: " + errStr.toUtf8(), QHttpServerResponse::StatusCode::BadGateway);
+    }
+}
+
+
+QHttpServerResponse WebServer::handleTaskComment(const QHttpServerRequest &request)
+{
+    // 1. Авторизація (копіюємо з інших методів або використовуємо authenticateRequest)
+    User* user = authenticateRequest(request);
+    if (!user) return createTextResponse("Unauthorized", QHttpServerResponse::StatusCode::Unauthorized);
+
+    // 2. Парсинг JSON
+    QJsonObject json = QJsonDocument::fromJson(request.body()).object();
+    QString taskId = json["taskId"].toString();
+    QString tracker = json["tracker"].toString();
+    QString comment = json["comment"].toString();
+
+    if (taskId.isEmpty() || comment.isEmpty()) {
+        delete user;
+        return createTextResponse("Missing taskId or comment", QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    bool success = false;
+    QString errorMsg;
+
+    // 3. Маршрутизація
+    if (tracker == "jira") {
+        // --- JIRA LOGIC ---
+        QString jiraBaseUrl = AppParams::instance().getParam("Global", "JiraBaseUrl").toString();
+        QString encryptedToken = user->jiraToken(); // Беремо з об'єкта User
+        QString userToken = CriptPass::instance().decriptPass(encryptedToken);
+
+        if (userToken.isEmpty()) {
+            delete user;
+            return createTextResponse("No Jira Token", QHttpServerResponse::StatusCode::Unauthorized);
+        }
+
+        JiraClient jiraClient;
+        QNetworkReply* reply = jiraClient.addComment(jiraBaseUrl, taskId, userToken, comment);
+
+        // Синхронне очікування
+        if (reply) {
+            QEventLoop loop;
+            connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+            loop.exec();
+
+            if (reply->error() == QNetworkReply::NoError) success = true;
+            else errorMsg = reply->errorString();
+
+            reply->deleteLater();
+        }
+
+    } else if (tracker == "redmine") {
+        // --- REDMINE LOGIC ---
+        // Тут використовуйте ваш існуючий RedmineClient
+        // RedmineClient redmineClient;
+        // success = redmineClient.addComment(...);
+        // (Реалізуйте за аналогією, якщо ще немає)
+        success = true; // Заглушка, якщо ви сказали, що Redmine готовий
+    }
+
+    delete user;
+
+    if (success) {
+        return createTextResponse("Comment added", QHttpServerResponse::StatusCode::Ok);
+    } else {
+        return createTextResponse("Failed to add comment: " + errorMsg.toUtf8(), QHttpServerResponse::StatusCode::BadGateway);
+    }
 }

@@ -3,8 +3,11 @@
 
 #include <QObject>
 #include <QString>
-#include <QJsonArray>  // Рекомендовано додати для сигналів
-#include <QJsonObject> // Рекомендовано додати для сигналів
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QHttpMultiPart>
+#include <QHttpPart>
+#include <QFile>
 
 class QNetworkAccessManager;
 class QNetworkReply;
@@ -130,6 +133,11 @@ public:
     void reportTask(const QJsonObject& payload, qint64 telegramId);
 
     void fetchJiraTasksByTerminal(qint64 telegramId, int terminalId);
+
+    // path - шлях на диску, taskId - ключ задачі (напр. AZS-46937), chatId - для відповіді
+    void uploadAttachmentToJira(const QString &path, const QString &taskId, qint64 chatId);
+
+    void sendTaskComment(const QString& taskId, const QString& tracker, const QString& comment, qint64 telegramId);
 
 signals:
     // Сигнали для логіну
@@ -281,6 +289,12 @@ signals:
 
     void reportTaskSuccess(const QJsonObject& response, qint64 telegramId);
     void reportTaskFailed(const ApiError& error, qint64 telegramId);
+
+    void jiraAttachmentSuccess(qint64 telegramId, const QString &taskId);
+    void jiraAttachmentFailed(const ApiError &error, qint64 telegramId);
+
+    void taskCommentSuccess(qint64 telegramId);
+    void taskCommentFailed(const ApiError& error, qint64 telegramId);
 
 private slots:
     void onLoginReplyFinished();

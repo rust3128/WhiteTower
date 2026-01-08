@@ -10,6 +10,10 @@
 #include <QJsonArray>
 #include <QSslConfiguration> // Для ігнорування SSL
 #include <QSslSocket>
+#include <QHttpMultiPart>
+#include <QHttpPart>
+#include <QFile>
+#include <QFileInfo>
 
 
 JiraClient::JiraClient(QObject *parent) : QObject(parent)
@@ -183,4 +187,102 @@ QNetworkReply* JiraClient::searchIssuesByTerminal(const QString& baseUrl, int te
     connect(reply, &QNetworkReply::finished, this, &JiraClient::onIssuesReplyFinished);
 
     return reply;
+}
+
+
+QNetworkReply* JiraClient::uploadAttachment(const QString& baseUrl, const QString& issueKey,
+                                            const QString& userApiToken, const QByteArray& fileData,
+                                            const QString& fileName)
+{
+    if (baseUrl.isEmpty() || issueKey.isEmpty() || userApiToken.isEmpty()) {
+        logCritical() << "JiraClient: Missing parameters for attachment upload.";
+        return nullptr;
+    }
+
+    // Формуємо URL: /rest/api/2/issue/{issueIdOrKey}/attachments
+    QUrl url(baseUrl + QString("/rest/api/2/issue/%1/attachments").arg(issueKey));
+    QNetworkRequest request(url);
+
+    // --- ВАЖЛИВІ ЗАГОЛОВКИ JIRA ---
+    // 1. Авторизація
+    request.setRawHeader("Authorization", ("Bearer " + userApiToken).toUtf8());
+    // 2. Обов'язковий заголовок для завантаження файлів (захист від XSRF)
+    request.setRawHeader("X-Atlassian-Token", "no-check");
+
+    // Ігнорування SSL (як у ваших інших методах)
+    QSslConfiguration sslConfig = request.sslConfiguration();
+    sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
+    sslConfig.setProtocol(QSsl::AnyProtocol);
+    request.setSslConfiguration(sslConfig);
+
+    // --- ФОРМУВАННЯ MULTIPART ---
+    QHttpMultiPart *multiPart = new QHttpMultiPart(QHttpMultiPart::FormDataType);
+
+    QHttpPart imagePart;
+    // Jira очікує, що поле називається "file"
+    imagePart.setHeader(QNetworkRequest::ContentDispositionHeader,
+                        QVariant(QString("form-data; name=\"file\"; filename=\"%1\"").arg(fileName)));
+    // Content-Type можна не вказувати, або вказати image/jpeg, Jira розбереться
+    imagePart.setBody(fileData);
+
+    multiPart->append(imagePart);
+
+    logInfo() << "JiraClient: Uploading attachment to" << url.toString();
+
+    QNetworkReply *reply = m_networkManager->post(request, multiPart);
+    multiPart->setParent(reply); // Видалити multipart разом з відповіддю
+
+    return reply;
+}
+
+
+QNetworkReply* JiraClient::addComment(const QString& baseUrl, const QString& issueKey,
+                                      const QString& userApiToken, const QString& commentBody)
+{
+    if (baseUrl.isEmpty() || issueKey.isEmpty() || userApiToken.isEmpty()) {
+        logCritical() << "JiraClient: Missing parameters for adding comment.";
+        return nullptr;
+    }
+    // --- 1. ЧИСТКА URL ТА ТОКЕНА (Критичні виправлення) ---
+    // Видаляємо слеш в кінці baseUrl, якщо він там є, щоб не вийшло "//rest/api"
+    QString cleanBaseUrl = baseUrl;
+    if (cleanBaseUrl.endsWith("/")) {
+        cleanBaseUrl.chop(1);
+    }
+
+    // Видаляємо пробіли та переноси рядків з токена (часта причина 401 у header-based auth)
+    QString cleanToken = userApiToken.trimmed();
+
+    // Формуємо чистий URL
+    QUrl url(cleanBaseUrl + QString("/rest/api/2/issue/%1/comment").arg(issueKey));
+    QNetworkRequest request(url);
+
+    // --- 2. НАЛАШТУВАННЯ ЗАГОЛОВКІВ ---
+    // Явно вказуємо кодування, Jira іноді вередує без charset=utf-8
+    request.setRawHeader("Content-Type", "application/json; charset=utf-8");
+
+    // Авторизація (використовуємо почищений токен)
+    request.setRawHeader("Authorization", ("Bearer " + cleanToken).toUtf8());
+
+    // XSRF захист (як у фото)
+    request.setRawHeader("X-Atlassian-Token", "no-check");
+
+    // --- 3. SSL (Як у фото) ---
+    QSslConfiguration sslConfig = request.sslConfiguration();
+    sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
+    sslConfig.setProtocol(QSsl::AnyProtocol);
+    request.setSslConfiguration(sslConfig);
+
+    // --- 4. ТІЛО ЗАПИТУ ---
+    QJsonObject json;
+    json["body"] = commentBody;
+
+    QByteArray jsonData = QJsonDocument(json).toJson();
+
+    // Логуємо для діагностики (щоб ви бачили в консолі, куди реально йде запит)
+    logInfo() << "JiraClient: POST Comment URL:" << url.toString();
+    // УВАГА: Не виводьте токен у лог, це небезпечно, але довжину можна перевірити
+    // logInfo() << "Token length:" << cleanToken.length();
+
+    return m_networkManager->post(request, jsonData);
 }

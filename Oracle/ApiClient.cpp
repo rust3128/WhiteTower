@@ -10,6 +10,7 @@
 #include <QJsonArray>
 #include <QUrl>
 #include <QUrlQuery>
+#include <QFileInfo>
 
 ApiError parseReply(QNetworkReply* reply)
 {
@@ -2133,4 +2134,97 @@ void ApiClient::fetchJiraTasksByTerminal(qint64 telegramId, int terminalId)
 
     // Використовуємо існуючий слот — він уже вміє приймати масив задач Jira
     connect(reply, &QNetworkReply::finished, this, &ApiClient::onJiraTasksReplyFinished);
+}
+
+
+
+void ApiClient::uploadAttachmentToJira(const QString &path, const QString &taskId, qint64 telegramId)
+{
+    QFile *file = new QFile(path);
+    if (!file->open(QIODevice::ReadOnly)) {
+        logCritical() << "Failed to open file for upload:" << path;
+        // {httpCode, requestUrl, errorString, body}
+        emit jiraAttachmentFailed({0, "", "Could not open file for reading", QByteArray()}, telegramId);
+        delete file;
+        return;
+    }
+
+    QHttpMultiPart *multiPart = new QHttpMultiPart(QHttpMultiPart::FormDataType);
+
+    // 1. Частина з файлом
+    QHttpPart imagePart;
+    imagePart.setHeader(QNetworkRequest::ContentTypeHeader, QVariant("image/jpeg"));
+    imagePart.setHeader(QNetworkRequest::ContentDispositionHeader,
+                        QVariant(QString("form-data; name=\"file\"; filename=\"%1\"").arg(QFileInfo(path).fileName())));
+    imagePart.setBodyDevice(file);
+    file->setParent(multiPart); // Файл видалиться разом з multiPart
+
+    multiPart->append(imagePart);
+
+    // *ЗМІНА*: Частину taskIdPart видалено з тіла запиту для спрощення.
+    // ID задачі тепер передається у заголовку.
+
+    // Використовуємо m_serverUrl
+    QUrl url(m_serverUrl + "/api/bot/jira/attach");
+    QNetworkRequest request(url);
+
+    // --- ВРУЧНУ ДОДАЄМО ЗАГОЛОВКИ ---
+    request.setRawHeader("X-Bot-Api-Key", m_botApiKey.toUtf8());
+    request.setRawHeader("X-Telegram-ID", QString::number(telegramId).toUtf8());
+
+    // ДОДАНО: Передаємо ID задачі в заголовку
+    request.setRawHeader("X-Task-ID", taskId.toUtf8());
+    // -----------------------------------------------------------
+
+    logInfo() << "ApiClient: Uploading attachment for" << taskId << "to" << url.toString();
+
+    QNetworkReply *reply = m_networkManager->post(request, multiPart);
+    multiPart->setParent(reply);
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, telegramId, taskId]() {
+        if (reply->error() == QNetworkReply::NoError) {
+            logInfo() << "ApiClient: Attachment uploaded successfully for task:" << taskId;
+            emit jiraAttachmentSuccess(telegramId, taskId);
+        } else {
+            ApiError error = parseReply(reply);
+            logCritical() << "Server response body:" << error.responseBody;
+            logCritical() << "ApiClient: Failed to upload attachment:" << error.errorString;
+            emit jiraAttachmentFailed(error, telegramId);
+        }
+        reply->deleteLater();
+    });
+}
+
+void ApiClient::sendTaskComment(const QString& taskId, const QString& tracker, const QString& comment, qint64 telegramId)
+{
+    // Формуємо URL: /api/bot/tasks/comment
+    QUrl url(m_serverUrl + "/api/bot/tasks/comment");
+
+    // !!! ВИПРАВЛЕННЯ ТУТ !!!
+    // Замість ручного встановлення неправильних заголовків,
+    // використовуємо стандартний хелпер, який ставить "X-Bot-Token".
+    // Це узгодить запит з WebServer::authenticateRequest.
+    QNetworkRequest request = createBotRequest(url, telegramId);
+
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    // Формуємо тіло запиту
+    QJsonObject json;
+    json["taskId"] = taskId;
+    json["tracker"] = tracker; // "jira" або "redmine"
+    json["comment"] = comment;
+
+    QNetworkReply *reply = m_networkManager->post(request, QJsonDocument(json).toJson());
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, telegramId]() {
+        if (reply->error() == QNetworkReply::NoError) {
+            emit taskCommentSuccess(telegramId);
+        } else {
+            ApiError error = parseReply(reply);
+            // Тепер тут буде реальна помилка від Jira, якщо вона виникне,
+            // а не фейковий 401 від локального сервера.
+            emit taskCommentFailed(error, telegramId);
+        }
+        reply->deleteLater();
+    });
 }

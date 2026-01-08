@@ -130,6 +130,11 @@ private:
      */
     QHttpServerResponse handleReportTask(const QHttpServerRequest& request);
 
+    QHttpServerResponse handleJiraAttach(const QHttpServerRequest &request);
+
+    // POST /api/bot/tasks/comment
+    QHttpServerResponse handleTaskComment(const QHttpServerRequest &request);
+
 
 private:
     QHttpServer* m_httpServer;

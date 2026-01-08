@@ -19,13 +19,13 @@ public:
     QString prepareStoragePath(const QString &baseRoot, User *user, const QString &taskId);
 
     // Запускає завантаження файлу з Telegram
-    void downloadFile(const QUrl &tgUrl, const QString &fullPath);
+    void downloadFile(const QUrl &tgUrl, const QString &fullPath, qint64 telegramId, const QString &taskId);
 
 
 
 signals:
-    void fileDownloaded(const QString &localPath);
-    void downloadError(const QString &error);
+    void fileDownloaded(const QString &localPath, qint64 telegramId, const QString &taskId);
+    void downloadError(const QString &error, qint64 telegramId); // Теж корисно додати ID для відповіді
 
 private slots:
     void onDownloadFinished(QNetworkReply *reply);

@@ -106,13 +106,42 @@ void Bot::setupConnections()
     connect(&m_apiClient, &ApiClient::reportTaskSuccess, this, &Bot::onReportTaskSuccess);
     connect(&m_apiClient, &ApiClient::reportTaskFailed, this, &Bot::onReportTaskFailed);
 
-    connect(m_attachmentManager, &AttachmentManager::fileDownloaded, this, [this](const QString &path) {
-        logInfo() << "File successfully saved to archive:" << path;
-        // ТУТ МИ БУДЕМО ВИКЛИКАТИ ApiClient::uploadFileToConduit(path)
+    connect(m_attachmentManager, &AttachmentManager::fileDownloaded, this,
+            [this](const QString &path, qint64 telegramId, const QString &taskId) {
+
+                logInfo() << "Local save complete. Uploading to Jira Server..." << taskId;
+                m_telegramClient->sendMessage(telegramId, "💾 Файл збережено. Відправляю на сервер...");
+
+                // ВИКЛИКАЄМО НАШ НОВИЙ МЕТОД В APICLIENT
+                m_apiClient.uploadAttachmentToJira(path, taskId, telegramId);
+            });
+
+    // З'єднання для помилок (оновлене)
+    connect(m_attachmentManager, &AttachmentManager::downloadError, this,
+            [this](const QString &err, qint64 telegramId) {
+
+                logCritical() << "Download error:" << err;
+                if (telegramId != 0) {
+                    m_telegramClient->sendMessage(telegramId, "❌ Помилка завантаження файлу: " + err);
+                }
+            });
+
+    // Також додайте обробку результатів від ApiClient (якщо ще немає)
+    connect(&m_apiClient, &ApiClient::jiraAttachmentSuccess, this, [this](qint64 telegramId, const QString &taskId){
+        m_telegramClient->sendMessage(telegramId, QString("✅ Фото успішно прикріплено до задачі <b>%1</b>!").arg(taskId));
+        // Тут можна скинути стан або повернути в меню
     });
 
-    connect(m_attachmentManager, &AttachmentManager::downloadError, this, [this](const QString &err) {
-        logCritical() << "Attachment download error:" << err;
+    connect(&m_apiClient, &ApiClient::jiraAttachmentFailed, this, [this](const ApiError &error, qint64 telegramId){
+        m_telegramClient->sendMessage(telegramId, "❌ Не вдалося відправити фото в Jira: " + error.errorString);
+    });
+
+    connect(&m_apiClient, &ApiClient::taskCommentSuccess, this, [this](qint64 telegramId){
+        m_telegramClient->sendMessage(telegramId, "✅ Коментар успішно додано!");
+    });
+
+    connect(&m_apiClient, &ApiClient::taskCommentFailed, this, [this](const ApiError& error, qint64 telegramId){
+        m_telegramClient->sendMessage(telegramId, "❌ Помилка додавання коментаря: " + error.errorString);
     });
 
     logInfo() << "Signal-slot connections established.";
@@ -2112,12 +2141,12 @@ void Bot::handleReportInput(const QJsonObject& message)
             m_telegramClient->sendMessage(chatId, "⌛ Завантажую фото у локальний архів...");
 
             // ВИПРАВЛЕНО: Використовуємо метод getFile, який ми додали в TelegramClient
-            m_telegramClient->getFile(fileId, [this, chatId, fullPath](const QString& tgFilePath) {
-                // Беремо токен безпосередньо з клієнта, він там уже є з конструктора
+            m_telegramClient->getFile(fileId, [this, chatId, fullPath, taskId](const QString& tgFilePath) {
                 QString token = m_telegramClient->token();
-
                 QUrl downloadUrl(QString("https://api.telegram.org/file/bot%1/%2").arg(token, tgFilePath));
-                m_attachmentManager->downloadFile(downloadUrl, fullPath);
+
+                // Тепер це працюватиме
+                m_attachmentManager->downloadFile(downloadUrl, fullPath, chatId, taskId);
             });
             return;
         }
@@ -2143,6 +2172,30 @@ void Bot::handleReportInput(const QJsonObject& message)
             m_apiClient.checkBotUserStatus(message);
             return;
         }
+    }
+
+
+    // --- ОБРОБКА КОМЕНТАРЯ ---
+    if (currentState == UserState::WaitingForComment) {
+        if (text.isEmpty()) {
+            m_telegramClient->sendMessage(chatId, "⚠️ Коментар не може бути порожнім. Введіть текст.");
+            return;
+        }
+
+        QString taskId = m_reportContext[chatId]["taskId"].toString();
+        QString tracker = m_reportContext[chatId]["tracker"].toString(); // "jira" або "redmine"
+
+        logInfo() << "Sending comment for" << taskId << "(" << tracker << "):" << text;
+
+        // Відправляємо через ApiClient
+        m_apiClient.sendTaskComment(taskId, tracker, text, chatId);
+
+        // Скидаємо стан
+        m_userState.remove(chatId);
+        m_reportContext.remove(chatId);
+
+        m_telegramClient->sendMessage(chatId, "⏳ Відправляю коментар...");
+        return;
     }
 
     // --- 1. ОБРОБКА ВВЕДЕННЯ ID ЗАДАЧІ REDMINE/JIRA (БЕЗ ЗМІН) ---
@@ -2701,6 +2754,21 @@ void Bot::handleCallbackReportAction(const QJsonObject& query, const QStringList
 
     QString action = parts.at(3); // photo
     QString taskId = parts.at(4); // AZS-46937
+
+    if (action == "comment") {
+        m_reportContext[chatId]["taskId"] = taskId;
+
+        // Визначаємо трекер з callback data або контексту
+        // (Припускаємо, що parts[2] це "jira" або "redmine", як у вас було: report:action:jira:comment:ID)
+        QString tracker = parts.at(2);
+        m_reportContext[chatId]["tracker"] = tracker;
+
+        m_userState[chatId] = UserState::WaitingForComment;
+
+        m_telegramClient->sendMessage(chatId, QString("✍️ Введіть коментар для задачі <b>%1</b>:").arg(taskId));
+        m_telegramClient->answerCallbackQuery(queryId);
+        return;
+    }
 
     if (action == "photo") {
         // 1. Фіксуємо задачу в контексті

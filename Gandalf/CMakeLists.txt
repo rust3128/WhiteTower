@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Знаходимо Qt і необхідні компоненти для GUI-додатку
 # Core - базовий модуль, Gui - для вікон, Widgets - для кнопок, полів і т.д.
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Sql Concurrent)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Sql Concurrent Network)
 
 # Список файлів з вихідним кодом для нашого додатку
 add_executable(Gandalf
@@ -46,6 +46,7 @@ target_link_libraries(Gandalf PRIVATE
     Qt6::Widgets  # <-- Головна бібліотека для Qt Widgets
     Qt6::Sql
     Qt6::Concurrent
+    Qt6::Network
     Oracle        # <-- Наша спільна бібліотека
 )
 
