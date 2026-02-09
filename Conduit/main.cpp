@@ -111,14 +111,26 @@ int main(int argc, char *argv[])
     // Отримуємо порт з налаштувань бази даних, з резервним значенням 8080
     quint16 port = params.getParam(appName, "ServerPort", 8080).toUInt();
 
-    // --- ПОЧАТОК ЗМІН ---
-    // 1. Отримуємо ключ, який ConfigManager тепер вміє читати
-    QString botKey = configManager.getBotApiKey();
-    if (botKey.isEmpty() || botKey == "YOUR_DEFAULT_BOT_KEY_HERE" || botKey.length() < 32) {
-        logWarning() << "Bot API Key is not configured or is too weak. Bot authentication will fail.";
-        // Ми не зупиняємо сервер, оскільки Gandalf має працювати,
-        // але виводимо попередження.
+    // // --- ПОЧАТОК ЗМІН ---
+    // // 1. Отримуємо ключ, який ConfigManager тепер вміє читати
+    // QString botKey = configManager.getBotApiKey();
+    // if (botKey.isEmpty() || botKey == "YOUR_DEFAULT_BOT_KEY_HERE" || botKey.length() < 32) {
+    //     logWarning() << "Bot API Key is not configured or is too weak. Bot authentication will fail.";
+    //     // Ми не зупиняємо сервер, оскільки Gandalf має працювати,
+    //     // але виводимо попередження.
+    // }
+
+    // Спроба 1: База Даних (для продакшену найнадійніше)
+    QString botKey = params.getParam("Global", "BotApiKey", "").toString();
+
+    // Спроба 2: Файл (резерв, або для тестового середовища)
+    if (botKey.isEmpty() || botKey.length() < 10) {
+        logInfo() << "Key not found in DB, trying config.json...";
+        botKey = configManager.getBotApiKey();
     }
+
+    // Логуємо (безпечно, тільки перші 4 символи), щоб ви БАЧИЛИ, що він прочитав
+    logInfo() << "Server using Bot API Key starting with:" << botKey.left(4);
 
     // 2. Передаємо ключ у новий конструктор WebServer
     WebServer webServer(port, botKey);

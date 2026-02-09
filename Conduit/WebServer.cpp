@@ -4,6 +4,7 @@
 #include "Oracle/DbManager.h"
 #include "version.h"
 #include "Oracle/SessionManager.h"
+#include "JiraWorkflowManager.h"
 
 #include "Oracle/User.h"         // Потрібен для доступу до токенів користувача
 #include "Oracle/CriptPass.h"    // Потрібен для дешифрування токенів
@@ -259,9 +260,9 @@ QHttpServerResponse WebServer::createJsonResponse(const QJsonObject &body, QHttp
         logCritical() << "Server Response Error:" << static_cast<int>(statusCode)
         << bodyJson;
     }
-    logInfo().noquote() << QString("Response: status %1, type: application/json, body: %2")
-                               .arg(static_cast<int>(statusCode))
-                               .arg(QString::fromUtf8(bodyJson));
+    // logInfo().noquote() << QString("Response: status %1, type: application/json, body: %2")
+    //                            .arg(static_cast<int>(statusCode))
+    //                            .arg(QString::fromUtf8(bodyJson));
     return QHttpServerResponse("application/json", bodyJson, statusCode);
 }
 
@@ -1776,9 +1777,9 @@ QHttpServerResponse WebServer::handleReportTask(const QHttpServerRequest& reques
     }
     QJsonObject body = doc.object();
 
-    QString tracker = body["tracker"].toString().toLower(); // redmine або jira
+    QString tracker = body["tracker"].toString().toLower();
     QString taskId = body["taskId"].toString().trimmed();
-    QString action = body["action"].toString().toLower();   // comment або close
+    QString action = body["action"].toString().toLower();
     QString comment = body["comment"].toString();
 
     // !!! 1. ЗЧИТУВАННЯ МАСИВУ ВКЛАДЕНЬ !!!
@@ -1791,6 +1792,9 @@ QHttpServerResponse WebServer::handleReportTask(const QHttpServerRequest& reques
 
     ApiError clientError;
 
+    // ==============================================================================
+    // ЛОГІКА REDMINE
+    // ==============================================================================
     if (tracker == "redmine") {
         QString redmineBaseUrl = AppParams::instance().getParam("Global", "RedmineBaseUrl").toString();
         if (redmineBaseUrl.isEmpty()) {
@@ -1800,22 +1804,18 @@ QHttpServerResponse WebServer::handleReportTask(const QHttpServerRequest& reques
 
         QString tokenEncrypted = user->redmineToken();
         QString token = CriptPass::instance().decriptPass(tokenEncrypted);
-        int redmineUserId = user->redmineUserId(); // Використовуємо ЗБЕРЕЖЕНИЙ ID
+        int redmineUserId = user->redmineUserId();
 
         if (redmineUserId <= 0) {
             delete user;
-            return createTextResponse("Redmine User ID is not defined in DB. Cannot report task.", QHttpServerResponse::StatusCode::Forbidden);
+            return createTextResponse("Redmine User ID is not defined in DB.", QHttpServerResponse::StatusCode::Forbidden);
         }
 
-        // --- 2. ЛОГІКА ІГНОРУВАННЯ ВКЛАДЕНЬ ---
         if (!attachments.isEmpty()) {
-            // Це повідомлення з'явиться у логах Conduit, коли користувач відправить фото.
-            logWarning() << "Received" << attachments.count() << "attachments for Redmine. Skipping file upload (multi-step logic not implemented).";
+            logWarning() << "Received" << attachments.count() << "attachments for Redmine. Skipping (not implemented).";
         }
-        // --- КІНЕЦЬ ЛОГІКИ ІГНОРУВАННЯ ---
 
         RedmineClient client;
-        // !!! 3. ВИКЛИКАЄМО РОБОЧИЙ МЕТОД (6 аргументів) !!!
         QNetworkReply* reply = client.reportTask(redmineBaseUrl, taskId, token, redmineUserId, action, comment);
 
         if (reply) {
@@ -1829,10 +1829,97 @@ QHttpServerResponse WebServer::handleReportTask(const QHttpServerRequest& reques
             reply->deleteLater();
         }
     }
+    // ==============================================================================
+    // ЛОГІКА JIRA
+    // ==============================================================================
+    else if (tracker == "jira") {
+        QString jiraBaseUrl = AppParams::instance().getParam("Global", "JiraBaseUrl").toString();
+        QString encryptedToken = user->jiraToken();
+        QString userToken = CriptPass::instance().decriptPass(encryptedToken);
+
+        if (userToken.isEmpty()) {
+            delete user;
+            return createTextResponse("No Jira Token", QHttpServerResponse::StatusCode::Unauthorized);
+        }
+
+        JiraClient jiraClient;
+        QNetworkReply* reply = nullptr;
+
+        // --- A. ПРОСТИЙ КОМЕНТАР ---
+        if (action == "comment") {
+            reply = jiraClient.addComment(jiraBaseUrl, taskId, userToken, comment);
+
+            // Цей reply буде оброблено внизу, у спільному блоці
+        }
+        // --- B. ЗАКРИТТЯ АБО ВІДХИЛЕННЯ (SMART TRANSITION) ---
+        else if (action == "close" || action == "reject") {
+
+            QString methodType = body["resolutionMethod"].toString(); // "visit" або "remote"
+            QString timeSpentParam = body["timeSpent"].toString();    // "30m"
+
+            // Створюємо менеджера, передаючи йому існуючого клієнта
+            JiraWorkflowManager workflowManager(&jiraClient);
+
+            logInfo() << "WebServer: Delegating transition to JiraWorkflowManager...";
+
+            QString errorMsg;
+            // !!! ВИКЛИК НОВОГО КЛАСУ !!!
+            bool success = workflowManager.performSafeTransition(
+                jiraBaseUrl,
+                taskId,
+                userToken,
+                action,         // "close" / "reject"
+                methodType,     // "visit" / "remote"
+                comment,
+                timeSpentParam,
+                errorMsg
+                );
+
+            // Оскільки Smart Transition самостійний, ми повертаємо відповідь ОДРАЗУ
+            delete user; // Не забуваємо чистити пам'ять перед виходом
+
+            if (success) {
+                logInfo() << "WebServer: Smart Transition completed successfully.";
+                // ВИПРАВЛЕНО: Додано другий аргумент QHttpServerResponse::StatusCode::Ok
+                return createJsonResponse(QJsonObject{
+                                              {"status", "success"},
+                                              {"message", "Task updated via Smart Transition"}
+                                          }, QHttpServerResponse::StatusCode::Ok);
+            } else {
+                logCritical() << "WebServer: Smart Transition failed:" << errorMsg;
+                return createJsonResponse(QJsonObject{
+                                              {"error", errorMsg}
+                                          }, QHttpServerResponse::StatusCode::BadGateway);
+            }
+        }
+
+        // --- ОБРОБКА ВІДПОВІДІ (Тільки для comment, бо close/reject вже вийшли через return) ---
+        if (reply) {
+            QEventLoop loop;
+            connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+            loop.exec();
+
+            if (reply->error() == QNetworkReply::NoError &&
+                (reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 200 ||
+                 reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 201 ||
+                 reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() == 204))
+            {
+                // Успіх
+            } else {
+                clientError = reply->property("errorDetails").value<ApiError>();
+                if (clientError.errorString.isEmpty()) {
+                    clientError.errorString = "Jira Error: " + reply->readAll();
+                    clientError.httpStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+                    logCritical() << "Jira Action Failed:" << clientError.errorString;
+                }
+            }
+            reply->deleteLater();
+        }
+        // Якщо reply == nullptr і ми тут, значить action був невідомий (але ми перевіряли це на вході)
+    }
     else {
-        // ... (Тут буде логіка Jira, поки що заглушка)
         delete user;
-        return createTextResponse("Tracker not supported or functionality not implemented.", QHttpServerResponse::StatusCode::BadRequest);
+        return createTextResponse("Tracker not supported.", QHttpServerResponse::StatusCode::BadRequest);
     }
 
     delete user;
@@ -1842,14 +1929,15 @@ QHttpServerResponse WebServer::handleReportTask(const QHttpServerRequest& reques
                                   (QHttpServerResponse::StatusCode)clientError.httpStatusCode);
     }
 
-    // Успішне виконання
     return createJsonResponse(QJsonObject{{"status", "reported"}}, QHttpServerResponse::StatusCode::Ok);
 }
 
 QHttpServerResponse WebServer::handleJiraAttach(const QHttpServerRequest &request)
 {
     // --- 1. АВТОРИЗАЦІЯ БОТА ---
-    QString requestKey = request.value("X-Bot-Api-Key");
+ //   QString requestKey = request.value("X-Bot-Api-Key");
+    QString requestKey = request.value("X-Bot-Token");
+
     if (m_botApiKey.isEmpty() || requestKey != m_botApiKey) {
         return createTextResponse("Unauthorized: Invalid Bot Key", QHttpServerResponse::StatusCode::Unauthorized);
     }

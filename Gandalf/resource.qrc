@@ -7,5 +7,6 @@
         <file>res/Images/settings_icon.png</file>
         <file>res/Images/gas_stantion.png</file>
         <file>res/Images/taskslist.png</file>
+        <file>res/Images/gandalf3.png</file>
     </qresource>
 </RCC>

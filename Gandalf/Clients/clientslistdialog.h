@@ -54,6 +54,8 @@ private slots:
 
     void on_toolButtonBrowseImport_clicked();
 
+
+
 private:
     // Методи-помічники для налаштування
     void createConnections();

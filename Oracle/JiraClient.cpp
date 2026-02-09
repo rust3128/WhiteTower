@@ -286,3 +286,59 @@ QNetworkReply* JiraClient::addComment(const QString& baseUrl, const QString& iss
 
     return m_networkManager->post(request, jsonData);
 }
+
+QNetworkReply* JiraClient::changeIssueStatus(const QString& baseUrl, const QString& issueKey,
+                                             const QString& userApiToken, const QJsonObject& payload)
+{
+    if (baseUrl.isEmpty() || issueKey.isEmpty() || userApiToken.isEmpty()) {
+        logCritical() << "JiraClient: Missing parameters for status change.";
+        return nullptr;
+    }
+
+    // API: POST /rest/api/2/issue/{issueIdOrKey}/transitions
+    QUrl url(baseUrl + QString("/rest/api/2/issue/%1/transitions").arg(issueKey));
+    QNetworkRequest request(url);
+
+    // Заголовки (ідентичні до addComment/uploadAttachment)
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    request.setRawHeader("Authorization", ("Bearer " + userApiToken).toUtf8());
+
+    // Важливо для Jira (захист від XSRF), іноді переходи без цього блокуються
+    request.setRawHeader("X-Atlassian-Token", "no-check");
+
+    // SSL (як і в інших методах)
+    QSslConfiguration sslConfig = request.sslConfiguration();
+    sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
+    sslConfig.setProtocol(QSsl::AnyProtocol);
+    request.setSslConfiguration(sslConfig);
+
+    logInfo() << "JiraClient: Sending transition request to" << url.toString();
+
+    // Відправляємо сформований JSON
+    return m_networkManager->post(request, QJsonDocument(payload).toJson());
+}
+
+QNetworkReply* JiraClient::addWorklog(const QString& baseUrl, const QString& issueKey,
+                                      const QString& userApiToken, const QString& timeSpent)
+{
+    // API: POST /rest/api/2/issue/{issueIdOrKey}/worklog
+    QUrl url(baseUrl + QString("/rest/api/2/issue/%1/worklog").arg(issueKey));
+    QNetworkRequest request(url);
+
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    request.setRawHeader("Authorization", ("Bearer " + userApiToken).toUtf8());
+    request.setRawHeader("X-Atlassian-Token", "no-check");
+
+    QSslConfiguration sslConfig = request.sslConfiguration();
+    sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
+    sslConfig.setProtocol(QSsl::AnyProtocol);
+    request.setSslConfiguration(sslConfig);
+
+    // JSON: { "timeSpent": "30m" }
+    QJsonObject json;
+    json["timeSpent"] = timeSpent;
+
+    logInfo() << "JiraClient: Adding worklog" << timeSpent << "to" << url.toString();
+
+    return m_networkManager->post(request, QJsonDocument(json).toJson());
+}

@@ -161,6 +161,11 @@ private:
 
     void handleCallbackReportAction(const QJsonObject& query, const QStringList& parts);
 
+    // Нові обробники для меню закриття/відхилення
+    void handleCallbackReportMethod(const QJsonObject& query, const QStringList& parts);
+    void handleCallbackReportResult(const QJsonObject& query, const QStringList& parts);
+    void handleCallbackReportCancel(const QJsonObject& query, const QStringList& parts);
+
 
 
 private:
@@ -176,6 +181,7 @@ private:
         ValidatingTask,                // Очікування відповіді API на валідацію ID
         WaitingForAssignment,
         WaitingForJiraTerminalID, // Стан очікування введення номера АЗС для пошуку
+        WaitingForTimeSpent,
         WaitingForJiraTaskId,
         WaitingForJiraPhoto
     };

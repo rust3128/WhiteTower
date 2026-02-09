@@ -45,6 +45,21 @@ public:
     QNetworkReply* addComment(const QString& baseUrl, const QString& issueKey,
                               const QString& userApiToken, const QString& commentBody);
 
+    /**
+     * @brief Виконує перехід (зміну статусу) задачі.
+     * @param payload JSON-об'єкт, що містить ID переходу, поля та (опціонально) коментар.
+     */
+    QNetworkReply* changeIssueStatus(const QString& baseUrl, const QString& issueKey,
+                                     const QString& userApiToken, const QJsonObject& payload);
+
+    /**
+     * @brief Додає запис про витрачений час (Worklog).
+     */
+    QNetworkReply* addWorklog(const QString& baseUrl, const QString& issueKey,
+                              const QString& userApiToken, const QString& timeSpent);
+
+    QNetworkAccessManager* networkManager() const { return m_networkManager; }
+
 signals:
     // Сигнал, що емітується при успішному отриманні задач
     void issuesFetched(const QJsonArray& tasks);

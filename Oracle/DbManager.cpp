@@ -13,6 +13,7 @@
 #include <QProcess>
 #include <QJsonDocument>
 #include <QSqlRecord>
+#include <QCoreApplication>
 
 
 DbManager& DbManager::instance()
@@ -268,14 +269,30 @@ bool DbManager::updateUser(int userId, const QJsonObject& userData)
         return false;
     }
 
+    // 1. СПОЧАТКУ ВИДАЛЯЄМО ВСІ СТАРІ РОЛІ КОРИСТУВАЧА
+    // Це гарантує, що ми не отримаємо помилку "Primary Key Violation" при спробі додати існуючу роль.
+    QSqlQuery deleteRolesQuery(m_db);
+    deleteRolesQuery.prepare("DELETE FROM USER_ROLES WHERE USER_ID = :userId");
+    deleteRolesQuery.bindValue(":userId", userId);
+
+    if (!deleteRolesQuery.exec()) {
+        logCritical() << "Failed to clear old user roles:" << deleteRolesQuery.lastError().text();
+        m_db.rollback();
+        return false;
+    }
+
+    // 2. ТЕПЕР ДОДАЄМО НОВІ РОЛІ (Ваш код)
     QJsonArray roles = userData["roles"].toArray();
     for (const QJsonValue &roleValue : roles) {
         QString roleName = roleValue.toString();
+
         QSqlQuery insertRoleQuery(m_db);
+        // Використовуємо підзапит, щоб отримати ID ролі за назвою
         insertRoleQuery.prepare("INSERT INTO USER_ROLES (USER_ID, ROLE_ID) "
                                 "VALUES (:userId, (SELECT ROLE_ID FROM ROLES WHERE ROLE_NAME = :roleName))");
         insertRoleQuery.bindValue(":userId", userId);
         insertRoleQuery.bindValue(":roleName", roleName);
+
         if (!insertRoleQuery.exec()) {
             logCritical() << "Failed to insert new role" << roleName << ":" << insertRoleQuery.lastError().text();
             m_db.rollback();
@@ -983,7 +1000,39 @@ QVariantMap DbManager::syncViaFile(int clientId, const QJsonObject& clientDetail
     // 3. Розпакування
     QProcess zipper;
     zipper.setWorkingDirectory(tempPath);
-    zipper.start("7z", QStringList() << "x" << "-y" << fullArchivePath);
+
+    // --- ПОЧАТОК ЗМІН: ПОШУК 7-ZIP ---
+    QString sevenZipExe = "7z"; // Дефолтне значення (сподіваємось на PATH)
+
+    // 1. Пріоритет: Шукаємо 7z.exe поруч із сервером (Conduit.exe)
+    // Це найнадійніший варіант.
+    QString local7z = QCoreApplication::applicationDirPath() + "/7z.exe";
+
+    // 2. Пріоритет: Стандартний шлях установки 7-Zip
+    QString system7z = "C:/Program Files/7-Zip/7z.exe";
+    QString system7z86 = "C:/Program Files (x86)/7-Zip/7z.exe";
+
+    if (QFile::exists(local7z)) {
+        sevenZipExe = local7z;
+        logDebug() << "Archiver found locally for sync:" << sevenZipExe;
+    }
+    else if (QFile::exists(system7z)) {
+        sevenZipExe = system7z;
+        logDebug() << "Archiver found in Program Files:" << sevenZipExe;
+    }
+    else if (QFile::exists(system7z86)) {
+        sevenZipExe = system7z86;
+        logDebug() << "Archiver found in Program Files (x86):" << sevenZipExe;
+    }
+    else {
+        logWarning() << "7z.exe not found in standard paths. Trying system PATH...";
+    }
+    // --- КІНЕЦЬ ЗМІН ---
+
+    logInfo() << "Starting extraction using:" << sevenZipExe << "File:" << fullArchivePath;
+
+    // Запускаємо знайдений exe
+    zipper.start(sevenZipExe, QStringList() << "x" << "-y" << fullArchivePath);
     if (!zipper.waitForFinished(30000) || zipper.exitCode() != 0) {
         QString msg = "7z extraction failed.";
         // Фіксуємо помилку в базу

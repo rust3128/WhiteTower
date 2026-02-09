@@ -690,74 +690,72 @@ QJsonObject ClientsListDialog::gatherClientDataForConfig()
 
 void ClientsListDialog::generateExporterPackage(const QJsonArray& tasks)
 {
-    // ... (початок методу: вибір папки збереження 'saveDir') ...
+    // Вибір папки користувачем
     QString saveDir = QFileDialog::getExistingDirectory(this, "Виберіть папку для збереження пакета Експортера");
     if (saveDir.isEmpty()) {
         return;
     }
 
-    // --- 1. Створюємо ТИМЧАСОВУ ПАПКУ для підготовки ---
-    QTemporaryDir tempDir;
-    if (!tempDir.isValid()) {
-        QMessageBox::critical(this, "Помилка", "Не вдалося створити тимчасову папку.");
+    // --- 1. Створюємо ТИМЧАСОВУ ПАПКУ всередині обраної папки ---
+    // Це гарантує, що у нас є права на запис і диск існує
+    QString tempDirName = "temp_export_pack_" + QString::number(QDateTime::currentMSecsSinceEpoch());
+    QDir destinationDir(saveDir);
+
+    if (!destinationDir.mkdir(tempDirName)) {
+        QMessageBox::critical(this, "Помилка", "Не вдалося створити тимчасову папку в: " + saveDir);
         return;
     }
 
-    // Отримуємо конфігураційний об'єкт з зашифрованим паролем
+    // Повний шлях до нашої робочої папки
+    QString tempDirPath = saveDir + "/" + tempDirName;
+
+    // Отримуємо конфігураційний об'єкт
     QJsonObject config = gatherClientDataForConfig();
     int clientId = config["embed_client_id"].toInt();
 
     // Імена файлів
     QString finalZipName = QString("%1_import_package.zip").arg(clientId);
-    QString configFilename = QString("%1_config.json").arg(clientId); // Нове ім'я конфіга
-    QStringList filesToZip; // Список файлів, які підуть в архів
+    QString configFilename = QString("%1_config.json").arg(clientId);
+    QStringList filesToZip;
 
     QJsonArray tasksArray;
 
-
-
-    // 2. Генеруємо файли .json та .sql у тимчасовій папці
+    // 2. Генеруємо файли .json та .sql у НАШІЙ тимчасовій папці
     for (const QJsonValue& value : tasks) {
         QJsonObject task = value.toObject();
 
         if (task["is_active"].toInt() != 1) {
-            continue; // Пропускаємо неактивні
+            continue;
         }
 
-        // --- ВИПРАВЛЕННЯ ПОЧАТОК ---
-        // Використовуємо реальне ім'я файлу з налаштувань БД (query_posdatas.sql),
-        // а не генеруємо його з назви завдання (щоб уникнути пробілів).
         QString queryFilename = task["query_filename"].toString();
-
-        // На випадок, якщо в базі пусто (старі записи), залишаємо фолбек, але вирізаємо пробіли
         if (queryFilename.isEmpty()) {
             queryFilename = QString("query_%1.sql").arg(task["task_name"].toString().toLower().simplified().replace(" ", ""));
         }
-        // --- ВИПРАВЛЕННЯ КІНЕЦЬ ---
 
-        // 2a. Зберігаємо .sql файл
-        QFile sqlFile(tempDir.path() + "/" + queryFilename);
+        // 2a. Зберігаємо .sql файл (використовуємо tempDirPath)
+        QFile sqlFile(tempDirPath + "/" + queryFilename);
         if (sqlFile.open(QIODevice::WriteOnly)) {
             QString sqlTemplate = task["sql_template"].toString();
             sqlFile.write(sqlTemplate.toUtf8());
             sqlFile.close();
-            filesToZip.append(queryFilename); // Додаємо до списку для архівації
+            filesToZip.append(queryFilename);
         } else {
             QMessageBox::critical(this, "Помилка", "Не вдалося записати файл: " + sqlFile.fileName());
+            // Очистка перед виходом
+            QDir(tempDirPath).removeRecursively();
             return;
         }
 
         // 2b. Додаємо завдання в конфіг
         QJsonObject taskConfigEntry;
         taskConfigEntry["task_name"] = task["task_name"];
-        taskConfigEntry["query_file"] = queryFilename; // Наприклад: query_posdatas.sql
+        taskConfigEntry["query_file"] = queryFilename;
 
-        // Формуємо ім'я вихідного файлу (.json) на основі вхідного (.sql)
-        // Використовуємо окрему змінну, щоб не псувати queryFilename
         QString outputJsonName = queryFilename;
         outputJsonName.replace(".sql", ".json", Qt::CaseInsensitive);
 
-        taskConfigEntry["output_file"] = outputJsonName; // Наприклад: query_posdatas.json
+        taskConfigEntry["output_file"] = outputJsonName;
         taskConfigEntry["target_table"] = task["target_table"].toString();
         taskConfigEntry["embed_client_id"] = config["embed_client_id"];
         taskConfigEntry["params"] = config["params"];
@@ -766,52 +764,98 @@ void ClientsListDialog::generateExporterPackage(const QJsonArray& tasks)
     config["tasks"] = tasksArray;
 
     // 3. Зберігаємо фінальний конфіг .json
-    QFile configFile(tempDir.path() + "/" + configFilename);
+    QFile configFile(tempDirPath + "/" + configFilename);
     if (configFile.open(QIODevice::WriteOnly)) {
         configFile.write(QJsonDocument(config).toJson(QJsonDocument::Indented));
         configFile.close();
-        filesToZip.append(configFilename); // Додаємо до списку для архівації
+        filesToZip.append(configFilename);
     } else {
         QMessageBox::critical(this, "Помилка", "Не вдалося записати конфігураційний файл.");
+        QDir(tempDirPath).removeRecursively();
         return;
     }
 
-    // 4. !!! АРХІВАЦІЯ ТІЛЬКИ ПОТРІБНИХ ФАЙЛІВ (7z) !!!
+    // 4. АРХІВАЦІЯ (7z)
     QProcess zipper;
-    zipper.setWorkingDirectory(tempDir.path()); // Працюємо всередині тимчасової папки
+    zipper.setWorkingDirectory(tempDirPath);
 
     QStringList args;
-    args << "a"           // Команда "add"
-         << "-tzip"       // Тип архіву - zip
-         << finalZipName; // Ім'я архіву
+    args << "a"           // Add
+         << "-tzip"       // Type ZIP
+         << finalZipName; // Output filename
 
-    args.append(filesToZip); // Додаємо тільки .json та .sql файли
+    args.append(filesToZip);
 
-    logDebug() << "Running 7-Zip command in" << tempDir.path() << ":" << "7z" << args.join(" ");
-    zipper.start("7z", args);
+    // --- ПОЧАТОК ЗМІН: РОЗУМНИЙ ПОШУК 7-ZIP ---
+    QString sevenZipExe = "7z"; // Значення за замовчуванням (через PATH)
+
+    // 1. Пріоритет: Шукаємо 7z.exe прямо біля нашої програми (Gandalf.exe)
+    // Це найнадійніший варіант для сервера.
+    QString local7z = QCoreApplication::applicationDirPath() + "/7z.exe";
+
+    // 2. Пріоритет: Стандартний шлях установки 7-Zip x64
+    QString system7z = "C:/Program Files/7-Zip/7z.exe";
+
+    // 3. Пріоритет: Стандартний шлях установки 7-Zip x86 (рідко, але буває)
+    QString system7z86 = "C:/Program Files (x86)/7-Zip/7z.exe";
+
+    if (QFile::exists(local7z)) {
+        sevenZipExe = local7z;
+        logDebug() << "Archiver found locally:" << sevenZipExe;
+    }
+    else if (QFile::exists(system7z)) {
+        sevenZipExe = system7z;
+        logDebug() << "Archiver found in Program Files:" << sevenZipExe;
+    }
+    else if (QFile::exists(system7z86)) {
+        sevenZipExe = system7z86;
+        logDebug() << "Archiver found in Program Files (x86):" << sevenZipExe;
+    }
+    else {
+        logWarning() << "7z.exe not found in standard paths. Trying system PATH...";
+    }
+    // --- КІНЕЦЬ ЗМІН ---
+
+    logDebug() << "Running 7-Zip command in" << tempDirPath << ":" << sevenZipExe << args.join(" ");
+
+    // Запускаємо знайдений шлях
+    zipper.start(sevenZipExe, args);
 
     if (!zipper.waitForFinished(60000) || zipper.exitCode() != 0) {
         QString error = zipper.exitCode() != 0 ? zipper.readAllStandardError() : "Таймаут або невдалий запуск.";
         logCritical() << "7-Zip failed:" << error;
-        QMessageBox::critical(this, "Помилка 7-Zip", "Не вдалося створити архів.\\n" + error);
+        QMessageBox::critical(this, "Помилка 7-Zip",
+                              "Не вдалося створити архів.\n"
+                              "Переконайтеся, що файл 7z.exe знаходиться у папці з програмою.\n\n"
+                              "Деталі: " + error);
+
+        // Очистка
+        QDir(tempDirPath).removeRecursively();
         return;
     }
 
-    // 5. Переміщуємо готовий ZIP-файл у вибрану користувачем папку
-    QString sourceZipPath = tempDir.path() + "/" + finalZipName;
+    // 5. Переміщуємо готовий ZIP з тимчасової папки в основну (рівнем вище)
+    QString sourceZipPath = tempDirPath + "/" + finalZipName;
     QString finalDestinationPath = saveDir + "/" + finalZipName;
 
+    // Видаляємо старий файл, якщо він там вже є
     if (QFile::exists(finalDestinationPath)) {
         QFile::remove(finalDestinationPath);
     }
 
-    if (!QFile::rename(sourceZipPath, finalDestinationPath)) {
+    bool moveSuccess = QFile::rename(sourceZipPath, finalDestinationPath);
+
+    // 6. ВИДАЛЯЄМО ТИМЧАСОВУ ПАПКУ (Cleanup)
+    // Оскільки ми створили її вручну, треба і видалити вручну
+    QDir(tempDirPath).removeRecursively();
+
+    if (!moveSuccess) {
         QMessageBox::critical(this, "Помилка", "Не вдалося перемістити архів у: " + finalDestinationPath);
         return;
     }
 
     QMessageBox::information(this, "Успіх",
-                             QString("Пакет Експортера успішно створено:\\n%1").arg(finalDestinationPath));
+                             QString("Пакет Експортера успішно створено:\n%1").arg(finalDestinationPath));
 }
 
 void ClientsListDialog::onFieldChanged()
@@ -844,4 +888,6 @@ void ClientsListDialog::on_toolButtonBrowseImport_clicked()
         onFieldChanged();
     }
 }
+
+
 

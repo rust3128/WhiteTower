@@ -2143,7 +2143,6 @@ void ApiClient::uploadAttachmentToJira(const QString &path, const QString &taskI
     QFile *file = new QFile(path);
     if (!file->open(QIODevice::ReadOnly)) {
         logCritical() << "Failed to open file for upload:" << path;
-        // {httpCode, requestUrl, errorString, body}
         emit jiraAttachmentFailed({0, "", "Could not open file for reading", QByteArray()}, telegramId);
         delete file;
         return;
@@ -2161,20 +2160,24 @@ void ApiClient::uploadAttachmentToJira(const QString &path, const QString &taskI
 
     multiPart->append(imagePart);
 
-    // *ЗМІНА*: Частину taskIdPart видалено з тіла запиту для спрощення.
-    // ID задачі тепер передається у заголовку.
-
-    // Використовуємо m_serverUrl
+    // URL
     QUrl url(m_serverUrl + "/api/bot/jira/attach");
-    QNetworkRequest request(url);
 
-    // --- ВРУЧНУ ДОДАЄМО ЗАГОЛОВКИ ---
-    request.setRawHeader("X-Bot-Api-Key", m_botApiKey.toUtf8());
-    request.setRawHeader("X-Telegram-ID", QString::number(telegramId).toUtf8());
+    // --- 2. ВИКОРИСТОВУЄМО СТАНДАРТНИЙ ХЕЛПЕР ---
+    // Це автоматично додає:
+    // - X-Bot-Token (замість старого X-Bot-Api-Key)
+    // - X-Telegram-ID
+    QNetworkRequest request = createBotRequest(url, telegramId);
 
-    // ДОДАНО: Передаємо ID задачі в заголовку
+    // --- 3. ВАЖЛИВИЙ МОМЕНТ ДЛЯ ФАЙЛІВ ---
+    // createBotRequest автоматично ставить "application/json".
+    // Для завантаження файлів (Multipart) це НЕ ПІДХОДИТЬ.
+    // Ми очищаємо цей заголовок, щоб QNetworkAccessManager сам встановив
+    // правильний "multipart/form-data; boundary=..."
+    request.setHeader(QNetworkRequest::ContentTypeHeader, QVariant());
+
+    // 4. Додатковий специфічний заголовок для цього методу
     request.setRawHeader("X-Task-ID", taskId.toUtf8());
-    // -----------------------------------------------------------
 
     logInfo() << "ApiClient: Uploading attachment for" << taskId << "to" << url.toString();
 
@@ -2216,13 +2219,12 @@ void ApiClient::sendTaskComment(const QString& taskId, const QString& tracker, c
 
     QNetworkReply *reply = m_networkManager->post(request, QJsonDocument(json).toJson());
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, telegramId]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, telegramId, taskId, tracker]() {
         if (reply->error() == QNetworkReply::NoError) {
-            emit taskCommentSuccess(telegramId);
+            // Емітуємо новий сигнал з даними
+            emit taskCommentSuccess(telegramId, taskId, tracker);
         } else {
             ApiError error = parseReply(reply);
-            // Тепер тут буде реальна помилка від Jira, якщо вона виникне,
-            // а не фейковий 401 від локального сервера.
             emit taskCommentFailed(error, telegramId);
         }
         reply->deleteLater();

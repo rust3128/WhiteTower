@@ -6,6 +6,7 @@
 #include <QDialog>
 #include <QStandardItemModel>
 #include <QJsonArray>
+#include <QComboBox>
 
 namespace Ui {
 class ObjectsListDialog;
@@ -32,6 +33,7 @@ private:
     void setupModel();
     void createConnections();
     void loadFiltersData();
+    void adjustComboWidth(QComboBox* combo);
 private:
     Ui::ObjectsListDialog *ui;
     QStandardItemModel *m_model; // Модель для наших даних

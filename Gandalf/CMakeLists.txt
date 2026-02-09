@@ -13,7 +13,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Sql Concurrent Network)
 
 # Список файлів з вихідним кодом для нашого додатку
-add_executable(Gandalf
+add_executable(Gandalf WIN32
     main.cpp
     res/resources.rc
     MainWindow.h

@@ -18,11 +18,19 @@ ObjectsListDialog::ObjectsListDialog(QWidget *parent)
     m_searchDebounceTimer->setSingleShot(true);
     m_searchDebounceTimer->setInterval(300); // 300 мс
 
+
     setupModel();
     createConnections();
     loadFiltersData(); // Завантажуємо дані для випадаючих списків
 
     onFilterChanged(); // Робимо початковий запит, щоб заповнити таблицю
+
+    // Додайте це в кінець конструктора
+    ui->comboBoxClient->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    ui->comboBoxClient->setMinimumContentsLength(20); // Мінімально 15 символів видно
+
+    ui->comboBoxRegion->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    ui->comboBoxRegion->setMinimumContentsLength(20);
 }
 
 ObjectsListDialog::~ObjectsListDialog()
@@ -48,6 +56,40 @@ void ObjectsListDialog::loadFiltersData()
     ApiClient::instance().fetchAllClients();
     // Використовуємо новий метод для регіонів
     ApiClient::instance().fetchRegionsList();
+}
+
+void ObjectsListDialog::adjustComboWidth(QComboBox* combo)
+{
+    if (!combo) return;
+
+    int maxTextWidth = 0;
+    QFontMetrics fm(combo->font());
+
+    // 1. Шукаємо найдовший текст
+    for (int i = 0; i < combo->count(); ++i) {
+        int itemWidth = fm.horizontalAdvance(combo->itemText(i));
+        if (itemWidth > maxTextWidth) {
+            maxTextWidth = itemWidth;
+        }
+    }
+
+    // Додаємо запас (іконка стрілки + рамка + скролбар)
+    int popupWidth = maxTextWidth + 40;
+
+    // 2. ВАЖЛИВО: Встановлюємо ширину ВИПАДАЮЧОГО СПИСКУ окремо
+    // Це дозволяє бачити повні назви, коли список відкритий
+    combo->view()->setMinimumWidth(popupWidth);
+
+    // 3. Встановлюємо ширину САМОЇ КНОПКИ
+    // Обмежуємо максимум, щоб вікно не розтягувалось на весь екран (наприклад, 400px)
+    int buttonWidth = qMin(popupWidth, 400);
+
+    combo->setMinimumWidth(buttonWidth);
+
+    // 4. ВАЖЛИВО: Змінюємо політику розміру, щоб Layout не стискав віджет
+    QSizePolicy policy = combo->sizePolicy();
+    policy.setHorizontalPolicy(QSizePolicy::Minimum); // "Я не можу бути меншим за minWidth"
+    combo->setSizePolicy(policy);
 }
 
 void ObjectsListDialog::createConnections()
@@ -81,6 +123,7 @@ void ObjectsListDialog::onClientsReceived(const QJsonArray &clients)
         QJsonObject obj = val.toObject();
         ui->comboBoxClient->addItem(obj["client_name"].toString(), obj["client_id"].toInt());
     }
+    adjustComboWidth(ui->comboBoxClient);
 }
 
 void ObjectsListDialog::onRegionsReceived(const QStringList &regions)
@@ -88,6 +131,8 @@ void ObjectsListDialog::onRegionsReceived(const QStringList &regions)
     ui->comboBoxRegion->clear();
     ui->comboBoxRegion->addItem("Всі регіони");
     ui->comboBoxRegion->addItems(regions);
+
+    adjustComboWidth(ui->comboBoxClient);
 }
 
 void ObjectsListDialog::onFilterChanged()
@@ -146,6 +191,7 @@ void ObjectsListDialog::onObjectsReceived(const QJsonArray &objects)
         itemIsActive->setCheckable(true);
         itemIsActive->setCheckState(isActive ? Qt::Checked : Qt::Unchecked);
         itemIsActive->setEditable(false);
+        itemIsActive->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         rowItems.append(itemIsActive);
 
         auto itemIsWork = new QStandardItem();
@@ -153,6 +199,7 @@ void ObjectsListDialog::onObjectsReceived(const QJsonArray &objects)
         itemIsWork->setCheckState(isWork ? Qt::Checked : Qt::Unchecked);
         itemIsWork->setEditable(false);
         rowItems.append(itemIsWork);
+        itemIsWork->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         m_model->appendRow(rowItems);
     }
     ui->tableViewObjects->resizeColumnsToContents();

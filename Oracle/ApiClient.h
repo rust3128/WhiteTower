@@ -293,7 +293,7 @@ signals:
     void jiraAttachmentSuccess(qint64 telegramId, const QString &taskId);
     void jiraAttachmentFailed(const ApiError &error, qint64 telegramId);
 
-    void taskCommentSuccess(qint64 telegramId);
+    void taskCommentSuccess(qint64 telegramId, const QString& taskId, const QString& tracker);
     void taskCommentFailed(const ApiError& error, qint64 telegramId);
 
 private slots:

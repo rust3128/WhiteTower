@@ -18,6 +18,8 @@ add_executable(Conduit
     main.cpp
     WebServer.h
     WebServer.cpp
+    JiraWorkflowManager.h
+    JiraWorkflowManager.cpp
 )
 
 target_include_directories(Conduit PRIVATE
@@ -50,3 +52,5 @@ add_custom_target(docs
     COMMAND apidoc -i ${CMAKE_CURRENT_SOURCE_DIR} -o ${CMAKE_CURRENT_BINARY_DIR}/apidoc
     COMMENT "Generating API documentation with apiDoc..."
 )
+
+
