@@ -2552,3 +2552,43 @@ bool DbManager::updateRedmineUserId(int localUserId, int redmineId)
     logInfo() << "DbManager: Successfully updated REDMINE_USER_ID to" << redmineId << "for user" << localUserId;
     return true;
 }
+
+
+QJsonArray DbManager::searchStationsByTerminal(int terminalId)
+{
+    QJsonArray result;
+    if (!isConnected()) return result;
+
+    QSqlQuery query(m_db);
+
+    // ВИПРАВЛЕННЯ:
+    // 1. C.CLIENT_NAME замість C.NAME (згідно структури таблиці)
+    // 2. ? замість :termId (для стабільної роботи QIBASE драйвера)
+    query.prepare(R"(
+        SELECT O.OBJECT_ID, O.TERMINAL_ID, O.ADDRESS, O.IS_ACTIVE, O.IS_WORK, C.CLIENT_NAME
+        FROM OBJECTS O
+        LEFT JOIN CLIENTS C ON O.CLIENT_ID = C.CLIENT_ID
+        WHERE O.TERMINAL_ID = ?
+    )");
+
+    query.addBindValue(terminalId);
+
+    if (query.exec()) {
+        while (query.next()) {
+            QJsonObject obj;
+            obj["id"] = query.value("OBJECT_ID").toInt();
+            obj["terminalId"] = query.value("TERMINAL_ID").toInt();
+            obj["address"] = query.value("ADDRESS").toString();
+
+            // Тепер беремо значення з колонки CLIENT_NAME
+            obj["clientName"] = query.value("CLIENT_NAME").toString();
+
+            obj["isActive"] = query.value("IS_ACTIVE").toBool();
+            obj["isWork"] = query.value("IS_WORK").toBool();
+            result.append(obj);
+        }
+    } else {
+        logCritical() << "Search query failed:" << query.lastError().text();
+    }
+    return result;
+}

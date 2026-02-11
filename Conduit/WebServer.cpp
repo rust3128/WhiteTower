@@ -231,6 +231,11 @@ void WebServer::setupRoutes()
                             return handleTaskComment(request);
                         });
 
+    m_httpServer->route("/api/stations/search", QHttpServerRequest::Method::Get,
+                        [this](const QHttpServerRequest &request) {
+                            return handleSearchStations(request);
+                        });
+
 }
 
 void WebServer::logRequest(const QHttpServerRequest &request)
@@ -2133,4 +2138,35 @@ QHttpServerResponse WebServer::handleTaskComment(const QHttpServerRequest &reque
     } else {
         return createTextResponse("Failed to add comment: " + errorMsg.toUtf8(), QHttpServerResponse::StatusCode::BadGateway);
     }
+}
+
+
+QHttpServerResponse WebServer::handleSearchStations(const QHttpServerRequest &request)
+{
+    // 1. Авторизація (якщо Gandalf працює через токен користувача)
+    // Якщо цей ендпоінт має бути публічним - закоментуйте цей блок.
+    User* user = authenticateRequest(request);
+    if (!user) {
+        return createTextResponse("Unauthorized", QHttpServerResponse::StatusCode::Unauthorized);
+    }
+    delete user; // User нам далі не потрібен, лише факт авторизації
+
+    // 2. Розбір параметрів запиту
+    QUrlQuery query(request.url());
+    if (!query.hasQueryItem("terminal")) {
+        return createTextResponse("Missing 'terminal' parameter", QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    bool ok;
+    int terminalId = query.queryItemValue("terminal").toInt(&ok);
+    if (!ok) {
+        return createTextResponse("Invalid 'terminal' parameter", QHttpServerResponse::StatusCode::BadRequest);
+    }
+
+    // 3. Запит до БД (використовуємо метод, який ми обговорили раніше)
+    // Переконайтесь, що DbManager має метод searchStationsByTerminal, що повертає QJsonArray
+    QJsonArray stations = DbManager::instance().searchStationsByTerminal(terminalId);
+
+    // 4. Повертаємо результат (навіть якщо порожній масив - це 200 OK)
+    return createJsonResponse(stations, QHttpServerResponse::StatusCode::Ok);
 }

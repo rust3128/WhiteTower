@@ -8,5 +8,6 @@
         <file>res/Images/gas_stantion.png</file>
         <file>res/Images/taskslist.png</file>
         <file>res/Images/gandalf3.png</file>
+        <file>res/Images/search.png</file>
     </qresource>
 </RCC>

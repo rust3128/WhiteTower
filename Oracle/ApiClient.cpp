@@ -2230,3 +2230,64 @@ void ApiClient::sendTaskComment(const QString& taskId, const QString& tracker, c
         reply->deleteLater();
     });
 }
+
+
+void ApiClient::searchStation(int terminalId)
+{
+    // 1. Формуємо URL
+    QUrl url(m_serverUrl + "/api/stations/search");
+    QUrlQuery query;
+    query.addQueryItem("terminal", QString::number(terminalId));
+    url.setQuery(query);
+
+    // 2. Створюємо запит, використовуючи ваш існуючий метод.
+    // Він автоматично додасть "Authorization: Bearer <m_authToken>"
+    QNetworkRequest request = createAuthenticatedRequest(url);
+
+    logInfo() << "ApiClient: Searching station for Terminal ID:" << terminalId;
+
+    // 3. Відправляємо запит
+    QNetworkReply *reply = m_networkManager->get(request);
+
+    // 4. Обробляємо відповідь
+    connect(reply, &QNetworkReply::finished, this, [this, reply, terminalId]() {
+        if (reply->error() == QNetworkReply::NoError) {
+            QList<StationStruct> results;
+            QByteArray responseData = reply->readAll();
+            QJsonDocument doc = QJsonDocument::fromJson(responseData);
+
+            if (doc.isArray()) {
+                QJsonArray arr = doc.array();
+                for (const auto &val : arr) {
+                    QJsonObject obj = val.toObject();
+                    StationStruct s;
+
+                    // Парсимо поля
+                    s.objectId = obj["id"].toInt();
+                    s.terminalId = obj["terminalId"].toInt();
+                    s.clientName = obj["clientName"].toString();
+                    s.address = obj["address"].toString();
+                    s.isActive = obj["isActive"].toBool();
+                    s.isWork = obj["isWork"].toBool();
+
+                    results.append(s);
+                }
+                logInfo() << "ApiClient: Search finished. Found" << results.size() << "stations.";
+            } else {
+                logCritical() << "ApiClient: Expected JSON array, got:" << responseData;
+            }
+
+            emit stationSearchFinished(results);
+        } else {
+            // Використовуємо вашу функцію parseReply
+            ApiError error = parseReply(reply);
+            logCritical() << "ApiClient: Station search failed."
+                          << "Status:" << error.httpStatusCode
+                          << "Error:" << error.errorString;
+
+            // Повертаємо порожній список, щоб розблокувати UI
+            emit stationSearchFinished({});
+        }
+        reply->deleteLater();
+    });
+}

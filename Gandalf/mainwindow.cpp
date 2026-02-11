@@ -13,10 +13,13 @@
 #include "Oracle/ApiClient.h"
 #include "Oracle/AppParams.h"
 #include "Clients/SyncManager.h"
+#include "Terminals/StationSearchWidget.h"
+
 
 #include <QMessageBox>
 #include <QTimer>
 #include <QDateTime>
+#include <QVBoxLayout>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -24,28 +27,50 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui->setupUi(this);
 
+    // 1. Базові налаштування вікна
     QString windowTitle = QString("Gandalf %1").arg(PROJECT_VERSION_STR);
     setWindowTitle(windowTitle);
 
-    // Читаємо параметр (періодичність у днях).
-    // Якщо параметра немає, беремо 1 день за замовчуванням.
+    // 2. Читання налаштувань (це можна залишити тут або винести в initSettings)
     m_syncPeriodDays = AppParams::instance().getParam("Gandalf", "SyncPeriodDays", 1).toInt();
-
-    // Якщо прийшов 0 або помилка -> ставимо 1
     if (m_syncPeriodDays <= 0) m_syncPeriodDays = 1;
 
-    if (m_syncPeriodDays > 0) {
-        logInfo() << "Auto-sync check scheduled in 2 seconds. Period:" << m_syncPeriodDays << "days.";
-        // Запускаємо перевірку через 2 секунди після старту
-        QTimer::singleShot(2000, this, &MainWindow::checkAutoSyncNeeded);
-    }
+    // 3. Ініціалізація компонентів UI
+    setupStationSearch();
 
-    QTimer::singleShot(500, this, &MainWindow::fetchGlobalSettings);
+    // 4. Запуск фонових задач
+    startStartupTimers();
 }
 
 MainWindow::~MainWindow()
 {
     delete ui;
+}
+
+void MainWindow::setupStationSearch()
+{
+    // БІЛЬШЕ НЕ СТВОРЮЄМО ВІДЖЕТ ВРУЧНУ (new ...)
+    // Він вже створений у ui->setupUi(this) і доступний як ui->searchWidget
+
+    // Перевіряємо на всяк випадок (хоча він точно є)
+    if (ui->widgetSearch) {
+        // Підключаємо сигнал
+        connect(ui->widgetSearch, &StationSearchWidget::objectSelected,
+                this, &MainWindow::onStationSelected);
+
+        logInfo() << "UI: Search widget connected successfully via Designer.";
+    } else {
+        logCritical() << "UI: CRITICAL ERROR - searchWidget not found in UI file!";
+    }
+}
+
+void MainWindow::startStartupTimers()
+{
+    // Запускаємо перевірку синхронізації через 1 секунду
+    QTimer::singleShot(1000, this, &MainWindow::checkAutoSyncNeeded);
+
+    // Запускаємо оновлення глобальних налаштувань через 2 секунди
+    QTimer::singleShot(2000, this, &MainWindow::fetchGlobalSettings);
 }
 
 void MainWindow::on_actionUsers_triggered()
@@ -204,4 +229,17 @@ void MainWindow::onDashboardDataForAutoSync(const QJsonArray& data)
     } else {
         logInfo() << "All clients are up to date.";
     }
+}
+
+void MainWindow::onStationSelected(int objectId)
+{
+    logInfo() << "MainWindow: User selected station with ObjectID:" << objectId;
+
+    // Тимчасова заглушка: показуємо повідомлення
+    QMessageBox::information(this, "Пошук АЗС",
+                             QString("Вибрано об'єкт ID: %1\n(Тут відкриється картка)").arg(objectId));
+
+    // У майбутньому тут буде виклик діалогу, наприклад:
+    // ObjectDetailsDialog dialog(objectId, this);
+    // dialog.exec();
 }

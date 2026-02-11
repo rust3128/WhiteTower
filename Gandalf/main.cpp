@@ -8,6 +8,7 @@
 #include <QDir>
 #include <QTranslator>
 #include <QJsonDocument>
+#include <QStyleFactory>
 
 // --- ОНОВЛЕНА ФУНКЦІЯ РОБОТИ З КОНФІГУРАЦІЄЮ ---
 // Тепер вона перевіряє, створює (якщо потрібно) і завантажує конфігурацію.
@@ -55,6 +56,30 @@ QString setupApiConfiguration()
 int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
+
+
+    // --- БЛОК СТИЛІЗАЦІЇ ---
+    a.setStyle(QStyleFactory::create("Fusion")); // <--- 2. Вмикаємо стиль Fusion
+
+    QPalette lightPalette;
+    lightPalette.setColor(QPalette::Window, QColor(240, 240, 240));
+    lightPalette.setColor(QPalette::WindowText, Qt::black);
+    lightPalette.setColor(QPalette::Base, Qt::white);
+    lightPalette.setColor(QPalette::AlternateBase, QColor(233, 233, 233));
+    lightPalette.setColor(QPalette::ToolTipBase, Qt::white);
+    lightPalette.setColor(QPalette::ToolTipText, Qt::black);
+    lightPalette.setColor(QPalette::Text, Qt::black);
+    lightPalette.setColor(QPalette::Button, QColor(240, 240, 240));
+    lightPalette.setColor(QPalette::ButtonText, Qt::black);
+    lightPalette.setColor(QPalette::BrightText, Qt::red);
+    lightPalette.setColor(QPalette::Link, QColor(42, 130, 218));
+    lightPalette.setColor(QPalette::Highlight, QColor(42, 130, 218));
+    lightPalette.setColor(QPalette::HighlightedText, Qt::white);
+
+    a.setPalette(lightPalette); // <--- 3. Застосовуємо палітру
+    // -----------------------
+
+
     const QString appName = QFileInfo(QCoreApplication::applicationFilePath()).baseName();
     preInitLogger(appName);
 

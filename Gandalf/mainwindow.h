@@ -5,6 +5,8 @@
 #include <QMainWindow>
 #include <QJsonArray>
 
+class StationSearchWidget;
+
 QT_BEGIN_NAMESPACE
 namespace Ui {
 class MainWindow;
@@ -37,10 +39,26 @@ private slots:
     void onGlobalSettingsFetched(const QVariantMap& settingsMap);
     void onGlobalSettingsFetchFailed(const ApiError& error);
 
+    /**
+     * @brief Викликається, коли користувач вибрав АЗС через пошук
+     * @param objectId Внутрішній ID об'єкта (OBJECT_ID з БД)
+     */
+    void onStationSelected(int objectId);
+
 private:
     void checkAutoSyncNeeded();
+    /**
+     * @brief Налаштовує віджет пошуку та додає його на форму
+     */
+    void setupStationSearch();
+
+    /**
+     * @brief Запускає таймери та фонові задачі після старту
+     */
+    void startStartupTimers();
 private:
     Ui::MainWindow *ui;
     int m_syncPeriodDays;
+    StationSearchWidget *m_searchWidget;
 };
 #endif // MAINWINDOW_H

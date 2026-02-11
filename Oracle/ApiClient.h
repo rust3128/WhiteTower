@@ -1,6 +1,9 @@
 #ifndef APICLIENT_H
 #define APICLIENT_H
 
+
+#include "StationStruct.h"
+
 #include <QObject>
 #include <QString>
 #include <QJsonArray>
@@ -138,6 +141,12 @@ public:
     void uploadAttachmentToJira(const QString &path, const QString &taskId, qint64 chatId);
 
     void sendTaskComment(const QString& taskId, const QString& tracker, const QString& comment, qint64 telegramId);
+
+    /**
+ * @brief Запит на пошук АЗС за номером терміналу
+ * @param terminalId Номер терміналу для пошуку
+ */
+    void searchStation(int terminalId);
 
 signals:
     // Сигнали для логіну
@@ -295,6 +304,13 @@ signals:
 
     void taskCommentSuccess(qint64 telegramId, const QString& taskId, const QString& tracker);
     void taskCommentFailed(const ApiError& error, qint64 telegramId);
+
+    /**
+ * @brief Сигнал, що повертає список знайдених станцій
+ * @param stations Список об'єктів StationStruct
+ */
+    void stationSearchFinished(const QList<StationStruct>& stations);
+
 
 private slots:
     void onLoginReplyFinished();

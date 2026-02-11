@@ -135,6 +135,12 @@ private:
     // POST /api/bot/tasks/comment
     QHttpServerResponse handleTaskComment(const QHttpServerRequest &request);
 
+    /**
+     * @brief Обробляє запит на пошук АЗС за номером терміналу.
+     * Маршрут: GET /api/stations/search?terminal=XXXX
+     */
+    QHttpServerResponse handleSearchStations(const QHttpServerRequest& request);
+
 
 private:
     QHttpServer* m_httpServer;

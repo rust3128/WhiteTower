@@ -33,6 +33,10 @@ add_executable(Gandalf WIN32
     Clients/syncstatusdialog.h Clients/syncstatusdialog.cpp Clients/syncstatusdialog.ui
     Settings/SqlHighlighter.h
     Settings/SqlHighlighter.cpp
+    Terminals/StationSearchWidget.h
+    Terminals/StationSearchWidget.cpp
+
+
 )
 
 # Вказуємо, де шукати заголовні файли (зокрема, з нашої бібліотеки Oracle)

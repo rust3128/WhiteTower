@@ -92,6 +92,9 @@ public:
      */
     bool updateRedmineUserId(int localUserId, int redmineId);
 
+
+    QJsonArray searchStationsByTerminal(int terminalId);
+
 private:
     DbManager(); // Конструктор тепер приватний
     ~DbManager();
