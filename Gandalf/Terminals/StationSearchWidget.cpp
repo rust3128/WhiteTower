@@ -99,6 +99,7 @@ StationSearchWidget::StationSearchWidget(QWidget *parent) : QWidget(parent) {
     setAttribute(Qt::WA_TranslucentBackground);
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     this->setMaximumWidth(650);
+    this->setMinimumWidth(650);
 
     // Головний лейаут
     auto mainLayout = new QVBoxLayout(this);

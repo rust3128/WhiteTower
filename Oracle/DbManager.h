@@ -95,6 +95,9 @@ public:
 
     QJsonArray searchStationsByTerminal(int terminalId);
 
+    // Отримання загальної інформації про конкретну АЗС
+    QJsonObject getObjectInfo(int objectId);
+
 private:
     DbManager(); // Конструктор тепер приватний
     ~DbManager();

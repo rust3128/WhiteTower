@@ -35,6 +35,11 @@ add_executable(Gandalf WIN32
     Settings/SqlHighlighter.cpp
     Terminals/StationSearchWidget.h
     Terminals/StationSearchWidget.cpp
+    Terminals/StationDataContext.h
+    Terminals/StationDataContext.cpp
+    Terminals/generalinfowidget.h Terminals/generalinfowidget.cpp Terminals/generalinfowidget.ui
+    Terminals/poscardwidget.h Terminals/poscardwidget.cpp Terminals/poscardwidget.ui
+
 
 
 )

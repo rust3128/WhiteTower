@@ -148,6 +148,8 @@ public:
  */
     void searchStation(int terminalId);
 
+    void fetchObjectGeneralInfo(int objectId);
+
 signals:
     // Сигнали для логіну
     void loginSuccess(User* user);
@@ -310,6 +312,8 @@ signals:
  * @param stations Список об'єктів StationStruct
  */
     void stationSearchFinished(const QList<StationStruct>& stations);
+
+    void objectGeneralInfoFetched(int objectId, const QJsonObject &data);
 
 
 private slots:

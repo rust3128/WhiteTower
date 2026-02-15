@@ -9,5 +9,9 @@
         <file>res/Images/taskslist.png</file>
         <file>res/Images/gandalf3.png</file>
         <file>res/Images/search.png</file>
+        <file>res/Images/dispenser.png</file>
+        <file>res/Images/RRO_icon.png</file>
+        <file>res/Images/tanks.png</file>
+        <file>res/Images/clipboard.png</file>
     </qresource>
 </RCC>

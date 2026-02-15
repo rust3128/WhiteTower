@@ -14,6 +14,8 @@
 #include "Oracle/AppParams.h"
 #include "Clients/SyncManager.h"
 #include "Terminals/StationSearchWidget.h"
+#include "Terminals/StationDataContext.h"
+#include "Terminals/generalinfowidget.h"
 
 
 #include <QMessageBox>
@@ -40,11 +42,86 @@ MainWindow::MainWindow(QWidget *parent)
 
     // 4. Запуск фонових задач
     startStartupTimers();
+
+    setupUI();
+    createConnections();
 }
 
 MainWindow::~MainWindow()
 {
     delete ui;
+}
+
+void MainWindow::setupUI()
+{
+    // 1. Вмикаємо хрестики
+    ui->tabWidgetMain->setTabsClosable(true);
+
+    // 2. Вимикаємо DocumentMode (бо він глючив), будемо малювати все самі CSS-ом
+    ui->tabWidgetMain->setDocumentMode(false);
+
+    // 3. Стиль "Google Chrome" адаптований під ручне малювання
+    QString style = R"(
+        /* --- Рамка контенту (Pane) --- */
+        QTabWidget::pane {
+            border: 1px solid #dadce0; /* Світло-сіра рамка Google */
+            background: white;
+            top: -1px; /* Підтягуємо вгору, щоб активна вкладка перекрила лінію */
+        }
+
+        /* --- Смуга вкладок --- */
+        QTabWidget::tab-bar {
+            left: 8px; /* Відступ першої вкладки */
+        }
+
+        /* --- НЕАКТИВНА Вкладка --- */
+        QTabBar::tab {
+            background: #f1f3f4;       /* Сірий фон */
+            color: #5f6368;            /* Сірий текст */
+            border: 1px solid #dadce0; /* Рамка */
+
+            /* Округлення зверху */
+            border-top-left-radius: 8px;
+            border-top-right-radius: 8px;
+
+            min-width: 140px;
+            padding: 8px 16px;
+            margin-right: -1px; /* Щоб рамки злипалися */
+        }
+
+        /* --- АКТИВНА Вкладка --- */
+        QTabBar::tab:selected {
+            background: white;
+            color: #1a73e8;            /* Google Blue */
+            font-weight: bold;
+
+            /* Головний трюк: нижня рамка біла, щоб злитися з фоном */
+            border-bottom: 1px solid white;
+            border-top: 1px solid #dadce0;
+            border-left: 1px solid #dadce0;
+            border-right: 1px solid #dadce0;
+        }
+
+        /* --- При наведенні --- */
+        QTabBar::tab:hover:!selected {
+            background: #e8eaed;
+            color: #202124;
+        }
+
+    )";
+
+    ui->tabWidgetMain->setStyleSheet(style);
+}
+
+void MainWindow::createConnections()
+{
+    // 1. Обробка закриття вкладки по хрестику
+    connect(ui->tabWidgetMain, &QTabWidget::tabCloseRequested,
+            this, &MainWindow::onTabCloseRequested);
+
+
+    connect(&ApiClient::instance(), &ApiClient::stationPosDataReceived,
+            this, &MainWindow::onStationPosDataReceived);
 }
 
 void MainWindow::setupStationSearch()
@@ -231,15 +308,130 @@ void MainWindow::onDashboardDataForAutoSync(const QJsonArray& data)
     }
 }
 
+
 void MainWindow::onStationSelected(int objectId)
 {
-    logInfo() << "MainWindow: User selected station with ObjectID:" << objectId;
+    logInfo() << "MainWindow: Request to open station ID:" << objectId;
 
-    // Тимчасова заглушка: показуємо повідомлення
-    QMessageBox::information(this, "Пошук АЗС",
-                             QString("Вибрано об'єкт ID: %1\n(Тут відкриється картка)").arg(objectId));
+    // КРОК 1: Перевірка на дублікати
+    // Якщо вкладка вже є - просто фокусуємось на ній
+    int existingIndex = findTabIndexByStationId(objectId);
+    if (existingIndex != -1) {
+        ui->tabWidgetMain->setCurrentIndex(existingIndex);
+        logInfo() << "MainWindow: Tab already exists, switching to index" << existingIndex;
+        return;
+    }
 
-    // У майбутньому тут буде виклик діалогу, наприклад:
-    // ObjectDetailsDialog dialog(objectId, this);
-    // dialog.exec();
+    // КРОК 2: Створення нової вкладки
+    GeneralInfoWidget *infoWidget = new GeneralInfoWidget();
+
+    // Зберігаємо ID як динамічну властивість віджета (щоб потім знайти його в findTabIndexByStationId)
+    infoWidget->setProperty("stationId", objectId);
+
+    // КРОК 3: Створення контексту даних
+    // Робимо infoWidget батьком для context, щоб при закритті вкладки context теж видалився
+    StationDataContext *context = new StationDataContext(objectId, infoWidget);
+
+    // КРОК 4: Налаштування оновлення даних
+    connect(context, &StationDataContext::generalInfoReady, this, [this, infoWidget, context]() {
+        // Оновлюємо внутрішній UI віджета
+        auto info = context->getGeneralInfo();
+        infoWidget->updateData(info);
+
+        // --- НОВЕ: ПОЗНАЧАЄМО ВКЛАДКУ ТА РОБИМО ЗАПИТ ---
+        // Зберігаємо terminalId, щоб потім знайти цю вкладку при отриманні РРО
+        infoWidget->setProperty("terminalId", info.terminalId);
+
+        // Відправляємо запит на сервер за касами (telegramId = 0 за замовчуванням)
+        ApiClient::instance().fetchStationPosData(info.clientId, info.terminalId);
+        // ------------------------------------------------
+
+        // Оновлюємо заголовок та іконку вкладки
+        int index = ui->tabWidgetMain->indexOf(infoWidget);
+        if (index != -1) {
+            QString title = QString("%1 - %2").arg(info.terminalId).arg(info.clientName);
+            if (title.length() > 25) title = title.left(22) + "...";
+
+            ui->tabWidgetMain->setTabText(index, title);
+            ui->tabWidgetMain->setTabIcon(index, drawStatusIcon(info.isActive, info.isWork));
+        }
+    });
+    // КРОК 5: Додавання на форму та запуск
+    // Додаємо з тимчасовим заголовком
+    int newIndex = ui->tabWidgetMain->addTab(infoWidget, QString("Завантаження %1...").arg(objectId));
+    ui->tabWidgetMain->setTabIcon(newIndex, drawStatusIcon(false, false)); // Сіра іконка поки вантажиться
+    ui->tabWidgetMain->setCurrentIndex(newIndex);
+
+    // Запускаємо отримання даних
+    context->fetchGeneralInfo();
+}
+
+void MainWindow::onTabCloseRequested(int index)
+{
+    QWidget *targetWidget = ui->tabWidgetMain->widget(index);
+    if (targetWidget) {
+        // deleteLater безпечно видалить віджет і всі його діти (в т.ч. StationDataContext)
+        targetWidget->deleteLater();
+        ui->tabWidgetMain->removeTab(index);
+    }
+}
+
+// --- ДОПОМІЖНІ МЕТОДИ ---
+
+int MainWindow::findTabIndexByStationId(int objectId)
+{
+    for (int i = 0; i < ui->tabWidgetMain->count(); ++i) {
+        QWidget *tab = ui->tabWidgetMain->widget(i);
+        // Перевіряємо властивість, яку ми задали при створенні
+        if (tab && tab->property("stationId").isValid()) {
+            if (tab->property("stationId").toInt() == objectId) {
+                return i;
+            }
+        }
+    }
+    return -1; // Не знайдено
+}
+
+QIcon MainWindow::drawStatusIcon(bool isActive, bool isWork)
+{
+    QColor color;
+    if (isActive && isWork)      color = QColor(0x34A853); // Зелений
+    else if (isActive && !isWork) color = QColor(0xFBBC05); // Жовтий
+    else if (!isActive)           color = QColor(0xBDBDBD); /* Сірий */
+    else                          color = QColor(0xEA4335); // Червоний
+
+    QPixmap pixmap(14, 14);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setBrush(color);
+    painter.setPen(Qt::NoPen);
+    painter.drawEllipse(1, 1, 12, 12);
+
+    return QIcon(pixmap);
+}
+
+
+void MainWindow::onStationPosDataReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId)
+{
+    // Відсікаємо запити, які робив Telegram-бот
+    if (telegramId != 0) {
+        return;
+    }
+
+    // Перебираємо всі відкриті вкладки
+    for (int i = 0; i < ui->tabWidgetMain->count(); ++i) {
+        // Пробуємо перетворити віджет вкладки на наш GeneralInfoWidget
+        GeneralInfoWidget* infoWidget = qobject_cast<GeneralInfoWidget*>(ui->tabWidgetMain->widget(i));
+
+        // Якщо це дійсно наша вкладка і в неї співпадає terminalId
+        if (infoWidget && infoWidget->property("terminalId").toInt() == terminalId) {
+            logInfo() << "MainWindow: Routing RRO data to tab with terminal:" << terminalId;
+
+            // ПЕРЕДАЄМО ДАНІ У ВІДЖЕТ!
+            infoWidget->updateRROData(data);
+            break; // Знайшли потрібну вкладку, оновили, виходимо з циклу
+        }
+    }
 }

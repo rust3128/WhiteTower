@@ -2592,3 +2592,42 @@ QJsonArray DbManager::searchStationsByTerminal(int terminalId)
     }
     return result;
 }
+
+
+QJsonObject DbManager::getObjectInfo(int objectId)
+{
+    QJsonObject result;
+    if (!isConnected()) return result;
+
+    QSqlQuery query(m_db);
+
+    query.prepare(R"(
+        SELECT O.CLIENT_ID, O.TERMINAL_ID, O.ADDRESS, O.PHONE, O.IS_ACTIVE, O.IS_WORK,
+               O.LATITUDE, O.LONGITUDE, C.CLIENT_NAME
+        FROM OBJECTS O
+        LEFT JOIN CLIENTS C ON O.CLIENT_ID = C.CLIENT_ID
+        WHERE O.OBJECT_ID = ?
+    )");
+
+    query.addBindValue(objectId);
+
+    if (query.exec()) {
+        if (query.next()) {
+            result["CLIENT_ID"]   = query.value("CLIENT_ID").toInt();
+            result["TERMINAL_ID"] = query.value("TERMINAL_ID").toInt();
+            result["CLIENT_NAME"] = query.value("CLIENT_NAME").toString();
+            result["ADDRESS"]     = query.value("ADDRESS").toString();
+            result["PHONE"]       = query.value("PHONE").toString();
+            result["IS_ACTIVE"]   = query.value("IS_ACTIVE").toBool();
+            result["IS_WORK"]     = query.value("IS_WORK").toBool();
+            result["LATITUDE"]    = query.value("LATITUDE").toDouble();
+            result["LONGITUDE"]   = query.value("LONGITUDE").toDouble();
+        } else {
+            logInfo() << "DbManager: Object with ID" << objectId << "not found.";
+        }
+    } else {
+        logCritical() << "DbManager: Error in getObjectInfo:" << query.lastError().text();
+    }
+
+    return result;
+}

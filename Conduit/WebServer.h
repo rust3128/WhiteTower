@@ -141,6 +141,8 @@ private:
      */
     QHttpServerResponse handleSearchStations(const QHttpServerRequest& request);
 
+    QHttpServerResponse handleGetObjectInfo(const QHttpServerRequest &request);
+
 
 private:
     QHttpServer* m_httpServer;

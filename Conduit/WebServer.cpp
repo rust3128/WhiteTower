@@ -236,6 +236,9 @@ void WebServer::setupRoutes()
                             return handleSearchStations(request);
                         });
 
+    m_httpServer->route("/api/objects/info", QHttpServerRequest::Method::Get,
+                        [this](const QHttpServerRequest &request) { return handleGetObjectInfo(request); });
+
 }
 
 void WebServer::logRequest(const QHttpServerRequest &request)
@@ -2169,4 +2172,24 @@ QHttpServerResponse WebServer::handleSearchStations(const QHttpServerRequest &re
 
     // 4. Повертаємо результат (навіть якщо порожній масив - це 200 OK)
     return createJsonResponse(stations, QHttpServerResponse::StatusCode::Ok);
+}
+
+
+QHttpServerResponse WebServer::handleGetObjectInfo(const QHttpServerRequest &request)
+{
+    // 1. Авторизація десктопного користувача
+    User* user = authenticateRequest(request);
+    if (!user) {
+        return createTextResponse("Unauthorized", QHttpServerResponse::StatusCode::Unauthorized);
+    }
+    delete user;
+
+    // 2. Отримуємо ID
+    QUrlQuery query(request.url());
+    int objectId = query.queryItemValue("id").toInt();
+
+    // 3. Беремо готові дані з БД (ваш існуючий метод!)
+    QJsonObject info = DbManager::instance().getObjectInfo(objectId);
+
+    return createJsonResponse(info, QHttpServerResponse::StatusCode::Ok);
 }

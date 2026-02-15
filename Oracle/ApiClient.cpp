@@ -2291,3 +2291,27 @@ void ApiClient::searchStation(int terminalId)
         reply->deleteLater();
     });
 }
+
+
+void ApiClient::fetchObjectGeneralInfo(int objectId)
+{
+    QString endpoint = QString("/api/objects/info?id=%1").arg(objectId);
+    QNetworkRequest request = createAuthenticatedRequest(QUrl(m_serverUrl + endpoint));
+
+    QNetworkReply* reply = m_networkManager->get(request);
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, objectId]() {
+        if (reply->error() == QNetworkReply::NoError) {
+            QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+            if (doc.isObject()) {
+                logInfo() << "ApiClient: Fetched general info for object" << objectId;
+                emit objectGeneralInfoFetched(objectId, doc.object());
+            }
+        } else {
+            ApiError error = parseReply(reply);
+            logCritical() << "ApiClient: Failed to fetch general info for object" << objectId
+                          << "Error:" << error.errorString;
+        }
+        reply->deleteLater();
+    });
+}

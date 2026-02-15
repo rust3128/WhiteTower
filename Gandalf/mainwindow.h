@@ -4,6 +4,8 @@
 #include "Oracle/ApiClient.h"
 #include <QMainWindow>
 #include <QJsonArray>
+#include <QPixmap>
+#include <QPainter>
 
 class StationSearchWidget;
 
@@ -20,6 +22,9 @@ class MainWindow : public QMainWindow
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
+public slots:
+    // Слот, який викликає віджет пошуку
+    void onStationSelected(int objectId);
 
 private slots:
     void on_actionUsers_triggered();
@@ -39,11 +44,11 @@ private slots:
     void onGlobalSettingsFetched(const QVariantMap& settingsMap);
     void onGlobalSettingsFetchFailed(const ApiError& error);
 
-    /**
-     * @brief Викликається, коли користувач вибрав АЗС через пошук
-     * @param objectId Внутрішній ID об'єкта (OBJECT_ID з БД)
-     */
-    void onStationSelected(int objectId);
+    // Слот для закриття вкладки (натискання на хрестик)
+    void onTabCloseRequested(int index);
+
+    // Слот для отримання даних про РРО від сервера
+    void onStationPosDataReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId);
 
 private:
     void checkAutoSyncNeeded();
@@ -56,6 +61,17 @@ private:
      * @brief Запускає таймери та фонові задачі після старту
      */
     void startStartupTimers();
+    QIcon drawStatusIcon(bool isActive, bool isWork);
+
+    // --- Методи ініціалізації ---
+    void setupUI();             // Налаштування вигляду (кнопки, вкладки)
+    void createConnections();   // Всі connect-и в одному місці
+
+    // --- Допоміжні методи ---
+    // Перевіряє, чи вже відкрита вкладка з таким ID (повертає індекс або -1)
+    int findTabIndexByStationId(int objectId);
+
+
 private:
     Ui::MainWindow *ui;
     int m_syncPeriodDays;
