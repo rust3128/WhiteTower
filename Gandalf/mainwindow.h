@@ -2,6 +2,7 @@
 #define MAINWINDOW_H
 
 #include "Oracle/ApiClient.h"
+#include "Terminals/StationDataContext.h"
 #include <QMainWindow>
 #include <QJsonArray>
 #include <QPixmap>
@@ -47,8 +48,14 @@ private slots:
     // Слот для закриття вкладки (натискання на хрестик)
     void onTabCloseRequested(int index);
 
+    // Слот, який спрацює, коли базова інформація про АЗС завантажена
+    void onStationGeneralInfoReady();
+
     // Слот для отримання даних про РРО від сервера
     void onStationPosDataReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId);
+
+    // СЛОТ для отримання даних про Резервуари
+    void onStationTanksDataReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId);
 
 private:
     void checkAutoSyncNeeded();
@@ -70,7 +77,11 @@ private:
     // --- Допоміжні методи ---
     // Перевіряє, чи вже відкрита вкладка з таким ID (повертає індекс або -1)
     int findTabIndexByStationId(int objectId);
+    // Відправляє всі додаткові запити (РРО, Резервуари, Колонки)
+    void fetchAdditionalStationData(const StationDataContext::GeneralInfo& info);
 
+    // Оновлює візуальну частину самої вкладки (Назва, Іконка)
+    void updateStationTabAppearance(QWidget* tabWidget, const StationDataContext::GeneralInfo& info);
 
 private:
     Ui::MainWindow *ui;

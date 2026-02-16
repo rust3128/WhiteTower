@@ -61,7 +61,8 @@ void PosCardWidget::setData(const QJsonObject &json, const QString &clientName, 
     QString regDate = json["reg_date"].toString();
 
     // Заповнюємо UI
-    ui->labelNameModel->setText(QString("🧾 Каса №%1 %2-%3").arg(posId).arg(manufacturer, model));
+
+    ui->labelNameModel->setText(QString("<img src=':/res/Images/RRO_icon.png' width='16' height='16' align='middle'> Каса №%1 %2-%3").arg(posId).arg(manufacturer, model));
     ui->labelZnFn->setText(QString("⚙️ ЗН: %1    ФН: %2").arg(zn, fn));
     ui->labelSoftMuk->setText(QString("💻 ПО: %1 | МУК: %2").arg(softVer, mukVer));
 

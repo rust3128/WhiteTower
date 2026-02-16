@@ -28,11 +28,15 @@ public:
     void updateData(const StationDataContext::GeneralInfo &info);
     // МЕТОД: для завантаження списку кас
     void updateRROData(const QJsonArray &rroArray);
+    // МЕТОД: для завантаження резервуарів
+    void updateTanksData(const QJsonArray &tanksArray);
 private slots:
     // Слот для обробки правого кліку по фрейму
     void onFrameContextMenu(const QPoint &pos);
     // Слот для кнопки "Копіювати ВСІ РРО"
     void onCopyAllRROClicked();
+    //СЛОТ: для копіювання таблиці резервуарів
+    void onCopyTanksClicked();
 private:
     // --- Методи ініціалізації ---
     void setupUI();            // Тільки візуал (курсори, стилі, tooltip)

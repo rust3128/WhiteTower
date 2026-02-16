@@ -1,6 +1,8 @@
 #include "generalinfowidget.h"
 #include "ui_generalinfowidget.h"
 
+#include <QHeaderView>
+
 GeneralInfoWidget::GeneralInfoWidget(QWidget *parent)
     : QWidget(parent)
     , ui(new Ui::GeneralInfoWidget)
@@ -57,6 +59,9 @@ void GeneralInfoWidget::createConnections()
             this, &GeneralInfoWidget::onFrameContextMenu);
 
     // --- НАВІГАЦІЯ QStackedWidget ---
+    connect(ui->toolButtonInfo, &QToolButton::clicked, this, [this](){
+        ui->stackedWidgetInfo->setCurrentWidget(ui->pageSummary);
+    });
     // Перемикаємо сторінки при натисканні на відповідну вкладку-кнопку
     connect(ui->toolButtonRRO, &QToolButton::clicked, this, [this](){
         ui->stackedWidgetInfo->setCurrentWidget(ui->pageRRO);
@@ -70,6 +75,8 @@ void GeneralInfoWidget::createConnections()
 
     // --- КНОПКА КОПІЮВАТИ ВСІ РРО ---
     connect(ui->toolButtonCopyAllRRO, &QToolButton::clicked, this, &GeneralInfoWidget::onCopyAllRROClicked);
+
+    connect(ui->btnCopyTanks, &QToolButton::clicked, this, &GeneralInfoWidget::onCopyTanksClicked);
 }
 
 // --- ЛОГІКА ДАНИХ ---
@@ -201,7 +208,7 @@ void GeneralInfoWidget::updateRROData(const QJsonArray &rroArray)
     m_lastRroArray = rroArray;
 
     // 1. Оновлюємо лічильник у шапці
-    ui->labelTotalRRO->setText(QString("🧾 Знайдено касових апаратів: %1").arg(rroArray.size()));
+    ui->labelTotalRRO->setText(QString("<img src=':/res/Images/RRO_icon.png' width='18' height='18' align='middle'> Знайдено касових апаратів: %1").arg(rroArray.size()));
 
     // 2. Очищаємо старі картки (щоб вони не накопичувалися при зміні АЗС)
     // Важливо: ми не видаляємо останній елемент, бо це наша розпірка (QSpacerItem)!
@@ -264,6 +271,81 @@ void GeneralInfoWidget::onCopyAllRROClicked()
     }
 
     // 3. Відправляємо в буфер
+    QClipboard *clipboard = QApplication::clipboard();
+    clipboard->setText(lines.join("\n"));
+}
+
+
+// --- НОВИЙ МЕТОД: ЗАВАНТАЖЕННЯ РЕЗЕРВУАРІВ ---
+void GeneralInfoWidget::updateTanksData(const QJsonArray &tanksArray)
+{
+    // 1. Оновлюємо шапку (з HTML іконкою)
+    ui->labelTotalTanks->setText(QString("<img src=':/res/Images/tanks.png' width='18' height='18' align='middle'> Резервуарів: %1").arg(tanksArray.size()));
+
+    // 2. Базові налаштування таблиці для краси та зручності
+    ui->tableWidgetTanks->setRowCount(tanksArray.size()); // Встановлюємо кількість рядків
+    ui->tableWidgetTanks->setEditTriggers(QAbstractItemView::NoEditTriggers); // Забороняємо редагувати текст
+    ui->tableWidgetTanks->setAlternatingRowColors(true); // Ефект "зебри" для рядків
+    ui->tableWidgetTanks->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch); // Розтягуємо колонки по ширині
+
+    // 3. Заповнюємо таблицю
+    for (int i = 0; i < tanksArray.size(); ++i) {
+        QJsonObject obj = tanksArray[i].toObject();
+
+        // Створюємо комірки.
+        // Використовуємо .toDouble(), 'f', 0 або 2 для форматування чисел (напр. 15000.50)
+        QTableWidgetItem *itemNum     = new QTableWidgetItem(QString::number(obj["tank_id"].toInt()));
+        QTableWidgetItem *itemFuel    = new QTableWidgetItem(obj["fuel_shortname"].toString());
+        QTableWidgetItem *itemMax     = new QTableWidgetItem(QString::number(obj["max_vol"].toDouble(), 'f', 0));
+        QTableWidgetItem *itemMin     = new QTableWidgetItem(QString::number(obj["min_vol"].toDouble(), 'f', 0));
+        QTableWidgetItem *itemDeadMax = new QTableWidgetItem(QString::number(obj["dead_max"].toDouble(), 'f', 0));
+        QTableWidgetItem *itemDeadMin = new QTableWidgetItem(QString::number(obj["dead_min"].toDouble(), 'f', 0));
+        QTableWidgetItem *itemTube    = new QTableWidgetItem(QString::number(obj["tube_vol"].toDouble(), 'f', 0));
+
+        // Вирівнюємо текст по центру комірки
+        itemNum->setTextAlignment(Qt::AlignCenter);
+        itemFuel->setTextAlignment(Qt::AlignCenter);
+        itemMax->setTextAlignment(Qt::AlignCenter);
+        itemMin->setTextAlignment(Qt::AlignCenter);
+        itemDeadMax->setTextAlignment(Qt::AlignCenter);
+        itemDeadMin->setTextAlignment(Qt::AlignCenter);
+        itemTube->setTextAlignment(Qt::AlignCenter);
+
+        // Вставляємо комірки у відповідний рядок (i) та колонку (0..6)
+        ui->tableWidgetTanks->setItem(i, 0, itemNum);
+        ui->tableWidgetTanks->setItem(i, 1, itemFuel);
+        ui->tableWidgetTanks->setItem(i, 2, itemMax);
+        ui->tableWidgetTanks->setItem(i, 3, itemMin);
+        ui->tableWidgetTanks->setItem(i, 4, itemDeadMax);
+        ui->tableWidgetTanks->setItem(i, 5, itemDeadMin);
+        ui->tableWidgetTanks->setItem(i, 6, itemTube);
+    }
+}
+
+
+void GeneralInfoWidget::onCopyTanksClicked()
+{
+    if (ui->tableWidgetTanks->rowCount() == 0) return;
+
+    QStringList lines;
+    lines << QString("🏢 %1, АЗС %2").arg(m_lastInfo.clientName).arg(m_lastInfo.terminalId);
+    lines << QString("🛢 Резервуарів: %1\n").arg(ui->tableWidgetTanks->rowCount());
+
+    for (int r = 0; r < ui->tableWidgetTanks->rowCount(); ++r) {
+        // Безпечно дістаємо текст з кожної комірки
+        QString id      = ui->tableWidgetTanks->item(r, 0) ? ui->tableWidgetTanks->item(r, 0)->text() : "?";
+        QString fuel    = ui->tableWidgetTanks->item(r, 1) ? ui->tableWidgetTanks->item(r, 1)->text() : "?";
+        QString maxV    = ui->tableWidgetTanks->item(r, 2) ? ui->tableWidgetTanks->item(r, 2)->text() : "0";
+        QString minV    = ui->tableWidgetTanks->item(r, 3) ? ui->tableWidgetTanks->item(r, 3)->text() : "0";
+        QString deadMax = ui->tableWidgetTanks->item(r, 4) ? ui->tableWidgetTanks->item(r, 4)->text() : "0";
+        QString deadMin = ui->tableWidgetTanks->item(r, 5) ? ui->tableWidgetTanks->item(r, 5)->text() : "0";
+        QString tube    = ui->tableWidgetTanks->item(r, 6) ? ui->tableWidgetTanks->item(r, 6)->text() : "0";
+
+        // Формуємо красивий рядок
+        lines << QString("🛢 %1 (%2) | Об'єм: %3 / %4 | Рівн:: %5 / %6 | Труба: %7")
+                     .arg(id, fuel, maxV, minV, deadMax, deadMin, tube);
+    }
+
     QClipboard *clipboard = QApplication::clipboard();
     clipboard->setText(lines.join("\n"));
 }

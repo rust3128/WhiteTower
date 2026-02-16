@@ -13,5 +13,6 @@
         <file>res/Images/RRO_icon.png</file>
         <file>res/Images/tanks.png</file>
         <file>res/Images/clipboard.png</file>
+        <file>res/Images/information.png</file>
     </qresource>
 </RCC>

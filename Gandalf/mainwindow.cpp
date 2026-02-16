@@ -122,13 +122,13 @@ void MainWindow::createConnections()
 
     connect(&ApiClient::instance(), &ApiClient::stationPosDataReceived,
             this, &MainWindow::onStationPosDataReceived);
+
+    connect(&ApiClient::instance(), &ApiClient::stationTanksReceived,
+            this, &MainWindow::onStationTanksDataReceived);
 }
 
 void MainWindow::setupStationSearch()
 {
-    // БІЛЬШЕ НЕ СТВОРЮЄМО ВІДЖЕТ ВРУЧНУ (new ...)
-    // Він вже створений у ui->setupUi(this) і доступний як ui->searchWidget
-
     // Перевіряємо на всяк випадок (хоча він точно є)
     if (ui->widgetSearch) {
         // Підключаємо сигнал
@@ -313,56 +313,27 @@ void MainWindow::onStationSelected(int objectId)
 {
     logInfo() << "MainWindow: Request to open station ID:" << objectId;
 
-    // КРОК 1: Перевірка на дублікати
-    // Якщо вкладка вже є - просто фокусуємось на ній
+    // 1. Перевірка на дублікати
     int existingIndex = findTabIndexByStationId(objectId);
     if (existingIndex != -1) {
         ui->tabWidgetMain->setCurrentIndex(existingIndex);
-        logInfo() << "MainWindow: Tab already exists, switching to index" << existingIndex;
         return;
     }
 
-    // КРОК 2: Створення нової вкладки
+    // 2. Створення UI (Вкладки)
     GeneralInfoWidget *infoWidget = new GeneralInfoWidget();
-
-    // Зберігаємо ID як динамічну властивість віджета (щоб потім знайти його в findTabIndexByStationId)
     infoWidget->setProperty("stationId", objectId);
 
-    // КРОК 3: Створення контексту даних
-    // Робимо infoWidget батьком для context, щоб при закритті вкладки context теж видалився
-    StationDataContext *context = new StationDataContext(objectId, infoWidget);
-
-    // КРОК 4: Налаштування оновлення даних
-    connect(context, &StationDataContext::generalInfoReady, this, [this, infoWidget, context]() {
-        // Оновлюємо внутрішній UI віджета
-        auto info = context->getGeneralInfo();
-        infoWidget->updateData(info);
-
-        // --- НОВЕ: ПОЗНАЧАЄМО ВКЛАДКУ ТА РОБИМО ЗАПИТ ---
-        // Зберігаємо terminalId, щоб потім знайти цю вкладку при отриманні РРО
-        infoWidget->setProperty("terminalId", info.terminalId);
-
-        // Відправляємо запит на сервер за касами (telegramId = 0 за замовчуванням)
-        ApiClient::instance().fetchStationPosData(info.clientId, info.terminalId);
-        // ------------------------------------------------
-
-        // Оновлюємо заголовок та іконку вкладки
-        int index = ui->tabWidgetMain->indexOf(infoWidget);
-        if (index != -1) {
-            QString title = QString("%1 - %2").arg(info.terminalId).arg(info.clientName);
-            if (title.length() > 25) title = title.left(22) + "...";
-
-            ui->tabWidgetMain->setTabText(index, title);
-            ui->tabWidgetMain->setTabIcon(index, drawStatusIcon(info.isActive, info.isWork));
-        }
-    });
-    // КРОК 5: Додавання на форму та запуск
-    // Додаємо з тимчасовим заголовком
+    // 3. Додавання вкладки на форму з тимчасовим статусом
     int newIndex = ui->tabWidgetMain->addTab(infoWidget, QString("Завантаження %1...").arg(objectId));
-    ui->tabWidgetMain->setTabIcon(newIndex, drawStatusIcon(false, false)); // Сіра іконка поки вантажиться
+    ui->tabWidgetMain->setTabIcon(newIndex, drawStatusIcon(false, false));
     ui->tabWidgetMain->setCurrentIndex(newIndex);
 
-    // Запускаємо отримання даних
+    // 4. Створення контексту та підключення (infoWidget стає Parent-ом!)
+    StationDataContext *context = new StationDataContext(objectId, infoWidget);
+    connect(context, &StationDataContext::generalInfoReady, this, &MainWindow::onStationGeneralInfoReady);
+
+    // 5. Запуск завантаження
     context->fetchGeneralInfo();
 }
 
@@ -433,5 +404,80 @@ void MainWindow::onStationPosDataReceived(const QJsonArray& data, int clientId, 
             infoWidget->updateRROData(data);
             break; // Знайшли потрібну вкладку, оновили, виходимо з циклу
         }
+    }
+}
+
+
+// --- ОТРИМАННЯ РЕЗЕРВУАРІВ ---
+void MainWindow::onStationTanksDataReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId)
+{
+    // Відсікаємо запити бота
+    if (telegramId != 0) return;
+
+    // Шукаємо потрібну вкладку
+    for (int i = 0; i < ui->tabWidgetMain->count(); ++i) {
+        GeneralInfoWidget* infoWidget = qobject_cast<GeneralInfoWidget*>(ui->tabWidgetMain->widget(i));
+
+        if (infoWidget && infoWidget->property("terminalId").toInt() == terminalId) {
+            logInfo() << "MainWindow: Routing Tanks data to tab with terminal:" << terminalId;
+
+            // ПЕРЕДАЄМО ДАНІ У ВІДЖЕТ!
+            infoWidget->updateTanksData(data);
+            break;
+        }
+    }
+}
+
+// --- СЛОТ: Обробка отриманих даних ---
+void MainWindow::onStationGeneralInfoReady()
+{
+    // 1. Дізнаємося, який саме контекст надіслав сигнал
+    StationDataContext *context = qobject_cast<StationDataContext*>(sender());
+    if (!context) return;
+
+    // 2. Дістаємо віджет вкладки (він є батьком контексту, ми це задали при створенні)
+    GeneralInfoWidget *infoWidget = qobject_cast<GeneralInfoWidget*>(context->parent());
+    if (!infoWidget) return;
+
+    // 3. Отримуємо дані
+    auto info = context->getGeneralInfo();
+
+    // 4. Оновлюємо внутрішній стан віджета
+    infoWidget->setProperty("terminalId", info.terminalId);
+    infoWidget->updateData(info);
+
+    // 5. Оновлюємо вигляд вкладки (іконка, заголовок)
+    updateStationTabAppearance(infoWidget, info);
+
+    // 6. Запускаємо завантаження всіх додаткових даних (РРО, резервуари тощо)
+    fetchAdditionalStationData(info);
+}
+
+// --- МЕТОД: Централізоване місце для додаткових запитів ---
+void MainWindow::fetchAdditionalStationData(const StationDataContext::GeneralInfo& info)
+{
+    logInfo() << "MainWindow: Fetching additional data for terminal:" << info.terminalId;
+
+    // Сюди буде неймовірно просто додавати нові фічі
+    ApiClient::instance().fetchStationPosData(info.clientId, info.terminalId);
+    ApiClient::instance().fetchStationTanks(info.clientId, info.terminalId);
+
+    // Наприклад, наступний крок:
+    // ApiClient::instance().fetchDispenserConfig(info.clientId, info.terminalId);
+}
+
+// --- МЕТОД: Ізольована логіка малювання вкладки ---
+void MainWindow::updateStationTabAppearance(QWidget* tabWidget, const StationDataContext::GeneralInfo& info)
+{
+    int index = ui->tabWidgetMain->indexOf(tabWidget);
+    if (index != -1) {
+        // Формуємо красивий заголовок
+        QString title = QString("%1 - %2").arg(info.terminalId).arg(info.clientName);
+        if (title.length() > 25) {
+            title = title.left(22) + "...";
+        }
+
+        ui->tabWidgetMain->setTabText(index, title);
+        ui->tabWidgetMain->setTabIcon(index, drawStatusIcon(info.isActive, info.isWork));
     }
 }
