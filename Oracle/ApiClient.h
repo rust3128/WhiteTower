@@ -150,6 +150,9 @@ public:
 
     void fetchObjectGeneralInfo(int objectId);
 
+    // Запит конфігурації ПРК (колонок)
+    void fetchStationDispensers(int clientId, int terminalId, qint64 telegramId = 0);
+
 signals:
     // Сигнали для логіну
     void loginSuccess(User* user);
@@ -315,6 +318,8 @@ signals:
 
     void objectGeneralInfoFetched(int objectId, const QJsonObject &data);
 
+    // Сигнал, який випускається, коли прийшли дані про ПРК
+    void stationDispensersReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId);
 
 private slots:
     void onLoginReplyFinished();

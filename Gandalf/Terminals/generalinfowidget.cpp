@@ -1,6 +1,8 @@
 #include "generalinfowidget.h"
 #include "ui_generalinfowidget.h"
 
+#include "poscardwidget.h"
+
 #include <QHeaderView>
 
 GeneralInfoWidget::GeneralInfoWidget(QWidget *parent)
@@ -48,7 +50,12 @@ void GeneralInfoWidget::setupUI()
             border: 1px solid #dadce0; /* Рамка */
         }
     )");
+
+    if (ui->stackedWidgetInfo) { // Замініть tabWidget на назву вашого віджета вкладок
+        ui->stackedWidgetInfo->setCurrentIndex(0);
+    }
 }
+
 
 void GeneralInfoWidget::createConnections()
 {
@@ -348,4 +355,72 @@ void GeneralInfoWidget::onCopyTanksClicked()
 
     QClipboard *clipboard = QApplication::clipboard();
     clipboard->setText(lines.join("\n"));
+}
+
+
+void GeneralInfoWidget::updateDispensersData(const QJsonArray &dispensersArray)
+{
+    // Оновлюємо шапку (якщо є)
+    if (ui->labelTotalPRK) {
+        ui->labelTotalPRK->setText(QString("<img src=':/res/Images/prk.png' width='18' height='18' align='middle'> ПРК: %1").arg(dispensersArray.size()));
+    }
+
+    ui->treeWidgetPRK->clear();
+    ui->treeWidgetPRK->setColumnCount(5);
+
+    // --- 1. ЧИСТІ ТА ЛОГІЧНІ ЗАГОЛОВКИ ---
+    QStringList headers = {"№ ПРК", "Протокол", "Порт", "Швидкість", "Адреса"};
+    ui->treeWidgetPRK->setHeaderLabels(headers);
+    ui->treeWidgetPRK->setAlternatingRowColors(true);
+
+    // Перебираємо масив ПРК
+    for (int i = 0; i < dispensersArray.size(); ++i) {
+        QJsonObject dispObj = dispensersArray[i].toObject();
+
+        // --- БАТЬКІВСЬКИЙ РЯДОК (Сама Колонка) ---
+        QTreeWidgetItem *dispItem = new QTreeWidgetItem(ui->treeWidgetPRK);
+
+        dispItem->setText(0, QString::number(dispObj["dispenser_id"].toInt()));
+        dispItem->setText(1, dispObj["protocol_name"].toString());
+        dispItem->setText(2, QString::number(dispObj["channel_port"].toInt()));
+        dispItem->setText(3, QString::number(dispObj["channel_speed"].toInt()));
+        dispItem->setText(4, QString::number(dispObj["net_address"].toInt()));
+
+        QFont boldFont = dispItem->font(0);
+        boldFont.setBold(true);
+        for (int col = 0; col < 5; ++col) {
+            dispItem->setFont(col, boldFont);
+            dispItem->setBackground(col, QBrush(QColor("#F8F9FA"))); // Сірий фон
+            if (col > 0) dispItem->setTextAlignment(col, Qt::AlignCenter);
+        }
+
+        // --- ДОЧІРНІ РЯДКИ (Пістолети) ---
+        QJsonArray nozzlesArray = dispObj["nozzles"].toArray();
+        for (int j = 0; j < nozzlesArray.size(); ++j) {
+            QJsonObject nozzleObj = nozzlesArray[j].toObject();
+            QTreeWidgetItem *nozzleItem = new QTreeWidgetItem(dispItem);
+
+            // Формуємо красивий єдиний рядок, який легко читати
+            QString nozzleInfo = QString("  ↳ Пістолет %1: %2 (Рез. %3)")
+                                     .arg(nozzleObj["nozzle_id"].toInt())
+                                     .arg(nozzleObj["fuel_shortname"].toString())
+                                     .arg(nozzleObj["tank_id"].toInt());
+
+            nozzleItem->setText(0, nozzleInfo);
+
+            // МАГІЯ: Дозволяємо цьому тексту розтягнутися на всі колонки!
+            nozzleItem->setFirstColumnSpanned(true);
+
+            // Робимо текст пістолетів трохи іншим кольором, щоб він не зливався з ПРК
+            nozzleItem->setForeground(0, QBrush(QColor("#444444")));
+        }
+    }
+
+    // Вимикаємо розтягування останньої колонки
+    ui->treeWidgetPRK->header()->setStretchLastSection(false);
+
+    // Підганяємо ширину колонок під текст ПРК
+    for (int col = 0; col < 5; ++col) {
+        ui->treeWidgetPRK->resizeColumnToContents(col);
+    }
 }

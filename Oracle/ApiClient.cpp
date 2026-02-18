@@ -2315,3 +2315,44 @@ void ApiClient::fetchObjectGeneralInfo(int objectId)
         reply->deleteLater();
     });
 }
+
+void ApiClient::fetchStationDispensers(int clientId, int terminalId, qint64 telegramId)
+{
+    QString urlStr = QString("%1/api/clients/%2/station/%3/dispensers")
+    .arg(m_serverUrl)
+        .arg(clientId)
+        .arg(terminalId);
+    QUrl url(urlStr);
+    QNetworkRequest request;
+
+    // --- РОЗУМНА АВТОРИЗАЦІЯ (Як у резервуарах!) ---
+    if (!m_botApiKey.isEmpty()) {
+        request = createBotRequest(url, telegramId); // Якщо це Isengard
+    } else {
+        request = createAuthenticatedRequest(url);   // Якщо це Gandalf
+    }
+
+    QNetworkReply* reply = m_networkManager->get(request);
+
+    // Використовуємо лямбду для обробки відповіді
+    connect(reply, &QNetworkReply::finished, this, [this, reply, clientId, terminalId, telegramId]() {
+        ApiError error = parseReply(reply);
+
+        if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200) {
+            QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
+            if (doc.isArray()) {
+                // Якщо все добре, відправляємо масив
+                emit stationDispensersReceived(doc.array(), clientId, terminalId, telegramId);
+            } else {
+                logCritical() << "ApiClient: Expected JSON array for dispensers, got something else.";
+                emit stationDispensersReceived(QJsonArray(), clientId, terminalId, telegramId);
+            }
+        } else {
+            logCritical() << "ApiClient: Failed to fetch dispensers data:" << error.errorString;
+            // У разі помилки відправляємо порожній масив, щоб UI не "завис"
+            emit stationDispensersReceived(QJsonArray(), clientId, terminalId, telegramId);
+        }
+
+        reply->deleteLater();
+    });
+}

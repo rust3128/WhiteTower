@@ -125,6 +125,9 @@ void MainWindow::createConnections()
 
     connect(&ApiClient::instance(), &ApiClient::stationTanksReceived,
             this, &MainWindow::onStationTanksDataReceived);
+
+    connect(&ApiClient::instance(), &ApiClient::stationDispensersReceived,
+            this, &MainWindow::onStationDispensersDataReceived);
 }
 
 void MainWindow::setupStationSearch()
@@ -466,7 +469,7 @@ void MainWindow::fetchAdditionalStationData(const StationDataContext::GeneralInf
     ApiClient::instance().fetchStationTanks(info.clientId, info.terminalId);
 
     // Наприклад, наступний крок:
-    // ApiClient::instance().fetchDispenserConfig(info.clientId, info.terminalId);
+    ApiClient::instance().fetchStationDispensers(info.clientId, info.terminalId);
 }
 
 // --- МЕТОД: Ізольована логіка малювання вкладки ---
@@ -482,5 +485,30 @@ void MainWindow::updateStationTabAppearance(QWidget* tabWidget, const StationDat
 
         ui->tabWidgetMain->setTabText(index, title);
         ui->tabWidgetMain->setTabIcon(index, drawStatusIcon(info.isActive, info.isWork));
+    }
+}
+
+
+// --- ОТРИМАННЯ КОЛОНОК (ПРК) ---
+void MainWindow::onStationDispensersDataReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId)
+{
+    // Відсікаємо запити бота
+    if (telegramId != 0) return;
+
+    // Шукаємо потрібну вкладку
+    for (int i = 0; i < ui->tabWidgetMain->count(); ++i) {
+        GeneralInfoWidget* infoWidget = qobject_cast<GeneralInfoWidget*>(ui->tabWidgetMain->widget(i));
+
+        // Перевіряємо і terminalId, і clientId (наш захист від мультитенантності!)
+        if (infoWidget &&
+            infoWidget->property("terminalId").toInt() == terminalId &&
+            infoWidget->property("clientId").toInt() == clientId)
+        {
+            logInfo() << "MainWindow: Routing Dispensers data to tab with terminal:" << terminalId;
+
+            // ПЕРЕДАЄМО ДАНІ У ВІДЖЕТ!
+            infoWidget->updateDispensersData(data);
+            break;
+        }
     }
 }

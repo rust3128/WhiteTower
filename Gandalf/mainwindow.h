@@ -56,6 +56,8 @@ private slots:
 
     // СЛОТ для отримання даних про Резервуари
     void onStationTanksDataReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId);
+    // СЛОТ для отримання даних про Колонки (ПРК)
+    void onStationDispensersDataReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId);
 
 private:
     void checkAutoSyncNeeded();

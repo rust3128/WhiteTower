@@ -2,7 +2,6 @@
 #define GENERALINFOWIDGET_H
 
 #include "StationDataContext.h"
-#include "poscardwidget.h"
 
 #include <QWidget>
 #include <QMenu>
@@ -30,6 +29,8 @@ public:
     void updateRROData(const QJsonArray &rroArray);
     // МЕТОД: для завантаження резервуарів
     void updateTanksData(const QJsonArray &tanksArray);
+
+    void updateDispensersData(const QJsonArray &dispensersArray);
 private slots:
     // Слот для обробки правого кліку по фрейму
     void onFrameContextMenu(const QPoint &pos);

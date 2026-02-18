@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>966</width>
-    <height>547</height>
+    <height>728</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -97,7 +97,7 @@
          <x>0</x>
          <y>0</y>
          <width>68</width>
-         <height>435</height>
+         <height>616</height>
         </rect>
        </property>
        <layout class="QVBoxLayout" name="verticalLayout">
@@ -363,7 +363,7 @@ QToolButton:checked {
        <item>
         <widget class="QStackedWidget" name="stackedWidgetInfo">
          <property name="currentIndex">
-          <number>0</number>
+          <number>2</number>
          </property>
          <widget class="QWidget" name="pageSummary">
           <layout class="QVBoxLayout" name="verticalLayout_5">
@@ -500,8 +500,8 @@ QToolButton:checked {
                <rect>
                 <x>0</x>
                 <y>0</y>
-                <width>834</width>
-                <height>303</height>
+                <width>98</width>
+                <height>28</height>
                </rect>
               </property>
               <layout class="QVBoxLayout" name="layoutRROCards">
@@ -524,7 +524,26 @@ QToolButton:checked {
            </item>
           </layout>
          </widget>
-         <widget class="QWidget" name="pagePRK"/>
+         <widget class="QWidget" name="pagePRK">
+          <layout class="QVBoxLayout" name="verticalLayout_6">
+           <item>
+            <widget class="QLabel" name="labelTotalPRK">
+             <property name="text">
+              <string>TextLabel</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QTreeWidget" name="treeWidgetPRK">
+             <column>
+              <property name="text">
+               <string notr="true">1</string>
+              </property>
+             </column>
+            </widget>
+           </item>
+          </layout>
+         </widget>
          <widget class="QWidget" name="pageTanks">
           <layout class="QVBoxLayout" name="verticalLayout_4">
            <item>
