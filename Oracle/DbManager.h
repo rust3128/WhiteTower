@@ -97,6 +97,8 @@ public:
 
     // Отримання загальної інформації про конкретну АЗС
     QJsonObject getObjectInfo(int objectId);
+    // Метод для примусового встановлення статусу синхронізації
+    bool setSyncStatus(int clientId, const QString& status, const QString& message);
 
 private:
     DbManager(); // Конструктор тепер приватний

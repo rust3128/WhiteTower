@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QQueue>
+#include <QSet>
 
 class SyncManager : public QObject
 {
@@ -11,10 +12,16 @@ public:
     static SyncManager& instance();
     void queueClient(int clientId);
     bool isSyncing() const;
-
+    int activeClient() const { return m_activeClient; }
+    bool isClientInQueue(int clientId) const { return m_queue.contains(clientId); }
+    // --- НОВІ МЕТОДИ ДЛЯ ВІДСОТКІВ ---
+    int getBatchTotal() const { return m_batchTotal; }
+    int getBatchCompleted() const { return m_batchCompleted; }
+    bool isTracked(int clientId) const { return m_trackedClients.contains(clientId); }
+    void markCompleted(int clientId);
 signals:
     void clientSyncStarted(int clientId);
-    void clientSyncFinished(int clientId, bool success, QString message);
+    void syncRequestSent(int clientId, bool success, QString message);
     void queueProgress(int remainingCount);
     void allFinished();
 
@@ -28,6 +35,10 @@ private:
 
     QQueue<int> m_queue;
     bool m_isBusy;
+    int m_activeClient;
+    QSet<int> m_trackedClients; // Ті, хто зараз крутиться на сервері
+    int m_batchTotal;           // Всього завдань у поточному запуску
+    int m_batchCompleted;       // Скільки вже повернули SUCCESS/ERROR
 };
 
 #endif // SYNCMANAGER_H

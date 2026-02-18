@@ -1103,7 +1103,7 @@ QVariantMap DbManager::syncViaFile(int clientId, const QJsonObject& clientDetail
         // Ми не можемо покластися тільки на getExportTaskInfo, бо воно повертає тільки QPair<QString, QString>.
         // Тому робимо додатковий запит для стратегії.
         QSqlQuery strategyQuery(m_db);
-        strategyQuery.prepare("SELECT DELETE_STRATEGY FROM EXPORT_TASKS WHERE QUERY_FILENAME = :filename AND IS_ACTIVE = 1");
+        strategyQuery.prepare("SELECT DELETE_STRATEGY FROM EXPORT_TASKS WHERE LOWER(QUERY_FILENAME) = LOWER(:filename) AND IS_ACTIVE = 1");
         strategyQuery.bindValue(":filename", queryFileName);
 
         if (strategyQuery.exec() && strategyQuery.next()) {
@@ -1952,75 +1952,25 @@ bool DbManager::updateExportTask(int taskId, const QJsonObject& taskData)
 }
 
 
-// // Допоміжний метод для імпорту АЗС (Objects)
-// bool DbManager::processObjectsSync(int clientId, const QJsonArray& objects, QString& errorOut)
-// {
-//     // Використовуємо транзакцію, яка вже відкрита в syncViaFile
-//     QSqlQuery query(m_db);
-
-//     // Використовуємо Firebird UPDATE OR INSERT
-//     // Це дозволяє оновити існуючий запис або створити новий, якщо його немає
-//     // MATCHING (CLIENT_ID, TERMINAL_ID) вказує, як шукати дублікати
-//     QString sql = R"(
-//         UPDATE OR INSERT INTO OBJECTS (
-//             CLIENT_ID, TERMINAL_ID, NAME, ADDRESS,
-//             IS_ACTIVE, IS_WORK, PHONE, REGION_NAME,
-//             LATITUDE, LONGITUDE
-//         ) VALUES (
-//             :client_id, :term_id, :name, :addr,
-//             :active, :work, :phone, :region,
-//             :lat, :lon
-//         ) MATCHING (CLIENT_ID, TERMINAL_ID)
-//     )";
-
-//     query.prepare(sql);
-
-//     for (const QJsonValue& val : objects) {
-//         if (!val.isObject()) continue;
-//         QJsonObject obj = val.toObject();
-
-//         query.bindValue(":client_id", clientId);
-//         query.bindValue(":term_id", obj["TERMINAL_ID"].toInt());
-//         query.bindValue(":name", obj["NAME"].toString());
-//         query.bindValue(":addr", obj["ADDRESS"].toString());
-//         // JSON bool/int -> DB int (0 або 1)
-//         query.bindValue(":active", obj["IS_ACTIVE"].toInt());
-//         query.bindValue(":work", obj["IS_WORK"].toInt());
-//         query.bindValue(":phone", obj["PHONE"].toString());
-//         query.bindValue(":region", obj["REGION_NAME"].toString());
-
-//         // Обробка координат (можуть бути null або double)
-//         query.bindValue(":lat", obj["LATITUDE"].isDouble() ? obj["LATITUDE"].toDouble() : QVariant(QVariant::Double));
-//         query.bindValue(":lon", obj["LONGITUDE"].isDouble() ? obj["LONGITUDE"].toDouble() : QVariant(QVariant::Double));
-
-//         if (!query.exec()) {
-//             errorOut = "SQL Error for Terminal " + QString::number(obj["TERMINAL_ID"].toInt()) + ": " + query.lastError().text();
-//             return false;
-//         }
-//     }
-//     return true;
-// }
-
-
 QPair<QString, QString> DbManager::getExportTaskInfo(const QString& jsonFileName)
 {
-    // 1. Припускаємо, що ім'я SQL-файлу таке саме, як JSON, тільки розширення інше
     QString sqlFileName = jsonFileName;
     sqlFileName.replace(".json", ".sql", Qt::CaseInsensitive);
 
     QSqlQuery query(m_db);
-    query.prepare("SELECT TARGET_TABLE, MATCH_FIELDS FROM EXPORT_TASKS WHERE QUERY_FILENAME = :fname");
+    // ФІКС 1: Шукаємо файл без урахування великих/малих літер
+    query.prepare("SELECT TARGET_TABLE, MATCH_FIELDS FROM EXPORT_TASKS WHERE LOWER(QUERY_FILENAME) = LOWER(:fname)");
     query.bindValue(":fname", sqlFileName);
 
     if (query.exec() && query.next()) {
         QString table = query.value("TARGET_TABLE").toString();
         QString match = query.value("MATCH_FIELDS").toString();
-        // Повертаємо пару: Таблиця, ПоляУнікальності
         return qMakePair(table, match);
     }
 
-    return qMakePair(QString(), QString()); // Не знайдено
+    return qMakePair(QString(), QString());
 }
+
 
 bool DbManager::processGenericSync(int clientId, const QString& tableName, const QString& matchFields,
                                    const QString& deleteStrategy, // <-- НОВИЙ ПАРАМЕТР
@@ -2106,7 +2056,12 @@ bool DbManager::processGenericSync(int clientId, const QString& tableName, const
         colNames << key;
         bindNames << ":" + key;
     }
-
+    QString safeMatchFields = matchFields;
+    // Перевіряємо, чи є CLIENT_ID у правилах співставлення. Якщо немає - примусово додаємо!
+    if (!safeMatchFields.contains("CLIENT_ID", Qt::CaseInsensitive)) {
+        safeMatchFields = "CLIENT_ID, " + safeMatchFields;
+        logWarning() << "DbManager: Auto-injected CLIENT_ID into MATCHING fields for table" << tableName;
+    }
     QString sql = QString("UPDATE OR INSERT INTO %1 (%2) VALUES (%3) MATCHING (%4)")
                       .arg(tableName)
                       .arg(colNames.join(", "))
@@ -2630,4 +2585,29 @@ QJsonObject DbManager::getObjectInfo(int objectId)
     }
 
     return result;
+}
+
+bool DbManager::setSyncStatus(int clientId, const QString& status, const QString& message)
+{
+    // Блокуємо м'ютекс, бо цей метод буде викликатися з головного потоку сервера,
+    // поки інші потоки можуть працювати з базою
+    QMutexLocker locker(&m_dbMutex);
+
+    if (!isConnected()) return false;
+
+    QSqlQuery query(m_db);
+    // Використовуємо UPDATE OR INSERT для гарантованого запису (оновлюємо і дату також)
+    query.prepare("UPDATE OR INSERT INTO SYNC_STATUS (CLIENT_ID, LAST_SYNC_DATE, LAST_SYNC_STATUS, LAST_SYNC_MESSAGE) "
+                  "VALUES (:clientId, CURRENT_TIMESTAMP, :status, :msg) MATCHING (CLIENT_ID)");
+
+    query.bindValue(":clientId", clientId);
+    query.bindValue(":status", status);
+    query.bindValue(":msg", message);
+
+    if (!query.exec()) {
+        logCritical() << "DbManager: Failed to set explicit sync status for client" << clientId << ":" << query.lastError().text();
+        return false;
+    }
+
+    return true;
 }

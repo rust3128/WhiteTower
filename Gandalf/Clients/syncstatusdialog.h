@@ -32,7 +32,7 @@ private slots:
 
     // --- Слоти від SyncManager (Прогрес виконання) ---
     void onClientSyncStarted(int clientId);
-    void onClientSyncFinished(int clientId, bool success, QString message);
+    void onSyncRequestSent(int clientId, bool success, QString message);
     void onQueueProgress(int remainingCount);
     void onAllFinished();
 

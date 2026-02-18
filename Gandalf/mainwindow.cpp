@@ -396,13 +396,14 @@ void MainWindow::onStationPosDataReceived(const QJsonArray& data, int clientId, 
         // Пробуємо перетворити віджет вкладки на наш GeneralInfoWidget
         GeneralInfoWidget* infoWidget = qobject_cast<GeneralInfoWidget*>(ui->tabWidgetMain->widget(i));
 
-        // Якщо це дійсно наша вкладка і в неї співпадає terminalId
-        if (infoWidget && infoWidget->property("terminalId").toInt() == terminalId) {
+        // Якщо це дійсно наша вкладка і в неї співпадає terminalId ТА clientId
+        if (infoWidget &&
+            infoWidget->property("terminalId").toInt() == terminalId &&
+            infoWidget->property("clientId").toInt() == clientId)
+        {
             logInfo() << "MainWindow: Routing RRO data to tab with terminal:" << terminalId;
-
-            // ПЕРЕДАЄМО ДАНІ У ВІДЖЕТ!
             infoWidget->updateRROData(data);
-            break; // Знайшли потрібну вкладку, оновили, виходимо з циклу
+            break;
         }
     }
 }
@@ -418,10 +419,11 @@ void MainWindow::onStationTanksDataReceived(const QJsonArray& data, int clientId
     for (int i = 0; i < ui->tabWidgetMain->count(); ++i) {
         GeneralInfoWidget* infoWidget = qobject_cast<GeneralInfoWidget*>(ui->tabWidgetMain->widget(i));
 
-        if (infoWidget && infoWidget->property("terminalId").toInt() == terminalId) {
+        if (infoWidget &&
+            infoWidget->property("terminalId").toInt() == terminalId &&
+            infoWidget->property("clientId").toInt() == clientId)
+        {
             logInfo() << "MainWindow: Routing Tanks data to tab with terminal:" << terminalId;
-
-            // ПЕРЕДАЄМО ДАНІ У ВІДЖЕТ!
             infoWidget->updateTanksData(data);
             break;
         }
@@ -444,6 +446,7 @@ void MainWindow::onStationGeneralInfoReady()
 
     // 4. Оновлюємо внутрішній стан віджета
     infoWidget->setProperty("terminalId", info.terminalId);
+    infoWidget->setProperty("clientId", info.clientId);
     infoWidget->updateData(info);
 
     // 5. Оновлюємо вигляд вкладки (іконка, заголовок)

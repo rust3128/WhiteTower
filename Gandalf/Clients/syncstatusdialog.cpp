@@ -47,14 +47,14 @@ void SyncStatusDialog::createConnections()
     connect(&SyncManager::instance(), &SyncManager::clientSyncStarted,
             this, &SyncStatusDialog::onClientSyncStarted);
 
-    connect(&SyncManager::instance(), &SyncManager::clientSyncFinished,
-            this, &SyncStatusDialog::onClientSyncFinished);
+    connect(&SyncManager::instance(), &SyncManager::syncRequestSent,
+            this, &SyncStatusDialog::onSyncRequestSent);
 
-    connect(&SyncManager::instance(), &SyncManager::queueProgress,
-            this, &SyncStatusDialog::onQueueProgress);
+    // connect(&SyncManager::instance(), &SyncManager::queueProgress,
+    //         this, &SyncStatusDialog::onQueueProgress);
 
-    connect(&SyncManager::instance(), &SyncManager::allFinished,
-            this, &SyncStatusDialog::onAllFinished);
+    // connect(&SyncManager::instance(), &SyncManager::allFinished,
+    //         this, &SyncStatusDialog::onAllFinished);
 
     // 2. ApiClient -> Dialog (Завантаження початкового списку)
     connect(&ApiClient::instance(), &ApiClient::dashboardDataFetched,
@@ -94,9 +94,6 @@ void SyncStatusDialog::refreshClientList()
 
 void SyncStatusDialog::onDashboardDataLoaded(const QJsonArray& data)
 {
-    // Ми НЕ робимо setRowCount(0) і НЕ очищаємо m_clientRowMap
-    // щоб зберегти стан інтерфейсу.
-
     for (const QJsonValue& val : data) {
         if (!val.isObject()) continue;
         QJsonObject obj = val.toObject();
@@ -108,15 +105,52 @@ void SyncStatusDialog::onDashboardDataLoaded(const QJsonArray& data)
         QString status = obj["status"].toString();
         QString msg = obj["message"].toString();
 
-        // Перевіряємо, чи є цей клієнт вже в таблиці
-        if (m_clientRowMap.contains(id)) {
-            // ОНОВЛЮЄМО існуючий рядок
-            int row = m_clientRowMap[id];
-            updateClientRow(row, lastDate, status, msg);
-        } else {
-            // ДОДАЄМО новий рядок
-            addClientToTable(id, name, method, lastDate, status, msg);
+        bool isRunningNow = (SyncManager::instance().activeClient() == id);
+        bool isInQueue = SyncManager::instance().isClientInQueue(id);
+
+        // --- НОВЕ: ФІКСУЄМО ЗАВЕРШЕННЯ НА СЕРВЕРІ ---
+        // Якщо ми трекаємо цього клієнта, і база каже, що він уже завершив роботу (SUCCESS, ERROR, FAILED)
+        if (SyncManager::instance().isTracked(id)) {
+            if (status == "SUCCESS" || status == "ERROR" || status == "FAILED") {
+                SyncManager::instance().markCompleted(id); // Зараховуємо в +1 виконане
+            }
         }
+
+        // Візуальний статус для таблиці
+        if (isRunningNow || isInQueue || status == "RUNNING" || status == "PENDING") {
+            status = "RUNNING";
+            msg = isRunningNow ? "Відправка команди..." : (isInQueue ? "Очікує відправки..." : msg);
+        }
+
+        // Оновлюємо таблицю
+        if (m_clientRowMap.contains(id)) {
+            updateClientRow(m_clientRowMap[id], lastDate, status, msg);
+            if (QWidget *w = ui->tableWidget->cellWidget(m_clientRowMap[id], 5)) {
+                // Блокуємо кнопку, якщо він зараз у процесі
+                w->setEnabled(status != "RUNNING" && status != "PENDING");
+            }
+        } else {
+            addClientToTable(id, name, method, lastDate, status, msg);
+            if (QWidget *w = ui->tableWidget->cellWidget(m_clientRowMap[id], 5)) {
+                w->setEnabled(status != "RUNNING" && status != "PENDING");
+            }
+        }
+    }
+
+    // --- НОВЕ: КЕРУЄМО ПРОГРЕС-БАРОМ ---
+    int total = SyncManager::instance().getBatchTotal();
+    int completed = SyncManager::instance().getBatchCompleted();
+
+    if (total > 0 && completed < total) {
+        // Якщо є завдання, відображаємо реальні відсотки
+        ui->progressBar->setRange(0, total);
+        ui->progressBar->setValue(completed);
+        ui->progressBar->setFormat(QString("Виконано %1 з %2 (%3%)").arg(completed).arg(total).arg((completed * 100) / total));
+    } else {
+        // Якщо нічого не трекається
+        ui->progressBar->setRange(0, 100);
+        ui->progressBar->setValue(100);
+        ui->progressBar->setFormat("Всі завдання завершено");
     }
 }
 
@@ -237,18 +271,21 @@ void SyncStatusDialog::onClientSyncStarted(int clientId)
     }
 }
 
-void SyncStatusDialog::onClientSyncFinished(int clientId, bool success, QString message)
+void SyncStatusDialog::onSyncRequestSent(int clientId, bool success, QString message)
 {
     if (!m_clientRowMap.contains(clientId)) return;
     int row = m_clientRowMap[clientId];
 
-    setRowStatus(row, success ? "SUCCESS" : "ERROR");
-    ui->tableWidget->item(row, 4)->setText(message);
-    ui->tableWidget->item(row, 3)->setText(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"));
-
-    // Розблокуємо кнопку
-    if (QWidget *w = ui->tableWidget->cellWidget(row, 5)) {
-        w->setEnabled(true);
+    if (!success) {
+        // Якщо помилка МЕРЕЖІ (сервер впав, немає інету) - показуємо одразу
+        setRowStatus(row, "ERROR");
+        ui->tableWidget->item(row, 4)->setText(message);
+        if (QWidget *w = ui->tableWidget->cellWidget(row, 5)) w->setEnabled(true);
+    } else {
+        // Якщо сервер сказав "202 Accepted"
+        setRowStatus(row, "RUNNING"); // Візуально показуємо, що процес пішов
+        ui->tableWidget->item(row, 4)->setText("Команду прийнято. Виконується на сервері...");
+        // Кнопка залишається ЗАБЛОКОВАНОЮ! Її розблокує тільки 5-секундний таймер, коли побачить SUCCESS
     }
 }
 

@@ -700,27 +700,45 @@ QHttpServerResponse WebServer::handleSyncClientObjectsRequest(const QString& cli
         return createJsonResponse(QJsonObject{{"error", "Unauthorized"}}, QHttpServerResponse::StatusCode::Unauthorized);
     }
     delete user;
+
     bool ok;
     int id = clientId.toInt(&ok);
     if (!ok) {
         return createJsonResponse(QJsonObject{{"error", "Invalid client ID format"}}, QHttpServerResponse::StatusCode::BadRequest);
     }
+
+    // 1. СТАВИМО СТАТУС "ВИКОНУЄТЬСЯ" ОДРАЗУ
+    DbManager::instance().setSyncStatus(id, "RUNNING", "Підготовка до синхронізації...");
+
+    // 2. ЗАПУСКАЄМО ФОНОВИЙ ПОТІК
     QThreadPool::globalInstance()->start([id]() {
         try {
             logInfo() << "Starting background synchronization for client ID:" << id;
+
+            // Цей метод всередині себе робить всю роботу і САМ записує фінальні
+            // красиві статуси (напр. "Direct Sync. Processed: 261") в БД!
             QVariantMap result = DbManager::instance().syncClientObjects(id);
+
             if (result.contains("error")) {
                 logCritical() << "Synchronization failed for client" << id << ":" << result["error"].toString();
             } else {
                 logInfo() << "Synchronization completed for client" << id
                           << ". Processed" << result["processed_count"].toInt() << "objects.";
             }
+
+            // УВАГА: ТУТ НІЧОГО НЕ ПИШЕМО В БАЗУ ДЛЯ SUCCESS/FAILED!
+            // Не викликаємо setSyncStatus, щоб не затерти деталі від DbManager!
+
         } catch (const std::exception& e) {
             logCritical() << "!!! CRITICAL EXCEPTION in sync thread for client" << id << ":" << e.what();
+            // Записуємо в базу ТІЛЬКИ якщо стався краш C++, щоб вікно не зависло вічно в RUNNING
+            DbManager::instance().setSyncStatus(id, "ERROR", QString("Критична помилка: %1").arg(e.what()));
         } catch (...) {
             logCritical() << "!!! UNKNOWN CRITICAL EXCEPTION in sync thread for client" << id;
+            DbManager::instance().setSyncStatus(id, "ERROR", "Невідома критична помилка сервера");
         }
     });
+
     return createJsonResponse(QJsonObject{{"status", "Synchronization started in background"}}, QHttpServerResponse::StatusCode::Accepted);
 }
 
