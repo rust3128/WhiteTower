@@ -31,6 +31,8 @@ public:
     void updateTanksData(const QJsonArray &tanksArray);
 
     void updateDispensersData(const QJsonArray &dispensersArray);
+    void createTestWorkplaces();
+
 private slots:
     // Слот для обробки правого кліку по фрейму
     void onFrameContextMenu(const QPoint &pos);

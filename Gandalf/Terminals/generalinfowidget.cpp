@@ -2,6 +2,7 @@
 #include "ui_generalinfowidget.h"
 
 #include "poscardwidget.h"
+#include "workplacewidget.h"
 
 #include <QHeaderView>
 
@@ -54,6 +55,11 @@ void GeneralInfoWidget::setupUI()
     if (ui->stackedWidgetInfo) { // Замініть tabWidget на назву вашого віджета вкладок
         ui->stackedWidgetInfo->setCurrentIndex(0);
     }
+
+    ui->splitter->setSizes(QList<int>{520, 800});
+
+
+    ui->scrollAreaWorplaces->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 }
 
 
@@ -423,4 +429,33 @@ void GeneralInfoWidget::updateDispensersData(const QJsonArray &dispensersArray)
     for (int col = 0; col < 5; ++col) {
         ui->treeWidgetPRK->resizeColumnToContents(col);
     }
+}
+
+// --- ДОДАЙТЕ ЦЕЙ МЕТОД В КІНЕЦЬ ФАЙЛУ ---
+void GeneralInfoWidget::createTestWorkplaces()
+{
+    // 1. Очищаємо ліву панель (scrollAreaWorplaces) від старих карток
+    QLayoutItem *child;
+    while ((child = ui->verticalLayout->takeAt(0)) != nullptr) {
+        if (child->widget()) {
+            child->widget()->deleteLater();
+        }
+        delete child;
+    }
+
+    // 2. Створюємо 4 тестові заглушки
+    for (int i = 1; i <= 4; ++i) {
+        WorkplaceWidget* card = new WorkplaceWidget(this);
+
+        // Передаємо фейкові дані (Назва та IP)
+        card->setWorkplaceData(QString("MPosTouch PosID = %1").arg(i),
+                               QString("10.54.100.%1").arg(80 + i));
+
+        // Додаємо картку у вертикальний список лівої панелі
+        ui->verticalLayout->addWidget(card);
+    }
+
+    // 3. Додаємо "пружину" в кінець списку, щоб картки притискалися догори
+    QSpacerItem* spacer = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    ui->verticalLayout->addItem(spacer);
 }

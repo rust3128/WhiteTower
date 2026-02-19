@@ -39,6 +39,9 @@ add_executable(Gandalf WIN32
     Terminals/StationDataContext.cpp
     Terminals/generalinfowidget.h Terminals/generalinfowidget.cpp Terminals/generalinfowidget.ui
     Terminals/poscardwidget.h Terminals/poscardwidget.cpp Terminals/poscardwidget.ui
+    Terminals/workplacewidget.h Terminals/workplacewidget.cpp Terminals/workplacewidget.ui
+    Terminals/workplacedata.h
+    Terminals/workplacedata.cpp
 
 
 

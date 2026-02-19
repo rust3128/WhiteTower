@@ -14,5 +14,11 @@
         <file>res/Images/tanks.png</file>
         <file>res/Images/clipboard.png</file>
         <file>res/Images/information.png</file>
+        <file>res/Images/offline_network_icon.png</file>
+        <file>res/Images/online_network_icon.png</file>
+        <file>res/Images/ping_icon.png</file>
+        <file>res/Images/refresh_icon.png</file>
+        <file>res/Images/tightvnc-logo.png</file>
+        <file>res/Images/edit_icon.png</file>
     </qresource>
 </RCC>

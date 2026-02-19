@@ -18,6 +18,7 @@
 #include "Terminals/generalinfowidget.h"
 
 
+
 #include <QMessageBox>
 #include <QTimer>
 #include <QDateTime>
@@ -457,6 +458,8 @@ void MainWindow::onStationGeneralInfoReady()
 
     // 6. Запускаємо завантаження всіх додаткових даних (РРО, резервуари тощо)
     fetchAdditionalStationData(info);
+
+    infoWidget->createTestWorkplaces();
 }
 
 // --- МЕТОД: Централізоване місце для додаткових запитів ---
