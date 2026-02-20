@@ -143,7 +143,8 @@ private:
 
     QHttpServerResponse handleGetObjectInfo(const QHttpServerRequest &request);
 
-
+    // GET /api/clients/<clientId>/station/<terminalNo>/workplaces
+    QHttpServerResponse handleGetStationWorkplaces(const QString& clientId, const QString& terminalNo, const QHttpServerRequest& request);
 private:
     QHttpServer* m_httpServer;
     quint16 m_port;

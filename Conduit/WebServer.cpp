@@ -239,6 +239,10 @@ void WebServer::setupRoutes()
     m_httpServer->route("/api/objects/info", QHttpServerRequest::Method::Get,
                         [this](const QHttpServerRequest &request) { return handleGetObjectInfo(request); });
 
+    // Маршрут для робочих місць
+    m_httpServer->route(QStringLiteral("/api/clients/<arg>/station/<arg>/workplaces"), [this](const QString& clientId, const QString& terminalNo, const QHttpServerRequest &request) {
+        return handleGetStationWorkplaces(clientId, terminalNo, request);
+    });
 }
 
 void WebServer::logRequest(const QHttpServerRequest &request)
@@ -2210,4 +2214,20 @@ QHttpServerResponse WebServer::handleGetObjectInfo(const QHttpServerRequest &req
     QJsonObject info = DbManager::instance().getObjectInfo(objectId);
 
     return createJsonResponse(info, QHttpServerResponse::StatusCode::Ok);
+}
+
+
+QHttpServerResponse WebServer::handleGetStationWorkplaces(const QString& clientId, const QString& terminalNo, const QHttpServerRequest& request)
+{
+    // Універсальна авторизація (Бот або User)
+    User* user = authenticateRequest(request);
+    if (!user) {
+        return createJsonResponse(QJsonObject{{"error", "Unauthorized"}}, QHttpServerResponse::StatusCode::Unauthorized);
+    }
+    delete user; // Одразу видаляємо, бо права нас поки не цікавлять, головне - валідний токен
+
+    // Викликаємо метод БД (який ми зараз створимо)
+    QJsonArray data = DbManager::instance().getWorkplacesByTerminal(clientId.toInt(), terminalNo.toInt());
+
+    return createJsonResponse(data, QHttpServerResponse::StatusCode::Ok);
 }

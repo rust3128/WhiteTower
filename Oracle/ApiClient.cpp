@@ -1723,11 +1723,11 @@ void ApiClient::onStationPosDataReplyFinished()
         } else {
             // Якщо прийшло щось дивне (не масив)
             error.errorString = "Invalid response format (expected array)";
-            emit stationPosDataFailed(error, telegramId);
+            emit stationPosDataFailed(error, telegramId, clientId, terminalId);
         }
     } else {
         // Помилка
-        emit stationPosDataFailed(error, telegramId);
+        emit stationPosDataFailed(error, telegramId, clientId, terminalId);
     }
     reply->deleteLater();
 }
@@ -1776,7 +1776,7 @@ void ApiClient::onStationTanksReplyFinished()
         QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
         emit stationTanksReceived(doc.array(), clientId, terminalId, telegramId);
     } else {
-        emit stationTanksFailed(error, telegramId);
+        emit stationTanksFailed(error, telegramId, clientId, terminalId);
     }
     reply->deleteLater();
 }
@@ -2345,14 +2345,56 @@ void ApiClient::fetchStationDispensers(int clientId, int terminalId, qint64 tele
                 emit stationDispensersReceived(doc.array(), clientId, terminalId, telegramId);
             } else {
                 logCritical() << "ApiClient: Expected JSON array for dispensers, got something else.";
-                emit stationDispensersReceived(QJsonArray(), clientId, terminalId, telegramId);
+                emit stationDispensersFailed(error, telegramId, clientId, terminalId);
             }
         } else {
             logCritical() << "ApiClient: Failed to fetch dispensers data:" << error.errorString;
             // У разі помилки відправляємо порожній масив, щоб UI не "завис"
-            emit stationDispensersReceived(QJsonArray(), clientId, terminalId, telegramId);
+            emit stationDispensersFailed(error, telegramId, clientId, terminalId);
         }
 
         reply->deleteLater();
     });
+}
+
+
+void ApiClient::fetchStationWorkplaces(int clientId, int terminalId, qint64 telegramId)
+{
+    QString urlStr = QString("%1/api/clients/%2/station/%3/workplaces")
+    .arg(m_serverUrl).arg(clientId).arg(terminalId);
+    QUrl url(urlStr);
+    QNetworkRequest request;
+
+    if (!m_botApiKey.isEmpty()) {
+        request = createBotRequest(url, telegramId);
+    } else {
+        request = createAuthenticatedRequest(url);
+    }
+
+    QNetworkReply* reply = m_networkManager->get(request);
+    reply->setProperty("telegramId", telegramId);
+    reply->setProperty("clientId", clientId);
+    reply->setProperty("terminalId", terminalId);
+
+    connect(reply, &QNetworkReply::finished, this, &ApiClient::onStationWorkplacesReplyFinished);
+}
+
+void ApiClient::onStationWorkplacesReplyFinished()
+{
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    if (!reply) return;
+
+    qint64 telegramId = reply->property("telegramId").toLongLong();
+    int clientId = reply->property("clientId").toInt();
+    int terminalId = reply->property("terminalId").toInt();
+
+    ApiError error = parseReply(reply);
+
+    if (reply->error() == QNetworkReply::NoError && error.httpStatusCode == 200) {
+        QJsonDocument doc = QJsonDocument::fromJson(error.responseBody);
+        emit stationWorkplacesReceived(doc.array(), clientId, terminalId, telegramId);
+    } else {
+        emit stationWorkplacesFailed(error, clientId, terminalId, telegramId);
+    }
+    reply->deleteLater();
 }

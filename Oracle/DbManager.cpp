@@ -2611,3 +2611,46 @@ bool DbManager::setSyncStatus(int clientId, const QString& status, const QString
 
     return true;
 }
+
+QJsonArray DbManager::getWorkplacesByTerminal(int clientId, int terminalId)
+{
+    QJsonArray workplacesArray;
+
+    // В РЕАЛЬНОСТІ ТУТ БУДЕ:
+    // 1. Запит для отримання METHOD_ID для даного terminalId
+    // int methodId = ...
+
+    int methodId = 3; // Тимчасово примусово ставимо тип DATABASE (3)
+
+    if (methodId == 3) { // DATABASE
+        // --- ТИМЧАСОВА ЗАГЛУШКА ---
+        qInfo() << "DbManager: Using STUB for Database workplaces generation for terminal:" << terminalId;
+
+        // Імітуємо Касу 1 (MPosTouch)
+        QJsonObject pos1;
+        pos1["workplace_id"] = 1001;
+        pos1["version_type"] = 4; // MPosTouch
+        pos1["pos_id"] = 1;
+        pos1["ip_address"] = "192.168.1.51";
+        pos1["vnc_password"] = "decrypted_pass_1"; // Нібито вже розшифрований
+        pos1["vnc_port"] = 5900;
+        pos1["terminal_id"] = terminalId;
+        workplacesArray.append(pos1);
+
+        // Імітуємо Сервер (MPosDir)
+        QJsonObject server;
+        server["workplace_id"] = 1002;
+        server["version_type"] = 6; // MPosDir
+        server["pos_id"] = 1;
+        server["ip_address"] = "192.168.1.100";
+        server["vnc_password"] = "decrypted_pass_admin";
+        server["vnc_port"] = 5900;
+        server["terminal_id"] = terminalId;
+        workplacesArray.append(server);
+
+    } else if (methodId == 1) { // UkrNafta
+        // Логіка для Укрнафти...
+    }
+
+    return workplacesArray;
+}

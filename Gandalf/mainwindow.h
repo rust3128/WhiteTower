@@ -53,12 +53,17 @@ private slots:
 
     // Слот для отримання даних про РРО від сервера
     void onStationPosDataReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId);
+    void onStationPosDataFailed(const ApiError& error, qint64 telegramId, int clientId, int terminalId);
 
     // СЛОТ для отримання даних про Резервуари
     void onStationTanksDataReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId);
+    void onStationTanksDataFailed(const ApiError& error, qint64 telegramId, int clientId, int terminalId);
     // СЛОТ для отримання даних про Колонки (ПРК)
     void onStationDispensersDataReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId);
+    void onStationDispensersDataFailed(const ApiError& error, qint64 telegramId, int clientId, int terminalId);
 
+    void onStationWorkplacesDataReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId);
+    void onStationWorkplacesDataFailed(const ApiError& error, int clientId, int terminalId, qint64 telegramId);
 private:
     void checkAutoSyncNeeded();
     /**

@@ -100,6 +100,9 @@ public:
     // Метод для примусового встановлення статусу синхронізації
     bool setSyncStatus(int clientId, const QString& status, const QString& message);
 
+    // Отримання робочих місць для АЗС
+    QJsonArray getWorkplacesByTerminal(int clientId, int terminalId);
+
 private:
     DbManager(); // Конструктор тепер приватний
     ~DbManager();

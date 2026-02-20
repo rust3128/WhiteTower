@@ -32,7 +32,12 @@ public:
 
     void updateDispensersData(const QJsonArray &dispensersArray);
     void createTestWorkplaces();
+    void updateWorkplacesData(const QJsonArray &workplacesArray);
+    void showWorkplacesError(const QString &errorMsg);
 
+    void showRROError(const QString &errorMsg);
+    void showTanksError(const QString &errorMsg);
+    void showPRKError(const QString &errorMsg);
 private slots:
     // Слот для обробки правого кліку по фрейму
     void onFrameContextMenu(const QPoint &pos);

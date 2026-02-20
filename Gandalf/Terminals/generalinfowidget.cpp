@@ -3,6 +3,7 @@
 
 #include "poscardwidget.h"
 #include "workplacewidget.h"
+#include "workplacedata.h"
 
 #include <QHeaderView>
 
@@ -458,4 +459,155 @@ void GeneralInfoWidget::createTestWorkplaces()
     // 3. Додаємо "пружину" в кінець списку, щоб картки притискалися догори
     QSpacerItem* spacer = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
     ui->verticalLayout->addItem(spacer);
+}
+
+void GeneralInfoWidget::updateWorkplacesData(const QJsonArray &workplacesArray)
+{
+    // 1. Очищаємо ліву панель від старих карток
+    QLayoutItem *child;
+    while ((child = ui->verticalLayout->takeAt(0)) != nullptr) {
+        if (child->widget()) {
+            child->widget()->deleteLater();
+        }
+        delete child;
+    }
+
+    // 2. Будуємо нові картки з отриманого JSON
+    for (int i = 0; i < workplacesArray.size(); ++i) {
+        QJsonObject obj = workplacesArray[i].toObject();
+
+        // Магія нашої моделі: в один рядок створюємо об'єкт з усіма даними!
+        WorkplaceData wd = WorkplaceData::fromJson(obj);
+
+        WorkplaceWidget* card = new WorkplaceWidget(this);
+
+        // Використовуємо наш "розумний" метод для красивої назви
+        card->setWorkplaceData(wd.getDisplayName(), wd.getIpAdr());
+
+        ui->verticalLayout->addWidget(card);
+    }
+
+    // 3. Додаємо пружину
+    QSpacerItem* spacer = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    ui->verticalLayout->addItem(spacer);
+}
+
+
+void GeneralInfoWidget::showWorkplacesError(const QString &errorMsg)
+{
+    // 1. Очищаємо ліву панель від старих карток (або анімацій завантаження)
+    QLayoutItem *child;
+    while ((child = ui->verticalLayout->takeAt(0)) != nullptr) {
+        if (child->widget()) {
+            child->widget()->deleteLater();
+        }
+        delete child;
+    }
+
+    // 2. Створюємо красивий віджет для відображення помилки
+    QLabel* errorLabel = new QLabel(this);
+    errorLabel->setText(QString("⚠️ Не вдалося завантажити робочі місця:\n%1").arg(errorMsg));
+    errorLabel->setWordWrap(true);
+    errorLabel->setAlignment(Qt::AlignCenter);
+
+    // Стилізуємо: червоний текст, блідо-червоний фон і рамка
+    errorLabel->setStyleSheet(
+        "QLabel { "
+        "  color: #d32f2f; "
+        "  background-color: #ffebee; "
+        "  border: 1px solid #ef9a9a; "
+        "  border-radius: 5px; "
+        "  padding: 10px; "
+        "  margin: 10px; "
+        "}"
+        );
+
+    ui->verticalLayout->addWidget(errorLabel);
+
+    // 3. Додаємо пружину, щоб картка помилки притиснулася догори
+    QSpacerItem* spacer = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+    ui->verticalLayout->addItem(spacer);
+}
+
+
+// ==========================================================
+// --- МЕТОДИ ВІДОБРАЖЕННЯ ПОМИЛОК (ERROR STATES) ---
+// ==========================================================
+
+void GeneralInfoWidget::showRROError(const QString &errorMsg)
+{
+    // 1. Змінюємо текст у шапці
+    ui->labelTotalRRO->setText("<img src=':/res/Images/RRO_icon.png' width='18' height='18' align='middle'> Знайдено касових апаратів: Помилка");
+
+    // 2. Очищаємо старі картки (щоб вони не накопичувалися), але залишаємо пружину
+    QLayoutItem *child;
+    while (ui->layoutRROCards->count() > 1) {
+        child = ui->layoutRROCards->takeAt(0);
+        if (QWidget *widget = child->widget()) {
+            widget->deleteLater();
+        }
+        delete child;
+    }
+
+    // 3. Створюємо картку з помилкою
+    QLabel* errorLabel = new QLabel(this);
+    errorLabel->setText(QString("⚠️ Не вдалося завантажити дані РРО:\n%1").arg(errorMsg));
+    errorLabel->setWordWrap(true);
+    errorLabel->setAlignment(Qt::AlignCenter);
+
+    // Стилізуємо під червоне попередження
+    errorLabel->setStyleSheet(
+        "QLabel { "
+        "  color: #d32f2f; "
+        "  background-color: #ffebee; "
+        "  border: 1px solid #ef9a9a; "
+        "  border-radius: 5px; "
+        "  padding: 10px; "
+        "  margin: 10px; "
+        "}"
+        );
+
+    // 4. Вставляємо картку ПЕРЕД розпіркою (на індекс 0)
+    ui->layoutRROCards->insertWidget(0, errorLabel);
+}
+
+void GeneralInfoWidget::showTanksError(const QString &errorMsg)
+{
+    // 1. Змінюємо текст у шапці
+    ui->labelTotalTanks->setText("<img src=':/res/Images/tanks.png' width='18' height='18' align='middle'> Резервуарів: Помилка");
+
+    // 2. Очищаємо таблицю і залишаємо лише 1 рядок
+    ui->tableWidgetTanks->clearContents();
+    ui->tableWidgetTanks->setRowCount(1);
+
+    // 3. Створюємо комірку з текстом помилки
+    QTableWidgetItem *errorItem = new QTableWidgetItem(QString("⚠️ Не вдалося завантажити резервуари: %1").arg(errorMsg));
+    errorItem->setTextAlignment(Qt::AlignCenter);
+    errorItem->setForeground(QBrush(QColor("#d32f2f"))); // Червоний текст
+    errorItem->setBackground(QBrush(QColor("#ffebee"))); // Блідо-червоний фон
+
+    // 4. Вставляємо в 1-шу комірку (0,0) і наказуємо їй розтягнутися на ВСІ колонки
+    ui->tableWidgetTanks->setItem(0, 0, errorItem);
+    ui->tableWidgetTanks->setSpan(0, 0, 1, ui->tableWidgetTanks->columnCount());
+}
+
+void GeneralInfoWidget::showPRKError(const QString &errorMsg)
+{
+    // 1. Змінюємо текст у шапці
+    if (ui->labelTotalPRK) {
+        ui->labelTotalPRK->setText("<img src=':/res/Images/prk.png' width='18' height='18' align='middle'> ПРК: Помилка");
+    }
+
+    // 2. Очищаємо дерево
+    ui->treeWidgetPRK->clear();
+
+    // 3. Створюємо рядок для повідомлення
+    QTreeWidgetItem *errorItem = new QTreeWidgetItem(ui->treeWidgetPRK);
+    errorItem->setText(0, QString("⚠️ Не вдалося завантажити ПРК:\n%1").arg(errorMsg));
+    errorItem->setTextAlignment(0, Qt::AlignCenter);
+    errorItem->setForeground(0, QBrush(QColor("#d32f2f")));
+    errorItem->setBackground(0, QBrush(QColor("#ffebee")));
+
+    // 4. Магія QTreeWidget: розтягуємо текст першої колонки на всю ширину віджета
+    errorItem->setFirstColumnSpanned(true);
 }

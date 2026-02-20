@@ -129,6 +129,11 @@ void MainWindow::createConnections()
 
     connect(&ApiClient::instance(), &ApiClient::stationDispensersReceived,
             this, &MainWindow::onStationDispensersDataReceived);
+
+    connect(&ApiClient::instance(), &ApiClient::stationWorkplacesReceived,
+            this, &MainWindow::onStationWorkplacesDataReceived);
+    connect(&ApiClient::instance(), &ApiClient::stationWorkplacesFailed,
+            this, &MainWindow::onStationWorkplacesDataFailed);
 }
 
 void MainWindow::setupStationSearch()
@@ -459,7 +464,7 @@ void MainWindow::onStationGeneralInfoReady()
     // 6. Запускаємо завантаження всіх додаткових даних (РРО, резервуари тощо)
     fetchAdditionalStationData(info);
 
-    infoWidget->createTestWorkplaces();
+    //infoWidget->createTestWorkplaces();
 }
 
 // --- МЕТОД: Централізоване місце для додаткових запитів ---
@@ -473,6 +478,8 @@ void MainWindow::fetchAdditionalStationData(const StationDataContext::GeneralInf
 
     // Наприклад, наступний крок:
     ApiClient::instance().fetchStationDispensers(info.clientId, info.terminalId);
+
+    ApiClient::instance().fetchStationWorkplaces(info.clientId, info.terminalId);
 }
 
 // --- МЕТОД: Ізольована логіка малювання вкладки ---
@@ -511,6 +518,82 @@ void MainWindow::onStationDispensersDataReceived(const QJsonArray& data, int cli
 
             // ПЕРЕДАЄМО ДАНІ У ВІДЖЕТ!
             infoWidget->updateDispensersData(data);
+            break;
+        }
+    }
+}
+
+void MainWindow::onStationWorkplacesDataReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId)
+{
+    if (telegramId != 0) return; // Ігноруємо бота
+
+    for (int i = 0; i < ui->tabWidgetMain->count(); ++i) {
+        GeneralInfoWidget* infoWidget = qobject_cast<GeneralInfoWidget*>(ui->tabWidgetMain->widget(i));
+        if (infoWidget &&
+            infoWidget->property("terminalId").toInt() == terminalId &&
+            infoWidget->property("clientId").toInt() == clientId)
+        {
+            infoWidget->updateWorkplacesData(data); // Цей метод ми зараз створимо
+            break;
+        }
+    }
+}
+
+void MainWindow::onStationWorkplacesDataFailed(const ApiError& error, int clientId, int terminalId, qint64 telegramId)
+{
+    if (telegramId != 0) return; // Ігноруємо бота
+
+    for (int i = 0; i < ui->tabWidgetMain->count(); ++i) {
+        GeneralInfoWidget* infoWidget = qobject_cast<GeneralInfoWidget*>(ui->tabWidgetMain->widget(i));
+        if (infoWidget &&
+            infoWidget->property("terminalId").toInt() == terminalId &&
+            infoWidget->property("clientId").toInt() == clientId)
+        {
+            // Викликаємо новий метод віджета для малювання помилки
+            infoWidget->showWorkplacesError(error.errorString);
+            break;
+        }
+    }
+}
+
+void MainWindow::onStationPosDataFailed(const ApiError& error, qint64 telegramId, int clientId, int terminalId) {
+    if (telegramId != 0) return;
+    for (int i = 0; i < ui->tabWidgetMain->count(); ++i) {
+        GeneralInfoWidget* infoWidget = qobject_cast<GeneralInfoWidget*>(ui->tabWidgetMain->widget(i));
+        if (infoWidget && infoWidget->property("terminalId").toInt() == terminalId && infoWidget->property("clientId").toInt() == clientId) {
+            infoWidget->showRROError(error.errorString);
+            break;
+        }
+    }
+}
+
+void MainWindow::onStationTanksDataFailed(const ApiError& error, qint64 telegramId, int clientId, int terminalId)
+{
+    if (telegramId != 0) return; // Ігноруємо запити від бота
+
+    for (int i = 0; i < ui->tabWidgetMain->count(); ++i) {
+        GeneralInfoWidget* infoWidget = qobject_cast<GeneralInfoWidget*>(ui->tabWidgetMain->widget(i));
+        if (infoWidget &&
+            infoWidget->property("terminalId").toInt() == terminalId &&
+            infoWidget->property("clientId").toInt() == clientId)
+        {
+            infoWidget->showTanksError(error.errorString);
+            break;
+        }
+    }
+}
+
+void MainWindow::onStationDispensersDataFailed(const ApiError& error, qint64 telegramId, int clientId, int terminalId)
+{
+    if (telegramId != 0) return; // Ігноруємо запити від бота
+
+    for (int i = 0; i < ui->tabWidgetMain->count(); ++i) {
+        GeneralInfoWidget* infoWidget = qobject_cast<GeneralInfoWidget*>(ui->tabWidgetMain->widget(i));
+        if (infoWidget &&
+            infoWidget->property("terminalId").toInt() == terminalId &&
+            infoWidget->property("clientId").toInt() == clientId)
+        {
+            infoWidget->showPRKError(error.errorString);
             break;
         }
     }

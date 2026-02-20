@@ -153,6 +153,8 @@ public:
     // Запит конфігурації ПРК (колонок)
     void fetchStationDispensers(int clientId, int terminalId, qint64 telegramId = 0);
 
+    void fetchStationWorkplaces(int clientId, int terminalId, qint64 telegramId = 0);
+
 signals:
     // Сигнали для логіну
     void loginSuccess(User* user);
@@ -270,11 +272,11 @@ signals:
 
     //  Сигнали для РРО
     void stationPosDataReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId);
-    void stationPosDataFailed(const ApiError& error, qint64 telegramId);
+    void stationPosDataFailed(const ApiError& error, qint64 telegramId, int clientId, int terminalId);
 
     // Сигнали для резервуарів
     void stationTanksReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId);
-    void stationTanksFailed(const ApiError& error, qint64 telegramId);
+    void stationTanksFailed(const ApiError& error, qint64 telegramId, int clientId, int terminalId);
 
     void dispenserConfigReceived(const QJsonArray& config, int clientId, int terminalId, qint64 telegramId);
     void dispenserConfigFailed(const ApiError& error, qint64 telegramId);
@@ -320,6 +322,12 @@ signals:
 
     // Сигнал, який випускається, коли прийшли дані про ПРК
     void stationDispensersReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId);
+    void stationDispensersFailed(const ApiError& error, qint64 telegramId, int clientId, int terminalId);
+
+    void stationWorkplacesReceived(const QJsonArray& data, int clientId, int terminalId, qint64 telegramId);
+    void stationWorkplacesFailed(const ApiError& error, int clientId, int terminalId, qint64 telegramId);
+
+
 
 private slots:
     void onLoginReplyFinished();
@@ -382,6 +390,8 @@ private slots:
     void onAssignTaskReplyFinished();
 
     void onReportTaskReplyFinished();
+
+    void onStationWorkplacesReplyFinished();
 private:
     ApiClient(QObject* parent = nullptr);
     ~ApiClient() = default;
