@@ -34,6 +34,10 @@ add_library(Oracle STATIC
   JiraClient.h
   JiraClient.cpp
   StationStruct.h
+  IWorkplaceGenerator.h
+  DatabaseWorkplaceGenerator.h
+  DatabaseWorkplaceGenerator.cpp
+  WorkplaceGeneratorFactory.h
 )
 
 target_link_libraries(Oracle PRIVATE Qt${QT_VERSION_MAJOR}::Core

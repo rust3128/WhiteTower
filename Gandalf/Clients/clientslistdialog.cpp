@@ -105,6 +105,7 @@ void ClientsListDialog::createUI()
     m_passVisAction = createVisibilityAction(ui->lineEditPass, eyeOpenIcon, eyeClosedIcon);
     m_azsPassVisAction = createVisibilityAction(ui->lineEditAZSFbPass, eyeOpenIcon, eyeClosedIcon);
     m_apiKeyVisAction = createVisibilityAction(ui->lineEditApiKeyPalantir, eyeOpenIcon, eyeClosedIcon);
+    m_vncPassVisAction = createVisibilityAction(ui->lineEditVncPassword, eyeOpenIcon, eyeClosedIcon);
 }
 
 
@@ -198,7 +199,12 @@ void ClientsListDialog::createConnections()
     connect(ui->lineEditPass, &QLineEdit::textChanged, this, &ClientsListDialog::onFieldChanged);
     connect(ui->lineEditImportPathFile, &QLineEdit::textChanged, this, &ClientsListDialog::onFieldChanged);
     connect(ui->lineEditApiKeyPalantir, &QLineEdit::textChanged, this, &ClientsListDialog::onFieldChanged);
-    connect(ui->comboBoxTemplateHostname, &QComboBox::currentIndexChanged, this, &ClientsListDialog::onFieldChanged);
+    // connect(ui->comboBoxTemplateHostname, &QComboBox::currentIndexChanged, this, &ClientsListDialog::onFieldChanged);
+    connect(ui->lineEditVncPath, &QLineEdit::textChanged, this, &ClientsListDialog::onFieldChanged);
+    connect(ui->spinBoxVncPort, &QSpinBox::valueChanged, this, &ClientsListDialog::onFieldChanged);
+    connect(ui->lineEditVncPassword, &QLineEdit::textChanged, this, &ClientsListDialog::onFieldChanged);
+    connect(ui->lineEditIpPrefix, &QLineEdit::textChanged, this, &ClientsListDialog::onFieldChanged);
+
 }
 
 
@@ -315,6 +321,11 @@ void ClientsListDialog::onClientSelected(QListWidgetItem *current)
     ui->comboBoxTemplateHostname->setCurrentIndex(-1);
     ui->comboBoxSyncMetod->setCurrentIndex(0);
 
+    ui->lineEditVncPath->clear();
+    ui->spinBoxVncPort->setValue(5900);
+    ui->lineEditVncPassword->clear();
+    ui->lineEditIpPrefix->setText("10.");
+
     // (ДОДАНО) Скидаємо наш буфер "гонки"
     m_pendingIpGenMethodId = -1;
 
@@ -342,6 +353,7 @@ void ClientsListDialog::onClientDetailsReceived(const QJsonObject &client)
     ui->lineEditClientName->setText(client["client_name"].toString());
     ui->lineEditMinTermID->setText(QString::number(client["term_id_min"].toInt()));
     ui->lineEditMaxTermID->setText(QString::number(client["term_id_max"].toInt()));
+    ui->lineEditIpPrefix->setText(client["subnet_prefix"].toString());
 
     // --- Заповнюємо "DIRECT" (Джерело даних) ---
     QJsonObject dbConfig = client["config_direct"].toObject();
@@ -395,6 +407,18 @@ void ClientsListDialog::onClientDetailsReceived(const QJsonObject &client)
     ui->comboBoxSyncMetod->setCurrentText(client["sync_method"].toString());
     on_comboBoxSyncMetod_currentIndexChanged(ui->comboBoxSyncMetod->currentIndex());
 
+    // --- Заповнюємо VNC ---
+    QJsonObject vncConfig = client["vnc_settings"].toObject();
+    ui->lineEditVncPath->setText(vncConfig["vnc_path"].toString());
+    ui->spinBoxVncPort->setValue(vncConfig["vnc_port"].toInt(5900));
+
+    QString encryptedVncPass = vncConfig["vnc_password"].toString();
+    if (!encryptedVncPass.isEmpty()) {
+        ui->lineEditVncPassword->setText(CriptPass::instance().decriptPass(encryptedVncPass));
+    } else {
+        ui->lineEditVncPassword->clear();
+    }
+
     // "Безпечна синхронізація"
     m_isDirty = false;
     ui->pushButtonSync->setEnabled(true);
@@ -423,6 +447,8 @@ void ClientsListDialog::onIpGenMethodsReceived(const QJsonArray &methods)
         int index = ui->comboBoxTemplateHostname->findData(m_pendingIpGenMethodId);
         ui->comboBoxTemplateHostname->setCurrentIndex(index);
         m_pendingIpGenMethodId = -1; // Очищуємо буфер
+        // Примусово оновлюємо видимість поля префікса після застосування ID
+        on_comboBoxTemplateHostname_currentIndexChanged(ui->comboBoxTemplateHostname->currentIndex());
     }
     // --- КІНЕЦЬ НОВОГО ВИРІШЕННЯ ---
 }
@@ -476,6 +502,7 @@ QJsonObject ClientsListDialog::formToJson() const
     root["term_id_min"] = ui->lineEditMinTermID->text().toInt();
     root["term_id_max"] = ui->lineEditMaxTermID->text().toInt();
     root["sync_method"] = method;
+    root["subnet_prefix"] = ui->lineEditIpPrefix->text();
 
     // (Пароль АЗС - "загальний")
     QString azsPass = ui->lineEditAZSFbPass->text();
@@ -529,6 +556,19 @@ QJsonObject ClientsListDialog::formToJson() const
         configFile["import_path"] = ui->lineEditImportPathFile->text();
         root["config_file"] = configFile;
     }
+
+    // --- Налаштування VNC ---
+    QJsonObject configVnc;
+    configVnc["vnc_path"] = ui->lineEditVncPath->text();
+    configVnc["vnc_port"] = ui->spinBoxVncPort->value();
+
+    QString vncPass = ui->lineEditVncPassword->text();
+    if (!vncPass.isEmpty()) {
+        configVnc["vnc_password"] = CriptPass::instance().criptPass(vncPass);
+    } else {
+        configVnc["vnc_password"] = "";
+    }
+    root["vnc_settings"] = configVnc;
 
     return root;
 }
@@ -889,5 +929,40 @@ void ClientsListDialog::on_toolButtonBrowseImport_clicked()
     }
 }
 
+void ClientsListDialog::on_toolButtonBrowseVncPath_clicked()
+{
+    QString currentPath = ui->lineEditVncPath->text();
+    if (currentPath.isEmpty()) {
+        // Якщо пусто, пропонуємо стандартну папку Program Files
+        currentPath = "C:/Program Files";
+    }
 
+    QString exeFile = QFileDialog::getOpenFileName(this,
+                                                   "Виберіть виконуваний файл VNC клієнта",
+                                                   currentPath,
+                                                   "Виконувані файли (*.exe);;Всі файли (*.*)");
 
+    if (!exeFile.isEmpty()) {
+        ui->lineEditVncPath->setText(exeFile);
+        onFieldChanged(); // Активуємо кнопку "Зберегти"
+    }
+}
+
+void ClientsListDialog::on_comboBoxTemplateHostname_currentIndexChanged(int index)
+{
+    Q_UNUSED(index);
+
+    // Отримуємо назву обраного методу
+    QString method = ui->comboBoxTemplateHostname->currentText();
+
+    // Перевіряємо, чи це метод DATABASE
+    // (перевірте, щоб рядок точно збігався з тим, що у вас в базі)
+    bool isDatabase = method.contains("DATABASE", Qt::CaseInsensitive);
+
+    // Ховаємо або показуємо елементи
+    ui->lineEditIpPrefix->setVisible(isDatabase);
+    ui->labelIpPrefix->setVisible(isDatabase);
+
+    // Активуємо кнопку "Зберегти"
+    onFieldChanged();
+}

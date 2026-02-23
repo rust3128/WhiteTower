@@ -3,6 +3,8 @@
 #include "Logger.h"
 #include "User.h"
 #include "criptpass.h"
+#include "WorkplaceGeneratorFactory.h"
+
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QVariantMap>
@@ -409,7 +411,7 @@ QJsonObject DbManager::loadClientDetails(int clientId)
 
     // 1. Завантажуємо ОСНОВНІ дані
     query.prepare("SELECT CLIENT_ID, CLIENT_NAME, IS_ACTIVE, TERM_ID_MIN, TERM_ID_MAX, "
-                  "SYNC_METHOD, GAS_STATION_DB_PASSWORD, IP_GEN_METHOD_ID "
+                  "SYNC_METHOD, GAS_STATION_DB_PASSWORD, IP_GEN_METHOD_ID, SUBNET_PREFIX "
                   "FROM CLIENTS WHERE CLIENT_ID = :id");
     query.bindValue(":id", clientId);
 
@@ -424,6 +426,7 @@ QJsonObject DbManager::loadClientDetails(int clientId)
     clientDetails["is_active"] = query.value("IS_ACTIVE").toBool();
     clientDetails["term_id_min"] = query.value("TERM_ID_MIN").toInt();
     clientDetails["term_id_max"] = query.value("TERM_ID_MAX").toInt();
+    clientDetails["subnet_prefix"] = query.value("SUBNET_PREFIX").toString();
     clientDetails["sync_method"] = query.value("SYNC_METHOD").toString();
     clientDetails["ip_gen_method_id"] = query.value("IP_GEN_METHOD_ID").toInt();
     clientDetails["gas_station_db_password"] = query.value("GAS_STATION_DB_PASSWORD").toString();
@@ -466,6 +469,26 @@ QJsonObject DbManager::loadClientDetails(int clientId)
     }
     clientDetails["config_palantir"] = configPalantir;
     query.finish();
+
+
+    // 5. БЕЗУМОВНО завантажуємо 'vnc_settings'
+    QJsonObject vncSettings;
+    query.prepare("SELECT VNC_PATH, VNC_PORT, VNC_PASSWORD "
+                  "FROM CLIENT_VNC_SETTINGS WHERE CLIENT_ID = :id");
+    query.bindValue(":id", clientId);
+
+    if (query.exec() && query.next()) {
+        vncSettings["vnc_path"] = query.value("VNC_PATH").toString();
+        vncSettings["vnc_port"] = query.value("VNC_PORT").toInt();
+        vncSettings["vnc_password"] = query.value("VNC_PASSWORD").toString();
+    } else {
+        // Значення за замовчуванням, якщо запису ще немає
+        vncSettings["vnc_path"] = "";
+        vncSettings["vnc_port"] = 5900;
+        vncSettings["vnc_password"] = "";
+    }
+    clientDetails["vnc_settings"] = vncSettings;
+    query.finish(); // Очищуємо
 
     qInfo() << "Successfully loaded ALL details for client ID:" << clientId;
     return clientDetails;
@@ -547,6 +570,7 @@ bool DbManager::updateClient(int clientId, const QJsonObject& clientData)
                       "TERM_ID_MIN = :term_id_min, "
                       "TERM_ID_MAX = :term_id_max, "
                       "SYNC_METHOD = :sync_method, "
+                      "SUBNET_PREFIX = :subnet_prefix, "
                       "IP_GEN_METHOD_ID = :ip_gen_method_id ";
 
         QString gasPass = clientData["gas_station_db_password"].toString();
@@ -566,6 +590,7 @@ bool DbManager::updateClient(int clientId, const QJsonObject& clientData)
         query.bindValue(":term_id_min", clientData["term_id_min"].toInt());
         query.bindValue(":term_id_max", clientData["term_id_max"].toInt());
         query.bindValue(":sync_method", clientData["sync_method"].toString());
+        query.bindValue(":subnet_prefix", clientData["subnet_prefix"].toString());
         query.bindValue(":ip_gen_method_id", clientData["ip_gen_method_id"].toInt());
         query.bindValue(":client_id", clientId);
 
@@ -665,6 +690,27 @@ bool DbManager::updateClient(int clientId, const QJsonObject& clientData)
 
         if (!query.exec()) {
             qCritical() << "Failed to update/insert CLIENT_CONFIG_PALANTIR for ID" << clientId << ":" << query.lastError().text();
+            success = false;
+        }
+    }
+
+    // === 4.5. ОНОВЛЕННЯ 'CLIENT_VNC_SETTINGS' ===
+    if (success && clientData.contains("vnc_settings")) {
+        QSqlQuery query(m_db);
+        QJsonObject vncConfig = clientData["vnc_settings"].toObject();
+
+        query.prepare("UPDATE OR INSERT INTO CLIENT_VNC_SETTINGS (CLIENT_ID, VNC_PATH, VNC_PORT, VNC_PASSWORD) "
+                      "VALUES (:client_id, :vnc_path, :vnc_port, :vnc_password) MATCHING (CLIENT_ID)");
+
+        query.bindValue(":client_id", clientId);
+        query.bindValue(":vnc_path", vncConfig["vnc_path"].toString());
+        query.bindValue(":vnc_port", vncConfig["vnc_port"].toInt());
+
+        // Пароль вже зашифрований клієнтом (Gandalf), тому просто зберігаємо як є
+        query.bindValue(":vnc_password", vncConfig["vnc_password"].toString());
+
+        if (!query.exec()) {
+            qCritical() << "Failed to update/insert CLIENT_VNC_SETTINGS for ID" << clientId << ":" << query.lastError().text();
             success = false;
         }
     }
@@ -2614,43 +2660,32 @@ bool DbManager::setSyncStatus(int clientId, const QString& status, const QString
 
 QJsonArray DbManager::getWorkplacesByTerminal(int clientId, int terminalId)
 {
-    QJsonArray workplacesArray;
+    // 1. Знаходимо OBJECT_ID для цього терміналу (використовуємо '?')
+    int objectId = -1;
+    QSqlQuery query(m_db);
 
-    // В РЕАЛЬНОСТІ ТУТ БУДЕ:
-    // 1. Запит для отримання METHOD_ID для даного terminalId
-    // int methodId = ...
+    // Замість :clientId та :terminalId ставимо знаки питання
+    query.prepare("SELECT OBJECT_ID FROM OBJECTS WHERE CLIENT_ID = ? AND TERMINAL_ID = ?");
+    query.addBindValue(clientId);
+    query.addBindValue(terminalId);
 
-    int methodId = 3; // Тимчасово примусово ставимо тип DATABASE (3)
-
-    if (methodId == 3) { // DATABASE
-        // --- ТИМЧАСОВА ЗАГЛУШКА ---
-        qInfo() << "DbManager: Using STUB for Database workplaces generation for terminal:" << terminalId;
-
-        // Імітуємо Касу 1 (MPosTouch)
-        QJsonObject pos1;
-        pos1["workplace_id"] = 1001;
-        pos1["version_type"] = 4; // MPosTouch
-        pos1["pos_id"] = 1;
-        pos1["ip_address"] = "192.168.1.51";
-        pos1["vnc_password"] = "decrypted_pass_1"; // Нібито вже розшифрований
-        pos1["vnc_port"] = 5900;
-        pos1["terminal_id"] = terminalId;
-        workplacesArray.append(pos1);
-
-        // Імітуємо Сервер (MPosDir)
-        QJsonObject server;
-        server["workplace_id"] = 1002;
-        server["version_type"] = 6; // MPosDir
-        server["pos_id"] = 1;
-        server["ip_address"] = "192.168.1.100";
-        server["vnc_password"] = "decrypted_pass_admin";
-        server["vnc_port"] = 5900;
-        server["terminal_id"] = terminalId;
-        workplacesArray.append(server);
-
-    } else if (methodId == 1) { // UkrNafta
-        // Логіка для Укрнафти...
+    if (query.exec() && query.next()) {
+        objectId = query.value(0).toInt();
+    } else {
+        qWarning() << "DbManager SQL Error:" << query.lastError().text();
+        qWarning() << "DbManager: Object not found for client:" << clientId << "terminal:" << terminalId;
+        return QJsonArray(); // Повертаємо порожнечу, якщо об'єкта дійсно немає
     }
 
-    return workplacesArray;
+    // 2. Визначаємо метод (поки хардкод)
+    int methodId = 3;
+
+    // 3. Створюємо генератор
+    auto generator = WorkplaceGeneratorFactory::createGenerator(methodId);
+    if (!generator) {
+        return QJsonArray();
+    }
+
+    // 4. Передаємо всі параметри в генератор
+    return generator->generate(clientId, objectId, terminalId);
 }

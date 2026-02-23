@@ -34,6 +34,7 @@ private slots:
     void onNewClientClicked();
 
     void on_comboBoxSyncMetod_currentIndexChanged(int index);
+    void on_comboBoxTemplateHostname_currentIndexChanged(int index);
 
     void on_pushButtonCheckConnections_clicked();
 
@@ -53,8 +54,7 @@ private slots:
 
 
     void on_toolButtonBrowseImport_clicked();
-
-
+    void on_toolButtonBrowseVncPath_clicked();
 
 private:
     // Методи-помічники для налаштування
@@ -81,6 +81,7 @@ private:
     // (ДОДАНО) Надійний буфер для ID
     int m_pendingIpGenMethodId;
     QAction* m_passVisAction;
+    QAction* m_vncPassVisAction;
     QAction* m_azsPassVisAction;
     QAction* m_apiKeyVisAction;
 };
