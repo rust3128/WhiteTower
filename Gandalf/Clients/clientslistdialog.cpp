@@ -204,6 +204,7 @@ void ClientsListDialog::createConnections()
     connect(ui->spinBoxVncPort, &QSpinBox::valueChanged, this, &ClientsListDialog::onFieldChanged);
     connect(ui->lineEditVncPassword, &QLineEdit::textChanged, this, &ClientsListDialog::onFieldChanged);
     connect(ui->lineEditIpPrefix, &QLineEdit::textChanged, this, &ClientsListDialog::onFieldChanged);
+    connect(ui->checkBoxTerminalOnly, &QCheckBox::stateChanged, this, &ClientsListDialog::onFieldChanged);
 
 }
 
@@ -325,6 +326,7 @@ void ClientsListDialog::onClientSelected(QListWidgetItem *current)
     ui->spinBoxVncPort->setValue(5900);
     ui->lineEditVncPassword->clear();
     ui->lineEditIpPrefix->setText("10.");
+    ui->checkBoxTerminalOnly->setChecked(false);
 
     // (ДОДАНО) Скидаємо наш буфер "гонки"
     m_pendingIpGenMethodId = -1;
@@ -411,6 +413,7 @@ void ClientsListDialog::onClientDetailsReceived(const QJsonObject &client)
     QJsonObject vncConfig = client["vnc_settings"].toObject();
     ui->lineEditVncPath->setText(vncConfig["vnc_path"].toString());
     ui->spinBoxVncPort->setValue(vncConfig["vnc_port"].toInt(5900));
+    ui->checkBoxTerminalOnly->setChecked(vncConfig["is_terminal_only"].toBool(false));
 
     QString encryptedVncPass = vncConfig["vnc_password"].toString();
     if (!encryptedVncPass.isEmpty()) {
@@ -561,6 +564,7 @@ QJsonObject ClientsListDialog::formToJson() const
     QJsonObject configVnc;
     configVnc["vnc_path"] = ui->lineEditVncPath->text();
     configVnc["vnc_port"] = ui->spinBoxVncPort->value();
+    configVnc["is_terminal_only"] = ui->checkBoxTerminalOnly->isChecked();
 
     QString vncPass = ui->lineEditVncPassword->text();
     if (!vncPass.isEmpty()) {
@@ -777,6 +781,10 @@ void ClientsListDialog::generateExporterPackage(const QJsonArray& tasks)
         QFile sqlFile(tempDirPath + "/" + queryFilename);
         if (sqlFile.open(QIODevice::WriteOnly)) {
             QString sqlTemplate = task["sql_template"].toString();
+            // --- Підставляємо префікс IP-мережі для Експортера ---
+            QString subnetPrefix = ui->lineEditIpPrefix->text();
+            if (subnetPrefix.isEmpty()) subnetPrefix = "10.";
+            sqlTemplate.replace("{{SUBNET_PREFIX}}", subnetPrefix);
             sqlFile.write(sqlTemplate.toUtf8());
             sqlFile.close();
             filesToZip.append(queryFilename);

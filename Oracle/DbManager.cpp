@@ -473,7 +473,8 @@ QJsonObject DbManager::loadClientDetails(int clientId)
 
     // 5. БЕЗУМОВНО завантажуємо 'vnc_settings'
     QJsonObject vncSettings;
-    query.prepare("SELECT VNC_PATH, VNC_PORT, VNC_PASSWORD "
+    // ДОДАНО ПОЛЕ IS_TERMINAL_ONLY
+    query.prepare("SELECT VNC_PATH, VNC_PORT, VNC_PASSWORD, IS_TERMINAL_ONLY "
                   "FROM CLIENT_VNC_SETTINGS WHERE CLIENT_ID = :id");
     query.bindValue(":id", clientId);
 
@@ -481,11 +482,13 @@ QJsonObject DbManager::loadClientDetails(int clientId)
         vncSettings["vnc_path"] = query.value("VNC_PATH").toString();
         vncSettings["vnc_port"] = query.value("VNC_PORT").toInt();
         vncSettings["vnc_password"] = query.value("VNC_PASSWORD").toString();
+        vncSettings["is_terminal_only"] = query.value("IS_TERMINAL_ONLY").toBool();
     } else {
         // Значення за замовчуванням, якщо запису ще немає
         vncSettings["vnc_path"] = "";
         vncSettings["vnc_port"] = 5900;
         vncSettings["vnc_password"] = "";
+        vncSettings["is_terminal_only"] = false;
     }
     clientDetails["vnc_settings"] = vncSettings;
     query.finish(); // Очищуємо
@@ -699,15 +702,15 @@ bool DbManager::updateClient(int clientId, const QJsonObject& clientData)
         QSqlQuery query(m_db);
         QJsonObject vncConfig = clientData["vnc_settings"].toObject();
 
-        query.prepare("UPDATE OR INSERT INTO CLIENT_VNC_SETTINGS (CLIENT_ID, VNC_PATH, VNC_PORT, VNC_PASSWORD) "
-                      "VALUES (:client_id, :vnc_path, :vnc_port, :vnc_password) MATCHING (CLIENT_ID)");
+        // ДОДАНО ПОЛЕ IS_TERMINAL_ONLY
+        query.prepare("UPDATE OR INSERT INTO CLIENT_VNC_SETTINGS (CLIENT_ID, VNC_PATH, VNC_PORT, VNC_PASSWORD, IS_TERMINAL_ONLY) "
+                      "VALUES (:client_id, :vnc_path, :vnc_port, :vnc_password, :is_terminal_only) MATCHING (CLIENT_ID)");
 
         query.bindValue(":client_id", clientId);
         query.bindValue(":vnc_path", vncConfig["vnc_path"].toString());
         query.bindValue(":vnc_port", vncConfig["vnc_port"].toInt());
-
-        // Пароль вже зашифрований клієнтом (Gandalf), тому просто зберігаємо як є
         query.bindValue(":vnc_password", vncConfig["vnc_password"].toString());
+        query.bindValue(":is_terminal_only", vncConfig["is_terminal_only"].toBool() ? 1 : 0);
 
         if (!query.exec()) {
             qCritical() << "Failed to update/insert CLIENT_VNC_SETTINGS for ID" << clientId << ":" << query.lastError().text();
@@ -1162,10 +1165,18 @@ QVariantMap DbManager::syncViaFile(int clientId, const QJsonObject& clientDetail
         // !!! КІНЕЦЬ НОВОГО БЛОКУ !!!
 
         if (!targetTable.isEmpty() && !matchFields.isEmpty()) {
-            logInfo() << "Processing GENERIC:" << targetTable << "from" << jsonFileName << "Strategy:" << deleteStrategy;
+            logInfo() << "Processing:" << targetTable << "from" << jsonFileName << "Strategy:" << deleteStrategy;
 
-            // !!! ЗМІНА: ПЕРЕДАЄМО СТРАТЕГІЮ В processGenericSync !!!
-            if (!processGenericSync(clientId, targetTable, matchFields, deleteStrategy, data, errorMessage)) {
+            bool syncOk = false;
+
+            // --- МАРШРУТИЗАТОР ---
+            if (targetTable.compare("WORKPLACES", Qt::CaseInsensitive) == 0) {
+                syncOk = processWorkplacesSync(clientId, deleteStrategy, data, errorMessage);
+            } else {
+                syncOk = processGenericSync(clientId, targetTable, matchFields, deleteStrategy, data, errorMessage);
+            }
+
+            if (!syncOk) {
                 success = false;
                 break; // Вихід з циклу при першій помилці
             }
@@ -2155,6 +2166,117 @@ bool DbManager::processGenericSync(int clientId, const QString& tableName, const
 }
 
 
+bool DbManager::processWorkplacesSync(int clientId, const QString& deleteStrategy, const QJsonArray& data, QString& errorOut)
+{
+    if (data.isEmpty()) {
+        if (deleteStrategy == "FULL_REFRESH") {
+            QSqlQuery deleteQuery(m_db);
+            deleteQuery.prepare("DELETE FROM WORKPLACES WHERE OBJECT_ID IN (SELECT OBJECT_ID FROM OBJECTS WHERE CLIENT_ID = ?)");
+            deleteQuery.addBindValue(clientId);
+            if (!deleteQuery.exec()) {
+                errorOut = "Failed to FULL_REFRESH WORKPLACES: " + deleteQuery.lastError().text();
+                return false;
+            }
+        }
+        return true;
+    }
+
+    m_db.transaction();
+
+    if (deleteStrategy == "FULL_REFRESH") {
+        QSqlQuery cleanupQuery(m_db);
+        cleanupQuery.prepare("DELETE FROM WORKPLACES WHERE OBJECT_ID IN (SELECT OBJECT_ID FROM OBJECTS WHERE CLIENT_ID = ?)");
+        cleanupQuery.addBindValue(clientId);
+        if (!cleanupQuery.exec()) {
+            m_db.rollback();
+            errorOut = "Failed cleanup WORKPLACES: " + cleanupQuery.lastError().text();
+            return false;
+        }
+    }
+
+    // --- ЗМІНЕНО ТУТ: Блок 3 ---
+    QString rawVncPass = ""; // Зберігатимемо ЧИСТИЙ базовий пароль
+    int vncPort = 5900;
+
+    QSqlQuery vncQuery(m_db);
+    vncQuery.prepare("SELECT VNC_PASSWORD, VNC_PORT FROM CLIENT_VNC_SETTINGS WHERE CLIENT_ID = ?");
+    vncQuery.addBindValue(clientId);
+
+    if (vncQuery.exec() && vncQuery.next()) {
+        QString encryptedBasePass = vncQuery.value(0).toString();
+        vncPort = vncQuery.value(1).toInt();
+
+        // Одразу розшифровуємо базовий пароль, щоб далі "солити" його номером АЗС
+        if (!encryptedBasePass.isEmpty()) {
+            rawVncPass = CriptPass::instance().decriptPass(encryptedBasePass);
+        }
+        logInfo() << "Loaded VNC config for client" << clientId << "| Port:" << vncPort;
+    } else {
+        logWarning() << "VNC query error or no config for client" << clientId;
+    }
+
+    // 4. Завантажуємо карту: TERMINAL_ID -> OBJECT_ID
+    QMap<int, int> terminalToObjectMap;
+    QSqlQuery objQuery(m_db);
+    objQuery.prepare("SELECT TERMINAL_ID, OBJECT_ID FROM OBJECTS WHERE CLIENT_ID = ?");
+    objQuery.addBindValue(clientId);
+    if (objQuery.exec()) {
+        while (objQuery.next()) {
+            terminalToObjectMap.insert(objQuery.value(0).toInt(), objQuery.value(1).toInt());
+        }
+    }
+
+    // 5. Універсальний запит (UPSERT)
+    QSqlQuery upsertQuery(m_db);
+    upsertQuery.prepare("UPDATE OR INSERT INTO WORKPLACES (OBJECT_ID, VERSION_TYPE, POS_ID, IPADR, PASSVNC, PORTVNC) "
+                        "VALUES (?, ?, ?, ?, ?, ?) "
+                        "MATCHING (OBJECT_ID, VERSION_TYPE, POS_ID)");
+
+    // 6. Проходимось по даних
+    for (const QJsonValue& val : data) {
+        if (!val.isObject()) continue;
+        QJsonObject row = val.toObject();
+
+        int termId = row["TERMINAL_ID"].toInt();
+
+        if (!terminalToObjectMap.contains(termId)) {
+            continue;
+        }
+
+        int objId = terminalToObjectMap.value(termId);
+
+        // --- ЗМІНЕНО ТУТ: Формуємо фінальний пароль для цієї конкретної АЗС ---
+        QString terminalVncPass = "";
+        if (!rawVncPass.isEmpty()) {
+            // Викликаємо ваш метод з сіллю!
+            terminalVncPass = CriptPass::instance().cryptVNCPass(QString::number(termId), rawVncPass);
+        }
+
+        upsertQuery.addBindValue(objId);
+        upsertQuery.addBindValue(row["VERSION_TYPE"].toInt());
+        upsertQuery.addBindValue(row["POS_ID"].toInt());
+        upsertQuery.addBindValue(row["IP_ADDR"].toString());
+        upsertQuery.addBindValue(terminalVncPass); // Записуємо "посолений" пароль
+        upsertQuery.addBindValue(vncPort);
+
+        if (!upsertQuery.exec()) {
+            m_db.rollback();
+            errorOut = "WORKPLACES Sync Error: " + upsertQuery.lastError().text();
+            logCritical() << errorOut;
+            return false;
+        }
+    }
+
+    if (!m_db.commit()) {
+        m_db.rollback();
+        errorOut = "Failed to commit WORKPLACES sync: " + m_db.lastError().text();
+        return false;
+    }
+
+    logInfo() << "Successfully synced" << data.count() << "WORKPLACES for client" << clientId;
+    return true;
+}
+
 // --------------------------------------------------------------------------
 // Реалізація синхронізації DIRECT (Пряме підключення)
 // --------------------------------------------------------------------------
@@ -2215,6 +2337,11 @@ QVariantMap DbManager::syncViaDirect(int clientId, const QJsonObject& clientDeta
             QString sqlTemplate = tasksQuery.value("SQL_TEMPLATE").toString();
             QString taskName    = tasksQuery.value("TASK_NAME").toString();
             QString deleteStrategy = tasksQuery.value("DELETE_STRATEGY").toString();
+
+            // --- Підставляємо префікс IP-мережі ---
+            QString subnetPrefix = clientDetails["subnet_prefix"].toString("10.");
+            sqlTemplate.replace("{{SUBNET_PREFIX}}", subnetPrefix);
+
             if (deleteStrategy.isEmpty()) deleteStrategy = "NONE";
 
             if (targetTable.isEmpty() || sqlTemplate.isEmpty()) continue;
@@ -2250,8 +2377,18 @@ QVariantMap DbManager::syncViaDirect(int clientId, const QJsonObject& clientDeta
 
             // 3.3. Імпорт
             QString importError;
-            // !!! processGenericSync ВЖЕ ВИКОНУЄ КОМІТ або ВІДКАТ !!!
-            if (!processGenericSync(clientId, targetTable, matchFields, deleteStrategy, dataArray, importError)) {
+            bool syncOk = false;
+
+            // --- МАРШРУТИЗАТОР ---
+            if (targetTable.compare("WORKPLACES", Qt::CaseInsensitive) == 0) {
+                // Викликаємо наш новий спеціальний обробник
+                syncOk = processWorkplacesSync(clientId, deleteStrategy, dataArray, importError);
+            } else {
+                // Викликаємо стандартний обробник
+                syncOk = processGenericSync(clientId, targetTable, matchFields, deleteStrategy, dataArray, importError);
+            }
+
+            if (!syncOk) {
                 logCritical() << "Import failed for" << targetTable << ":" << importError;
                 lastError = importError;
                 globalSuccess = false;
@@ -2660,6 +2797,26 @@ bool DbManager::setSyncStatus(int clientId, const QString& status, const QString
 
 QJsonArray DbManager::getWorkplacesByTerminal(int clientId, int terminalId)
 {
+    // --- 0. ПЕРЕВІРКА НАЛАШТУВАНЬ VNC (Чи дозволено пряме підключення) ---
+    QSqlQuery vncQuery(m_db);
+    vncQuery.prepare("SELECT IS_TERMINAL_ONLY FROM CLIENT_VNC_SETTINGS WHERE CLIENT_ID = ?");
+    vncQuery.addBindValue(clientId);
+
+    if (vncQuery.exec() && vncQuery.next()) {
+        if (vncQuery.value(0).toBool() == true) {
+            // Якщо доступ лише через термінальний сервер, повертаємо спеціальний маркер
+            QJsonArray terminalOnlyResponse;
+            QJsonObject marker;
+            marker["is_terminal_only"] = true;
+            marker["message"] = "Підключення можливе лише з термінального сервера клієнта.";
+            terminalOnlyResponse.append(marker);
+
+            logInfo() << "DbManager: Client" << clientId << "is terminal-only. Aborting workplaces generation.";
+            return terminalOnlyResponse; // Одразу виходимо, не звертаючись до генераторів і таблиць
+        }
+    }
+    // ---------------------------------------------------------------------
+
     // 1. Знаходимо OBJECT_ID для цього терміналу (використовуємо '?')
     int objectId = -1;
     QSqlQuery query(m_db);

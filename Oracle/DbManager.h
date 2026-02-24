@@ -120,6 +120,9 @@ private:
                             const QString& deleteStrategy,
                             const QJsonArray& data, QString& errorOut);
 
+    // Спеціальний обробник для таблиці WORKPLACES
+    bool processWorkplacesSync(int clientId, const QString& deleteStrategy, const QJsonArray& data, QString& errorOut);
+
     // Забороняємо копіювання
     DbManager(const DbManager&) = delete;
     DbManager& operator=(const DbManager&) = delete;

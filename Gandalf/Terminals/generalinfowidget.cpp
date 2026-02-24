@@ -472,7 +472,43 @@ void GeneralInfoWidget::updateWorkplacesData(const QJsonArray &workplacesArray)
         delete child;
     }
 
-    // 2. Будуємо нові картки з отриманого JSON
+    // --- 2. ПЕРЕВІРКА НА МАРКЕР ТЕРМІНАЛЬНОГО СЕРВЕРА ---
+    if (workplacesArray.size() == 1) {
+        QJsonObject firstObj = workplacesArray.first().toObject();
+
+        if (firstObj.contains("is_terminal_only") && firstObj["is_terminal_only"].toBool() == true) {
+
+            QLabel* infoLabel = new QLabel(this);
+            QString msg = firstObj["message"].toString("Доступ лише через термінальний сервер клієнта.");
+            infoLabel->setText(QString("🔒\n%1").arg(msg));
+            infoLabel->setWordWrap(true);
+            infoLabel->setAlignment(Qt::AlignCenter);
+
+            // Стилізуємо під інформаційне повідомлення (синій колір)
+            infoLabel->setStyleSheet(
+                "QLabel { "
+                "  color: #0277bd; "
+                "  background-color: #e1f5fe; "
+                "  border: 1px solid #81d4fa; "
+                "  border-radius: 5px; "
+                "  padding: 15px; "
+                "  margin: 10px; "
+                "  font-size: 13px;"
+                "}"
+                );
+
+            ui->verticalLayout->addWidget(infoLabel);
+
+            // Додаємо пружину
+            QSpacerItem* spacer = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+            ui->verticalLayout->addItem(spacer);
+
+            return; // ВАЖЛИВО: Виходимо з методу, звичайні картки не малюємо!
+        }
+    }
+    // ---------------------------------------------------
+
+    // 3. Будуємо нові картки з отриманого JSON
     for (int i = 0; i < workplacesArray.size(); ++i) {
         QJsonObject obj = workplacesArray[i].toObject();
 
@@ -482,12 +518,12 @@ void GeneralInfoWidget::updateWorkplacesData(const QJsonArray &workplacesArray)
         WorkplaceWidget* card = new WorkplaceWidget(this);
 
         // Використовуємо наш "розумний" метод для красивої назви
-        card->setWorkplaceData(wd.getDisplayName(), wd.getIpAdr());
+        card->setWorkplaceData(wd);
 
         ui->verticalLayout->addWidget(card);
     }
 
-    // 3. Додаємо пружину
+    // 4. Додаємо пружину
     QSpacerItem* spacer = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
     ui->verticalLayout->addItem(spacer);
 }

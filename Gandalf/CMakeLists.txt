@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Знаходимо Qt і необхідні компоненти для GUI-додатку
 # Core - базовий модуль, Gui - для вікон, Widgets - для кнопок, полів і т.д.
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Sql Concurrent Network)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Sql Concurrent Network Core5Compat)
 
 # Список файлів з вихідним кодом для нашого додатку
 add_executable(Gandalf WIN32
@@ -42,6 +42,7 @@ add_executable(Gandalf WIN32
     Terminals/workplacewidget.h Terminals/workplacewidget.cpp Terminals/workplacewidget.ui
     Terminals/workplacedata.h
     Terminals/workplacedata.cpp
+    Terminals/pingdialog.cpp Terminals/pingdialog.h Terminals/pingdialog.ui Terminals/pingmodel.cpp Terminals/pingmodel.h
 
 
 
@@ -59,6 +60,7 @@ target_link_libraries(Gandalf PRIVATE
     Qt6::Sql
     Qt6::Concurrent
     Qt6::Network
+    Qt6::Core5Compat
     Oracle        # <-- Наша спільна бібліотека
 )
 
