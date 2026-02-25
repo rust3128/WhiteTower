@@ -20,5 +20,6 @@
         <file>res/Images/refresh_icon.png</file>
         <file>res/Images/tightvnc-logo.png</file>
         <file>res/Images/edit_icon.png</file>
+        <file>res/Images/waiting_icon.png</file>
     </qresource>
 </RCC>

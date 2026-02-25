@@ -34,6 +34,9 @@ public:
     bool getIsReachable() const;
     void setIsReachable(bool newIsReachable);
 
+    QString getVncPath() const;
+    void setVncPath(const QString &newVncPath);
+
     // --- "Розумні" методи для UI ---
 
     // Генерує красиву назву для картки
@@ -52,6 +55,7 @@ private:
     int m_portVNC;
     int m_terminalID;
     bool m_isReachable;
+    QString m_vncPath;
 };
 
 #endif // WORKPLACEDATA_H

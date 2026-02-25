@@ -39,6 +39,9 @@ void SettingsDialog::loadSettings()
     int syncPeriod = AppParams::instance().getParam("Gandalf", "SyncPeriodDays", 7).toInt();
     ui->spinBoxSyncPeriod->setValue(syncPeriod);
 
+    int vncTimeout = AppParams::instance().getParam("Gandalf", "VncTimeoutMs", 2000).toInt();
+    ui->spinBoxVncTimeout->setValue(vncTimeout);
+
     QString redmineUrl = AppParams::instance().getParam("Global", "RedmineBaseUrl").toString();
     logInfo() << "Завантажую Redmine URL (Global/RedmineBaseUrl):" << redmineUrl;
     ui->lineEditRedmineUrl->setText(redmineUrl);
@@ -56,6 +59,7 @@ void SettingsDialog::saveSettings()
 
     // Параметр SyncPeriodDays належить Gandalf'у
     gandalfSettings["SyncPeriodDays"] = ui->spinBoxSyncPeriod->value();
+    gandalfSettings["VncTimeoutMs"] = ui->spinBoxVncTimeout->value();
 
     // Відправляємо на сервер налаштування Gandalf
     ApiClient::instance().updateSettings("Gandalf", gandalfSettings);

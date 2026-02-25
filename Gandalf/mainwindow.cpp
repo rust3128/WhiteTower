@@ -34,9 +34,8 @@ MainWindow::MainWindow(QWidget *parent)
     QString windowTitle = QString("Gandalf %1").arg(PROJECT_VERSION_STR);
     setWindowTitle(windowTitle);
 
-    // 2. Читання налаштувань (це можна залишити тут або винести в initSettings)
-    m_syncPeriodDays = AppParams::instance().getParam("Gandalf", "SyncPeriodDays", 1).toInt();
-    if (m_syncPeriodDays <= 0) m_syncPeriodDays = 1;
+    // 2. Читання налаштувань
+    initSettings();
 
     // 3. Ініціалізація компонентів UI
     setupStationSearch();
@@ -51,6 +50,12 @@ MainWindow::MainWindow(QWidget *parent)
 MainWindow::~MainWindow()
 {
     delete ui;
+}
+
+void MainWindow::initSettings()
+{
+    m_syncPeriodDays = AppParams::instance().getParam("Gandalf", "SyncPeriodDays", 1).toInt();
+    if (m_syncPeriodDays <= 0) m_syncPeriodDays = 1;
 }
 
 void MainWindow::setupUI()

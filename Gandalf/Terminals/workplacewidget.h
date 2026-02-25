@@ -2,6 +2,8 @@
 #define WORKPLACEWIDGET_H
 
 #include <QWidget>
+#include <QTcpSocket>
+
 #include "workplacedata.h" // Додаємо цей інклуд
 
 namespace Ui {
@@ -22,10 +24,18 @@ public:
     // ДОДАЄМО НОВИЙ МЕТОД: для повноцінних даних
     void setWorkplaceData(const WorkplaceData &data);
 
+signals:
+//    void vncStatusChecked();
+
 private slots:
     // ДОДАЄМО СЛОТ ДЛЯ КНОПКИ PING
     void on_toolButtonPing_clicked();
 
+    void on_toolButtonRefresh_clicked();
+    void on_toolButtonVNC_clicked();
+
+private:
+    void checkVncStatus();
 private:
     Ui::WorkplaceWidget *ui;
     WorkplaceData m_data; // Зберігаємо дані каси тут

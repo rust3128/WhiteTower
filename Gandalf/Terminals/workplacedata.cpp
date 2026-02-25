@@ -38,6 +38,7 @@ WorkplaceData WorkplaceData::fromJson(const QJsonObject& json)
     wd.setPosID(json["pos_id"].toInt());
     wd.setIpAdr(json["ip_address"].toString());
     wd.setPassVNC(json["vnc_password"].toString());
+    wd.setVncPath(json["vnc_path"].toString());
 
     // Якщо порт не передано, ставимо стандартний 5900
     wd.setPortVNC(json.contains("vnc_port") && json["vnc_port"].toInt() > 0
@@ -74,3 +75,6 @@ void WorkplaceData::setTerminalID(int id) { m_terminalID = id; }
 
 bool WorkplaceData::getIsReachable() const { return m_isReachable; }
 void WorkplaceData::setIsReachable(bool reachable) { m_isReachable = reachable; }
+
+QString WorkplaceData::getVncPath() const { return m_vncPath; }
+void WorkplaceData::setVncPath(const QString &path) { m_vncPath = path; }

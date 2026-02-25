@@ -90,6 +90,8 @@ private:
     // Оновлює візуальну частину самої вкладки (Назва, Іконка)
     void updateStationTabAppearance(QWidget* tabWidget, const StationDataContext::GeneralInfo& info);
 
+    void initSettings();
+
 private:
     Ui::MainWindow *ui;
     int m_syncPeriodDays;

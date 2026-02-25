@@ -57,7 +57,17 @@ void GeneralInfoWidget::setupUI()
         ui->stackedWidgetInfo->setCurrentIndex(0);
     }
 
-    ui->splitter->setSizes(QList<int>{520, 800});
+    // 1. Встановлюємо жорстку мінімальну ширину для лівої панелі з касами
+    // 530 пікселів гарантує, що картка (505px) + можливий вертикальний скрол влізуть ідеально
+    ui->scrollAreaWorplaces->setMinimumWidth(410);
+
+    // 2. Вказуємо сплітеру пропорції (це у вас вже було)
+    ui->splitter->setSizes(QList<int>{410, 800});
+
+    // 3. Кажемо сплітеру: "При розширенні вікна ліву частину (0) не чіпай,
+    // а всю додаткову ширину віддавай правій частині (1)"
+    ui->splitter->setStretchFactor(0, 0);
+    ui->splitter->setStretchFactor(1, 1);
 
 
     ui->scrollAreaWorplaces->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -477,49 +487,35 @@ void GeneralInfoWidget::updateWorkplacesData(const QJsonArray &workplacesArray)
         QJsonObject firstObj = workplacesArray.first().toObject();
 
         if (firstObj.contains("is_terminal_only") && firstObj["is_terminal_only"].toBool() == true) {
-
             QLabel* infoLabel = new QLabel(this);
             QString msg = firstObj["message"].toString("Доступ лише через термінальний сервер клієнта.");
             infoLabel->setText(QString("🔒\n%1").arg(msg));
             infoLabel->setWordWrap(true);
             infoLabel->setAlignment(Qt::AlignCenter);
 
-            // Стилізуємо під інформаційне повідомлення (синій колір)
             infoLabel->setStyleSheet(
-                "QLabel { "
-                "  color: #0277bd; "
-                "  background-color: #e1f5fe; "
-                "  border: 1px solid #81d4fa; "
-                "  border-radius: 5px; "
-                "  padding: 15px; "
-                "  margin: 10px; "
-                "  font-size: 13px;"
-                "}"
+                "QLabel { color: #0277bd; background-color: #e1f5fe; "
+                "border: 1px solid #81d4fa; border-radius: 5px; padding: 15px; margin: 10px; font-size: 13px; }"
                 );
 
             ui->verticalLayout->addWidget(infoLabel);
-
-            // Додаємо пружину
             QSpacerItem* spacer = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
             ui->verticalLayout->addItem(spacer);
-
-            return; // ВАЖЛИВО: Виходимо з методу, звичайні картки не малюємо!
+            return;
         }
     }
-    // ---------------------------------------------------
 
-    // 3. Будуємо нові картки з отриманого JSON
+    // --- 3. МИТТЄВЕ СТВОРЕННЯ КАРТОК ---
     for (int i = 0; i < workplacesArray.size(); ++i) {
         QJsonObject obj = workplacesArray[i].toObject();
-
-        // Магія нашої моделі: в один рядок створюємо об'єкт з усіма даними!
         WorkplaceData wd = WorkplaceData::fromJson(obj);
 
         WorkplaceWidget* card = new WorkplaceWidget(this);
 
-        // Використовуємо наш "розумний" метод для красивої назви
+        // Передача даних автоматично запускає checkVncStatus() всередині картки
         card->setWorkplaceData(wd);
 
+        // Одразу додаємо на екран (вона з'явиться з пісочним годинником)
         ui->verticalLayout->addWidget(card);
     }
 
@@ -527,7 +523,6 @@ void GeneralInfoWidget::updateWorkplacesData(const QJsonArray &workplacesArray)
     QSpacerItem* spacer = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
     ui->verticalLayout->addItem(spacer);
 }
-
 
 void GeneralInfoWidget::showWorkplacesError(const QString &errorMsg)
 {
@@ -647,3 +642,30 @@ void GeneralInfoWidget::showPRKError(const QString &errorMsg)
     // 4. Магія QTreeWidget: розтягуємо текст першої колонки на всю ширину віджета
     errorItem->setFirstColumnSpanned(true);
 }
+
+// void GeneralInfoWidget::onWorkplaceStatusChecked()
+// {
+//     m_pendingChecksCount--;
+
+//     // Якщо всі картки відзвітували (лічильник дійшов до 0)
+//     if (m_pendingChecksCount <= 0) {
+
+//         // 1. Прибираємо напис "Шукаємо робочі місця..."
+//         QLayoutItem *child;
+//         while ((child = ui->verticalLayout->takeAt(0)) != nullptr) {
+//             if (child->widget()) child->widget()->deleteLater();
+//             delete child;
+//         }
+
+//         // 2. Додаємо всі готові, перевірені та розфарбовані картки на екран
+//         for (WorkplaceWidget* card : m_pendingWorkplaceWidgets) {
+//             ui->verticalLayout->addWidget(card);
+//         }
+
+//         m_pendingWorkplaceWidgets.clear(); // Очищаємо тимчасовий список
+
+//         // 3. Додаємо пружину внизу
+//         QSpacerItem* spacer = new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding);
+//         ui->verticalLayout->addItem(spacer);
+//     }
+// }

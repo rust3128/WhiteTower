@@ -3,6 +3,7 @@
 
 #include "StationDataContext.h"
 
+
 #include <QWidget>
 #include <QMenu>
 #include <QClipboard>
@@ -45,6 +46,8 @@ private slots:
     void onCopyAllRROClicked();
     //СЛОТ: для копіювання таблиці резервуарів
     void onCopyTanksClicked();
+    //
+ //   void onWorkplaceStatusChecked();
 private:
     // --- Методи ініціалізації ---
     void setupUI();            // Тільки візуал (курсори, стилі, tooltip)
@@ -59,6 +62,8 @@ private:
     Ui::GeneralInfoWidget *ui;
     // Зберігаємо останні отримані дані
     StationDataContext::GeneralInfo m_lastInfo;
+    // int m_pendingChecksCount = 0;
+    // QList<WorkplaceWidget*> m_pendingWorkplaceWidgets;
 };
 
 #endif // GENERALINFOWIDGET_H
